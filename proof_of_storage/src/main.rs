@@ -1,4 +1,4 @@
-use ff::Field;
+use ff::{Field, PrimeField};
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding, LigeroEncodingRho};
 use blake3::Hasher as Blake3;
 use typenum::{U1, U2};
@@ -16,7 +16,7 @@ fn main() {
     let encoding = LigeroEncoding::<ft253_192::Ft253_192>::new_from_dims(rows, columns);
     let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
     // let rho =
-    print!("rho");
+    print!("{}",ft253_192::Ft253_192::NUM_BITS);
 }
 
 
