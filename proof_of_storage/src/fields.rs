@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::fs::File;
 use std::io::Read;
 use ff::PrimeField;
@@ -25,8 +26,10 @@ where
 
     let field_element_capacity: usize = ft253_192::Ft253_192::CAPACITY as usize;
     let field_element_byte_width: usize = field_element_capacity / 8;
+    let u128_byte_width: usize = 16;
+    let read_in_byte_width = min(u128_byte_width, field_element_byte_width);
 
-    buffer.chunks(field_element_byte_width)
+    buffer.chunks(read_in_byte_width)
         .map(|bytes| {
             let mut number = u128::from_be_bytes(bytes.try_into().unwrap());
             F::from_u128(number)
