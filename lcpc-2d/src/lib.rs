@@ -652,6 +652,8 @@ where
     assert!((n_rows - 1) * n_per_row < coeffs_in.len());
     assert!(enc.dims_ok(n_per_row, n_cols));
 
+    let zero = (<E>::F as Field::zero).clone();
+
     // matrix (encoded as a vector)
     // XXX(zk) pad coeffs
     let mut coeffs = vec![FldT::<E>::zero(); n_rows * n_per_row];

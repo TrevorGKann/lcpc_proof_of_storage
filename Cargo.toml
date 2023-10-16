@@ -11,7 +11,7 @@ digest = "0.10"
 
 err-derive = "0.2"
 
-ff = "0.12"
+ff = "0.13"
 ff-derive-num = "0.2"
 fffft = "0.4"
 
