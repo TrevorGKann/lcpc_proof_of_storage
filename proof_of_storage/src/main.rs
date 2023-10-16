@@ -1,3 +1,4 @@
+use std::fs::File;
 use blake3::Hasher as Blake3;
 use ff::{Field, PrimeField};
 use rand::Rng;
@@ -18,14 +19,8 @@ fn main() {
     let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
 
     // let bit_width = ft253_192::Ft253_192::CAPACITY;
-    let mut into_values = [0, 60, 42, 59, 158, 247, 242, 112, 246, 228, 145, 198, 106, 73, 57, 183, 65, 94, 171, 55, 9, 162, 142, 33, 195, 17, 64, 232, 152, 8, 242, 249];
-    into_values[0]=0;
-    let my_repr = ft253_192::Ft253_192Repr(into_values);
-    let my_element = ft253_192::Ft253_192::from_repr_vartime(my_repr);
-    println!("{:?}",into_values);
-    println!("{:?}",my_repr);
-    println!("{:?}",my_element);
-    println!("{:?}",ft253_192::Ft253_192::from_str_vartime("106302304611463203484338056704090686885312604975681252400313016821484155641"));
+    let vec_of_field_elements_from_file = fields::read_file_to_field_elements_vec::<ft253_192::Ft253_192>("proof_of_storage/test_file.txt");
+    println!("vec_of_field_elements_from_file: {:?}", vec_of_field_elements_from_file);
 }
 
 
