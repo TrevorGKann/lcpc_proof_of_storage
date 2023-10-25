@@ -12,8 +12,8 @@ digest = "0.10"
 err-derive = "0.2"
 
 ff = "0.13"
-ff-derive-num = "0.2"
-fffft = "0.4"
+ff-derive-num = {path = "../ff-derive-num"}
+fffft = {path = "../fffft"}
 
 itertools = "0.10"
 
