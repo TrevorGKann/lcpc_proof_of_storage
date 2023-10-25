@@ -11,7 +11,7 @@
 use ff::Field;
 
 pub mod ft63 {
-    use ff::PrimeField;
+    use ff::{Field, PrimeField};
     use ff_derive_num::Num;
     use serde::{Deserialize, Serialize};
 

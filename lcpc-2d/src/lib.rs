@@ -87,6 +87,8 @@ pub trait LcEncoding: Clone + std::fmt::Debug + Sync {
     /// Error type for encoding
     type Err: std::fmt::Debug + std::error::Error + Send;
 
+
+
     /// Encoding function
     fn encode<T: AsMut<[Self::F]>>(&self, inp: T) -> Result<(), Self::Err>;
 
@@ -652,12 +654,10 @@ where
     assert!((n_rows - 1) * n_per_row < coeffs_in.len());
     assert!(enc.dims_ok(n_per_row, n_cols));
 
-    let zero = (<E>::F as Field::zero).clone();
-
     // matrix (encoded as a vector)
     // XXX(zk) pad coeffs
-    let mut coeffs = vec![FldT::<E>::zero(); n_rows * n_per_row];
-    let mut comm = vec![FldT::<E>::zero(); n_rows * n_cols];
+    let mut coeffs = vec![FldT::<E>::ZERO; n_rows * n_per_row];
+    let mut comm = vec![FldT::<E>::ZERO; n_rows * n_cols];
 
     // local copy of coeffs with padding
     coeffs
@@ -905,7 +905,7 @@ where
         {
             let mut tmp = Vec::with_capacity(n_cols);
             tmp.extend_from_slice(&proof.p_random_vec[i][..]);
-            tmp.resize(n_cols, FldT::<E>::zero());
+            tmp.resize(n_cols, FldT::<E>::ZERO);
             enc.encode(&mut tmp)?;
             p_random_fft.push(tmp);
         };
@@ -937,7 +937,7 @@ where
     let p_eval_fft = {
         let mut tmp = Vec::with_capacity(n_cols);
         tmp.extend_from_slice(&proof.p_eval[..]);
-        tmp.resize(n_cols, FldT::<E>::zero());
+        tmp.resize(n_cols, FldT::<E>::ZERO);
         enc.encode(&mut tmp)?;
         tmp
     };
@@ -970,8 +970,8 @@ where
     Ok(inner_tensor
         .par_iter()
         .zip(&proof.p_eval[..])
-        .fold(FldT::<E>::zero, |a, (t, e)| a + *t * e)
-        .reduce(FldT::<E>::zero, |a, v| a + v))
+        .fold(|| FldT::<E>::ZERO, |a, (t, e)| a + *t * e)
+        .reduce(|| FldT::<E>::ZERO, |a, v| a + v))
 }
 
 // Check a column opening
@@ -1017,7 +1017,7 @@ where
     let tensor_eval = tensor
         .iter()
         .zip(&column.col[..])
-        .fold(FldT::<E>::zero(), |a, (t, e)| a + *t * e);
+        .fold(FldT::<E>::ZERO, |a, (t, e)| a + *t * e);
 
     poly_eval == &tensor_eval
 }
@@ -1053,7 +1053,7 @@ where
             let rand_tensor: Vec<FldT<E>> = repeat_with(|| FldT::<E>::random(&mut deg_test_rng))
                 .take(comm.n_rows)
                 .collect();
-            let mut tmp = vec![FldT::<E>::zero(); comm.n_per_row];
+            let mut tmp = vec![FldT::<E>::ZERO; comm.n_per_row];
             collapse_columns::<E>(
                 &comm.coeffs,
                 &rand_tensor,
@@ -1074,7 +1074,7 @@ where
 
     // next, evaluate the polynomial using the supplied tensor
     let p_eval = {
-        let mut tmp = vec![FldT::<E>::zero(); comm.n_per_row];
+        let mut tmp = vec![FldT::<E>::ZERO; comm.n_per_row];
         collapse_columns::<E>(
             &comm.coeffs,
             outer_tensor,
@@ -1212,7 +1212,7 @@ where
     }
 
     // allocate result and compute
-    let mut poly = vec![FldT::<E>::zero(); comm.n_per_row];
+    let mut poly = vec![FldT::<E>::ZERO; comm.n_per_row];
     collapse_columns::<E>(
         &comm.coeffs,
         tensor,
@@ -1238,7 +1238,7 @@ where
         return Err(ProverError::OuterTensor);
     }
 
-    let mut poly = vec![FldT::<E>::zero(); comm.n_per_row];
+    let mut poly = vec![FldT::<E>::ZERO; comm.n_per_row];
     for (row, tensor_val) in tensor.iter().enumerate() {
         for (col, val) in poly.iter_mut().enumerate() {
             let entry = row * comm.n_per_row + col;
@@ -1262,7 +1262,7 @@ where
         return Err(ProverError::OuterTensor);
     }
 
-    let mut poly_fft = vec![FldT::<E>::zero(); comm.n_cols];
+    let mut poly_fft = vec![FldT::<E>::ZERO; comm.n_cols];
     for (coeffs, tensorval) in comm.comm.chunks(comm.n_cols).zip(tensor.iter()) {
         for (coeff, polyval) in coeffs.iter().zip(poly_fft.iter_mut()) {
             *polyval += *coeff * tensorval;
