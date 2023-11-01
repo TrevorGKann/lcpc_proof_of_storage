@@ -1,10 +1,9 @@
 use std::cmp::min;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::mem;
+
 use ff::PrimeField;
-use itertools::Itertools;
-use crate::fields::ft253_192::Ft253_192;
 
 pub mod ft253_192 {
     use ff::PrimeField;
@@ -33,16 +32,16 @@ where
     // let debug_number = u128::from_be_bytes([0;15]);
 
     buffer.chunks(read_in_byte_width)
-        .map(|bytes| { //todo need to add from le variant
-            println!("bytes: {:?}", bytes);
+        .map(|bytes| { //todo need to add from_le variant,
+            // i don't know how to determine endianness though atm
             if bytes.len() < u128_byte_width {
                 let mut bytes = bytes.to_vec();
                 bytes.resize(u128_byte_width, 0);
                 let bytes: [u8; mem::size_of::<u128>()] = bytes.try_into().unwrap();
-                let mut number = u128::from_be_bytes(bytes);
+                let number = u128::from_be_bytes(bytes);
                 F::from_u128(number)
             } else {
-                let mut number = u128::from_be_bytes(bytes.try_into().unwrap());
+                let number = u128::from_be_bytes(bytes.try_into().unwrap());
                 F::from_u128(number)
             }
         })
