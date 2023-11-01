@@ -47,3 +47,33 @@ where
         })
         .collect()
 }
+
+pub(crate) fn field_elements_vec_to_file<F>(path: &str, field_elements: &[F])
+where
+    F: ff::PrimeField,
+{
+    let mut file = File::create(path).unwrap();
+    let field_element_capacity: usize = ft253_192::Ft253_192::CAPACITY as usize;
+    let field_element_byte_width: usize = field_element_capacity / 8;
+    let u128_byte_width: usize = mem::size_of::<u128>(); //=16 u8s
+    let write_out_byte_width = min(u128_byte_width, field_element_byte_width);
+
+    for field_element in field_elements {
+        let repr = field_element.to_repr();
+        let number = repr.as_ref();
+        let write_buffer = &number[write_out_byte_width..];
+
+        //check if we are looking at the last `field_element` in `field_elements`
+        //if so, we need to drop trailing zeroes as well
+        if field_element == field_elements.last().unwrap() {
+            let mut write_buffer = write_buffer.to_vec();
+            while write_buffer.last() == Some(&0) {
+                write_buffer.pop();
+            }
+            file.write_all(&write_buffer).unwrap();
+        } else {
+            file.write_all(write_buffer).unwrap();
+        }
+    }
+
+}
