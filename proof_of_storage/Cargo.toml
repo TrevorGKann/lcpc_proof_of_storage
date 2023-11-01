@@ -27,3 +27,6 @@ rand_core.workspace = true
 serde.workspace = true
 subtle.workspace = true
 memmap = "0.7.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
