@@ -29,7 +29,6 @@ where
     let field_element_byte_width: usize = field_element_capacity / 8;
     let u128_byte_width: usize = mem::size_of::<u128>(); //=16 u8s
     let read_in_byte_width = min(u128_byte_width, field_element_byte_width);
-    // let debug_number = u128::from_be_bytes([0;15]);
 
     buffer.chunks(read_in_byte_width)
         .map(|bytes| { //todo need to add from_le variant,
