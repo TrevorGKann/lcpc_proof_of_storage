@@ -9,6 +9,7 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use ff::Field;
 use merlin::Transcript;
+use lcpc_2d::LcEncoding;
 
 mod fields;
 mod tests;
@@ -17,14 +18,11 @@ fn main() {
     //Create a compact commit off a matrixLigero encoding with a Rho of 2
     // let test_file = File::open("proof_of_storage/test_file.txt").unwrap();
     let data: Vec<Ft253_192> = fields::read_file_to_field_elements_vec("proof_of_storage/test_file.txt");
-    println!("data: {:?}\n", data);
     let data_width = (data.len() as f32).sqrt().ceil() as usize;
     let matrix_width = data_width.next_power_of_two();
     let matrix_colums = (matrix_width + 1).next_power_of_two();
     let encoding = LigeroEncoding::<Ft253_192>::new_from_dims(matrix_width, matrix_colums);
-    println!("encoding: {:?}\n", encoding);
     let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
-    println!("commit: {:?}\n", commit);
     let root = commit.get_root();
 
     let x = Ft253_192::random(&mut rand::thread_rng());
