@@ -32,5 +32,5 @@ fn file_to_field_to_file(){
     field_elements_vec_to_file(temp_file, &file_as_field);
     assert_eq!(std::fs::read(known_file).unwrap_or(vec![]), std::fs::read(temp_file).unwrap_or(vec![]));
 
-
+    std::mem::drop(cleanup);
 }
