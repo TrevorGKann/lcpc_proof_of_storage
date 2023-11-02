@@ -38,8 +38,12 @@ fn main() {
     };
 
     let mut transcript = Transcript::new(b"test");
+    transcript.append_message(b"polycommit", root.as_ref());
+    transcript.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
 
     let proof = commit.prove(&outer_tensor, &encoding, &mut transcript).unwrap();
+
+    let second_encoding =  LigeroEncoding::<Ft253_192>::new_from_dims(matrix_width, matrix_colums);
     let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut transcript );
 
 
