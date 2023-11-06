@@ -19,6 +19,7 @@ itertools = "0.10"
 
 lcpc-2d = { path = "./lcpc-2d" }
 lcpc-test-fields = { path = "./lcpc-test-fields" }
+proof-of-storage = { path = "./proof-of-storage" }
 
 merlin = "2.0"
 
