@@ -17,7 +17,7 @@ pub mod ft253_192 {
     pub struct Ft253_192([u64; 4]);
 }
 
-pub(crate) fn read_file_to_field_elements_vec<F>(path: &str) -> Vec<F>
+pub fn read_file_to_field_elements_vec<F>(path: &str) -> Vec<F>
 where
     F: ff::PrimeField,
 {
@@ -25,7 +25,7 @@ where
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
 
-    let field_element_capacity: usize = ft253_192::Ft253_192::CAPACITY as usize;
+    let field_element_capacity: usize = F::CAPACITY as usize;
     let field_element_byte_width: usize = field_element_capacity / 8;
     let u128_byte_width: usize = mem::size_of::<u128>(); //=16 u8s
     let read_in_byte_width = min(u128_byte_width, field_element_byte_width);
@@ -52,7 +52,7 @@ where
     F: ff::PrimeField,
 {
     let mut file = File::create(path).unwrap();
-    let field_element_capacity: usize = ft253_192::Ft253_192::CAPACITY as usize;
+    let field_element_capacity: usize = F::CAPACITY as usize;
     let field_element_byte_width: usize = field_element_capacity / 8;
     let u128_byte_width: usize = mem::size_of::<u128>(); //=16 u8s
     let write_out_byte_width = min(u128_byte_width, field_element_byte_width);
