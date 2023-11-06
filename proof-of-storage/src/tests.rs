@@ -1,3 +1,4 @@
+use lcpc_test_fields::ft63::Ft63;
 
 const CLEANUP_VALUES: bool = true;
 
@@ -21,14 +22,17 @@ impl Drop for Cleanup {
 fn file_to_field_to_file(){
     use crate::fields::ft253_192::Ft253_192;
     use crate::fields::{read_file_to_field_elements_vec, field_elements_vec_to_file};
-    use pretty_assertions::{assert_eq, assert_ne};
+    use lcpc_test_fields::ft63::Ft63;
+    use pretty_assertions::{assert_eq};
+
+    type TestField = Ft63;
 
     let known_file = "test_file.txt";
     let temp_file = "temp_file.txt";
 
     let cleanup = Cleanup {files: vec![temp_file.to_string()]};
 
-    let file_as_field: Vec<Ft253_192> = read_file_to_field_elements_vec(known_file);
+    let file_as_field: Vec<TestField> = read_file_to_field_elements_vec(known_file);
     field_elements_vec_to_file(temp_file, &file_as_field);
     assert_eq!(std::fs::read(known_file).unwrap_or(vec![]), std::fs::read(temp_file).unwrap_or(vec![]));
 
