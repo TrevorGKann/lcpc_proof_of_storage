@@ -10,29 +10,34 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use ff::Field;
 use merlin::Transcript;
 use lcpc_2d::LcEncoding;
+use proof_of_storage::fields;
+use lcpc_test_fields;
 
-mod fields;
-mod tests;
+// type TestField = fields::ft253_192::Ft253_192;
+type TestField = lcpc_test_fields::ft63::Ft63;
 
 fn main() {
     //Create a compact commit off a matrixLigero encoding with a Rho of 2
     // let test_file = File::open("proof-of-storage/test_file.txt").unwrap();
-    let data: Vec<Ft253_192> = fields::read_file_to_field_elements_vec("proof-of-storage/test_file.txt");
+
+    println!("TestField::S = {:?}", <TestField as FieldFFT>::S);
+
+    let data: Vec<TestField> = fields::read_file_to_field_elements_vec("proof-of-storage/test_file.txt");
     let data_width = (data.len() as f32).sqrt().ceil() as usize;
     let matrix_width = data_width.next_power_of_two();
     let matrix_colums = (matrix_width + 1).next_power_of_two();
-    let encoding = LigeroEncoding::<Ft253_192>::new_from_dims(matrix_width, matrix_colums);
+    let encoding = LigeroEncoding::<TestField>::new_from_dims(matrix_width, matrix_colums);
     let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
     let root = commit.get_root();
 
-    let x = Ft253_192::random(&mut rand::thread_rng());
+    let x = TestField::random(&mut rand::thread_rng());
 
-    let inner_tensor: Vec<Ft253_192> = iterate(Ft253_192::ONE, |&v| v * x)
+    let inner_tensor: Vec<TestField> = iterate(TestField::ONE, |&v| v * x)
         .take(commit.get_n_per_row())
         .collect();
-    let outer_tensor: Vec<Ft253_192> = {
+    let outer_tensor: Vec<TestField> = {
         let xr = x * inner_tensor.last().unwrap();
-        iterate(Ft253_192::ONE, |&v| v * xr)
+        iterate(TestField::ONE, |&v| v * xr)
             .take(commit.get_n_rows())
             .collect()
     };
@@ -43,7 +48,7 @@ fn main() {
 
     let proof = commit.prove(&outer_tensor, &encoding, &mut transcript).unwrap();
 
-    let second_encoding =  LigeroEncoding::<Ft253_192>::new_from_dims(matrix_width, matrix_colums);
+    let second_encoding =  LigeroEncoding::<TestField>::new_from_dims(matrix_width, matrix_colums);
     let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut transcript );
 
 
