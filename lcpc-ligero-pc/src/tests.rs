@@ -215,6 +215,8 @@ fn proof_sizes() {
 
 #[test]
 fn end_to_end() {
+    type TestField = lcpc_test_fields::ft63::Ft63;
+
     // commit to a random polynomial at a random rate
     let coeffs = get_random_coeffs();
     let enc = LigeroEncoding::new(coeffs.len());
