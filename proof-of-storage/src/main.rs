@@ -16,8 +16,8 @@ mod tests;
 
 fn main() {
     //Create a compact commit off a matrixLigero encoding with a Rho of 2
-    // let test_file = File::open("proof_of_storage/test_file.txt").unwrap();
-    let data: Vec<Ft253_192> = fields::read_file_to_field_elements_vec("proof_of_storage/test_file.txt");
+    // let test_file = File::open("proof-of-storage/test_file.txt").unwrap();
+    let data: Vec<Ft253_192> = fields::read_file_to_field_elements_vec("proof-of-storage/test_file.txt");
     let data_width = (data.len() as f32).sqrt().ceil() as usize;
     let matrix_width = data_width.next_power_of_two();
     let matrix_colums = (matrix_width + 1).next_power_of_two();
@@ -51,7 +51,7 @@ fn main() {
 
 
     // let bit_width = ft253_192::Ft253_192::CAPACITY;
-    // let vec_of_field_elements_from_file = fields::read_file_to_field_elements_vec::<ft253_192::Ft253_192>("proof_of_storage/test_file.txt");
+    // let vec_of_field_elements_from_file = fields::read_file_to_field_elements_vec::<ft253_192::Ft253_192>("proof-of-storage/test_file.txt");
     // println!("vec_of_field_elements_from_file: {:?}", vec_of_field_elements_from_file);
 }
 
