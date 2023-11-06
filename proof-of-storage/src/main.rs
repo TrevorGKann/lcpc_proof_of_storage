@@ -3,12 +3,11 @@
 use std::mem::transmute_copy;
 use blake3::Hasher as Blake3;
 use itertools::iterate;
-
-use fields::ft253_192::Ft253_192;
-use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
-
-use ff::Field;
+use ff::{Field, PrimeField};
+use fffft::FieldFFT;
 use merlin::Transcript;
+
+use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use lcpc_2d::LcEncoding;
 use proof_of_storage::fields;
 use lcpc_test_fields;
