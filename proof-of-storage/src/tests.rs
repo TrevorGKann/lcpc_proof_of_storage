@@ -1,10 +1,10 @@
 
 const CLEANUP_VALUES: bool = true;
 
-struct cleanup{
+struct Cleanup {
     files: Vec<String>,
 }
-impl Drop for cleanup{
+impl Drop for Cleanup {
     fn drop(&mut self) {
         //delete all files in `files` if they exist
         if CLEANUP_VALUES {
@@ -26,7 +26,7 @@ fn file_to_field_to_file(){
     let known_file = "test_file.txt";
     let temp_file = "temp_file.txt";
 
-    let cleanup = cleanup{files: vec![temp_file.to_string()]};
+    let cleanup = Cleanup {files: vec![temp_file.to_string()]};
 
     let file_as_field: Vec<Ft253_192> = read_file_to_field_elements_vec(known_file);
     field_elements_vec_to_file(temp_file, &file_as_field);
