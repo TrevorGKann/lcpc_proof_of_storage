@@ -2,7 +2,7 @@ use ff::{Field, PrimeField};
 use lcpc_test_fields::ft63::Ft63;
 use lcpc_test_fields::random_coeffs;
 use crate::fields::ft253_192::Ft253_192;
-use crate::fields::{read_file_to_field_elements_vec, field_elements_vec_to_file, random_writeable_field_vec};
+use crate::fields::*;
 use pretty_assertions::{assert_eq};
 use rand::Rng;
 
@@ -24,11 +24,10 @@ impl Drop for Cleanup {
 }
 
 
-type TestField = Ft63;
+type TestField = writable_ft63::Writeable_Ft63;
 
 #[test]
 fn file_to_field_to_file(){
-    type TestField = Ft253_192;
 
     let known_file = "test_file.txt";
     let temp_file = "temp_file__file_to_field_to_file__test.txt";
