@@ -1,11 +1,12 @@
 use std::cmp::min;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::mem;
 
 use ff::PrimeField;
 use itertools::Itertools;
 use rand::{random, Rng};
+use crate::fields::writable_ft63::WriteableFt63;
 
 pub enum ByteOrder {
     BigEndian,
@@ -22,6 +23,11 @@ pub trait FieldBytes: PrimeField {
 
     fn from_u64_array(array: &[u64]) -> Option<Self>;
     fn to_u64_array(&self) -> &[u64];
+}
+
+#[derive(Debug)]
+enum FieldErr {
+    InvalidFieldElement,
 }
 
 pub mod ft253_192 {
@@ -41,63 +47,82 @@ pub mod writable_ft63 {
     use ff_derive_num::Num;
     use serde::{Deserialize, Serialize};
     use lcpc_test_fields::ft63::Ft63;
-    use crate::fields::{ByteOrder, FieldBytes};
+    use crate::fields::{ByteOrder, FieldBytes, FieldErr};
 
 
     pub const U64_WIDTH: usize = 1;
-    const U8_WIDTH: usize = U64_WIDTH * 8;
+    pub const U8_WIDTH: usize = U64_WIDTH * 8;
+    pub const ENDIANNESS: ByteOrder = ByteOrder::LittleEndian;
 
     #[derive(PrimeField, Num, Deserialize, Serialize)]
     #[PrimeFieldModulus = "5102708120182849537"]
     #[PrimeFieldGenerator = "10"]
     #[PrimeFieldReprEndianness = "little"]
-    pub struct Writeable_Ft63([u64; 1]);
+    pub struct WriteableFt63([u64; 1]);
 
-    impl Writeable_Ft63 {
+    impl WriteableFt63 {
 
-        fn from_u64_array(input: [u64; U64_WIDTH]) -> Option<Self> {
+        pub fn from_u64_array(input: [u64; U64_WIDTH]) -> Result<Self, FieldErr> {
             let mut ret = Self(input);
             if ret.is_valid() {
-                return Some(ret);
+                return Ok(ret);
             } else {
-                return None;
+                return Err(FieldErr::InvalidFieldElement);
             }
         }
 
-        fn to_u64_array(&self) -> [u64; 1] {
+        pub fn to_u64_array(&self) -> [u64; 1] {
             self.0
         }
     }
 }
 
-pub fn read_file_to_field_elements_vec<F>(path: &str) -> Vec<F>
-where
-    F: FieldBytes,
+pub fn read_file_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
 {
     let mut file = File::open(path).unwrap();
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
 
-    let field_element_capacity: usize = F::CAPACITY as usize;
-    let field_element_byte_width: usize = field_element_capacity / 8;
-    let u128_byte_width: usize = mem::size_of::<u128>(); //=16 u8s
-    let read_in_byte_width = min(u128_byte_width, field_element_byte_width);
+    let read_in_bytes = (WriteableFt63::CAPACITY / 8) as usize;
 
-    buffer.chunks(read_in_byte_width)
-        .map(|bytes| { //todo need to add from_le variant,
-            // i don't know how to determine endianness though atm
-            if bytes.len() < u128_byte_width {
-                let mut bytes = bytes.to_vec();
-                bytes.resize(u128_byte_width, 0);
-                let bytes: [u8; mem::size_of::<u128>()] = bytes.try_into().unwrap();
-                let number = u128::from_be_bytes(bytes);
-                F::from_u128(number)
-            } else {
-                let number = u128::from_be_bytes(bytes.try_into().unwrap());
-                F::from_u128(number)
+    buffer.chunks(read_in_bytes)
+        .map(|bytes| { //todo need to add from_le/from_be variants
+            let mut full_length_byte_array = [0u8; mem::size_of::<u64>()];
+            match writable_ft63::ENDIANNESS {
+                ByteOrder::BigEndian => {
+                    full_length_byte_array[mem::size_of::<u64>() - bytes.len()..].copy_from_slice(bytes);
+                },
+                ByteOrder::LittleEndian => {
+                    full_length_byte_array[..bytes.len()].copy_from_slice(bytes);
+                }
             }
+            let u64_array = [u64::from_le_bytes(full_length_byte_array)];
+            WriteableFt63::from_u64_array(u64_array).unwrap()
+            // if bytes.len() < read_in_bytes {
+            //     let mut bytes = bytes.to_vec();
+            //     bytes.resize(u64_byte_width, 0);
+            //     let bytes: [u8; mem::size_of::<u128>()] = bytes.try_into().unwrap();
+            //     let number = u128::from_be_bytes(bytes);
+            //     F::from_u128(number)
+            // } else {
+            //     let number = u128::from_be_bytes(bytes.try_into().unwrap());
+            //     F::from_u128(number)
+            // }
         })
         .collect()
+}
+
+fn byte_array_to_u64_array(input: &[u8], endianness: ByteOrder) -> [u64;1]{
+    let mut ret = [0u64;1];
+    match endianness {
+        ByteOrder::BigEndian => {
+            ret[0] = u64::from_be_bytes(input.try_into().unwrap());
+        },
+        ByteOrder::LittleEndian => {
+            ret[0] = u64::from_le_bytes(input.try_into().unwrap());
+        }
+    }
+    ret
 }
 
 pub fn field_elements_vec_to_file<F>(path: &str, field_elements: &Vec<F>)

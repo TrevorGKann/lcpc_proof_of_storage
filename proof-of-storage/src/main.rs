@@ -13,7 +13,7 @@ use proof_of_storage::fields;
 use lcpc_test_fields;
 
 // type TestField = fields::ft253_192::Ft253_192;
-type TestField = lcpc_test_fields::ft63::Ft63;
+type TestField = fields::writable_ft63::WriteableFt63;
 
 fn main() {
     //Create a compact commit off a matrixLigero encoding with a Rho of 2

@@ -24,7 +24,7 @@ impl Drop for Cleanup {
 }
 
 
-type TestField = writable_ft63::Writeable_Ft63;
+type TestField = writable_ft63::WriteableFt63;
 
 #[test]
 fn file_to_field_to_file(){
