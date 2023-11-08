@@ -14,7 +14,11 @@ pub enum ByteOrder {
 
 pub trait FieldBytes: PrimeField {
     const BYTE_ORDER: ByteOrder;
-    // const U64_WIDTH: usize;
+    const U64_WIDTH: usize;
+
+    fn from_u8_array(array: &[u8]) -> Option<Self>;
+
+    fn to_u8_array(&self) -> &[u64];
 
     fn from_u64_array(array: &[u64]) -> Option<Self>;
     fn to_u64_array(&self) -> &[u64];
@@ -36,6 +40,7 @@ pub mod writable_ft63 {
     use ff::{Field, PrimeField, FromUniformBytes};
     use ff_derive_num::Num;
     use serde::{Deserialize, Serialize};
+    use lcpc_test_fields::ft63::Ft63;
     use crate::fields::{ByteOrder, FieldBytes};
 
 
@@ -48,20 +53,18 @@ pub mod writable_ft63 {
     #[PrimeFieldReprEndianness = "little"]
     pub struct Writeable_Ft63([u64; 1]);
 
-    impl FieldBytes for Writeable_Ft63 {
-        const BYTE_ORDER: ByteOrder = ByteOrder::LittleEndian;
-        // const U64_WIDTH: usize = U64_WIDTH;
+    impl Writeable_Ft63 {
 
-        fn from_u64_array(input: &[u64]) -> Option<Self> {
-            let mut ret = Self(<[u64; 1]>::try_from(input).unwrap());
-            if ret.is_valid(){
+        fn from_u64_array(input: [u64; U64_WIDTH]) -> Option<Self> {
+            let mut ret = Self(input);
+            if ret.is_valid() {
                 return Some(ret);
             } else {
                 return None;
             }
         }
 
-        fn to_u64_array(&self) -> &[u64] {
+        fn to_u64_array(&self) -> [u64; 1] {
             self.0
         }
     }
