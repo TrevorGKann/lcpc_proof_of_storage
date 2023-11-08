@@ -112,8 +112,8 @@ pub fn read_file_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
         .collect()
 }
 
-fn byte_array_to_u64_array(input: &[u8], endianness: ByteOrder) -> [u64;1]{
-    let mut ret = [0u64;1];
+fn byte_array_to_u64_array<const output_width: usize>(input: &[u8], endianness: ByteOrder) -> [u64;output_width]{
+    let mut ret = [0u64;output_width];
     match endianness {
         ByteOrder::BigEndian => {
             ret[0] = u64::from_be_bytes(input.try_into().unwrap());
@@ -125,25 +125,35 @@ fn byte_array_to_u64_array(input: &[u8], endianness: ByteOrder) -> [u64;1]{
     ret
 }
 
-pub fn field_elements_vec_to_file<F>(path: &str, field_elements: &Vec<F>)
-where
-    F: ff::PrimeField,
+fn u64_array_to_byte_array<'a, const input_width: usize>(input: &[u64; input_width], endianness: ByteOrder) -> &'a[u8]{
+    let mut u8_collection_vector: Vec<u8> = Vec::with_capacity(input_width * mem::size_of::<u64>());
+    for i in 0..input.len() {
+        match endianness {
+            ByteOrder::BigEndian => {
+                u8_collection_vector.extend_from_slice(&input[i].to_be_bytes());
+            },
+            ByteOrder::LittleEndian => {
+                u8_collection_vector.extend_from_slice(&input[i].to_le_bytes());
+            }
+        }
+    }
+    let return_value = u8_collection_vector.as_slice();
+    return return_value
+}
+
+pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63>)
 {
     let mut file = File::create(path).unwrap();
-    let field_element_capacity: usize = F::CAPACITY as usize;
-    let field_element_byte_width: usize = field_element_capacity / 8;
-    let u128_byte_width: usize = mem::size_of::<u128>(); //=16 u8s
-    let write_out_byte_width = min(u128_byte_width, field_element_byte_width);
 
-    for field_element in field_elements {
-        let repr = field_element.to_repr();
-        let number = repr.as_ref();
-        //todo: need to adjust based on BE or LE repr
-        let write_buffer = &number[number.len()-write_out_byte_width..];
+    let write_out_byte_width = (WriteableFt63::CAPACITY / 8) as usize;
+
+    for (index, field_element) in field_elements.iter().enumerate() {
+
+        let write_buffer = u64_array_to_byte_array::<1>(&field_element.to_u64_array(), writable_ft63::ENDIANNESS);
 
         //check if we are looking at the last `field_element` in `field_elements`
         //if so, we need to drop trailing zeroes as well
-        if field_element == field_elements.last().unwrap() {
+        if index == field_elements.len()-1 {
             let mut write_buffer = write_buffer.to_vec();
             while write_buffer.last() == Some(&0) {
                 write_buffer.pop();
