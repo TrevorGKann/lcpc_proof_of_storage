@@ -11,7 +11,7 @@
 use ff::Field;
 
 pub mod ft63 {
-    use ff::{Field, PrimeField};
+    use ff::{Field, PrimeField, FromUniformBytes};
     use ff_derive_num::Num;
     use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,17 @@ pub mod ft63 {
     #[PrimeFieldGenerator = "10"]
     #[PrimeFieldReprEndianness = "little"]
     pub struct Ft63([u64; 1]);
+
+    impl Ft63 {
+        pub fn from_array(input: [u64; 1]) -> Option<Self>{
+            let mut ret = Ft63(input);
+            if ret.is_valid(){
+                return Some(ret);
+            } else {
+                return None;
+            }
+        }
+    }
 }
 
 pub mod ft127 {
