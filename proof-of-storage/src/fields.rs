@@ -26,7 +26,7 @@ pub trait FieldBytes: PrimeField {
 }
 
 #[derive(Debug)]
-enum FieldErr {
+pub enum FieldErr {
     InvalidFieldElement,
 }
 
