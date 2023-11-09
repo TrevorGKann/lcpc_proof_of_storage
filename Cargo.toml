@@ -39,3 +39,6 @@ sprs = "0.10"
 subtle = "2.2"
 
 typenum = "1.13"
+
+
+pretty_assertions = "1.4.0"

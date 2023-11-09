@@ -113,13 +113,22 @@ pub fn read_file_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
 }
 
 fn byte_array_to_u64_array<const output_width: usize>(input: &[u8], endianness: ByteOrder) -> [u64;output_width]{
+    let mut full_length_byte_array = [0u8; mem::size_of::<u64>()];
+    match writable_ft63::ENDIANNESS {
+        ByteOrder::BigEndian => {
+            full_length_byte_array[mem::size_of::<u64>() - input.len()..].copy_from_slice(input);
+        },
+        ByteOrder::LittleEndian => {
+            full_length_byte_array[..input.len()].copy_from_slice(input);
+        }
+    }
     let mut ret = [0u64;output_width];
     match endianness {
         ByteOrder::BigEndian => {
-            ret[0] = u64::from_be_bytes(input.try_into().unwrap());
+            ret[0] = u64::from_be_bytes(full_length_byte_array);
         },
         ByteOrder::LittleEndian => {
-            ret[0] = u64::from_le_bytes(input.try_into().unwrap());
+            ret[0] = u64::from_le_bytes(full_length_byte_array);
         }
     }
     ret
@@ -178,24 +187,19 @@ pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63
 
 }
 
-pub fn random_writeable_field_vec<F>(log_len: usize) -> Vec<F>
-where
-    F: ff::PrimeField,
+pub fn random_writeable_field_vec(log_len: usize) -> Vec<WriteableFt63>
 {
     use std::iter::repeat_with;
 
     let mut rng = rand::thread_rng();
 
-    let field_element_capacity: usize = F::CAPACITY as usize;
-    let field_element_byte_width: usize = field_element_capacity / 8;
-    let u128_byte_width: usize = mem::size_of::<u128>(); //=16 u8s
-    let read_in_byte_width = min(u128_byte_width, field_element_byte_width);
-    let max_value = 1u128 << (read_in_byte_width*8);
+    let read_in_bytes = (WriteableFt63::CAPACITY / 8) as usize;
 
     //create a vector of u8 arrays with len `read_in_byte_width` and fill it with random bytes
-    let random_vector: Vec<F> = repeat_with(|| {
-        let random_value = rng.gen_range(0..max_value);
-        F::from_u128(random_value)
+    let random_vector: Vec<WriteableFt63> = repeat_with(|| {
+        let random_u8_vector = repeat_with(|| rng.gen::<u8>()).take(read_in_bytes).collect_vec();
+        let random_u64_array = byte_array_to_u64_array::<1>(&random_u8_vector, writable_ft63::ENDIANNESS);
+        WriteableFt63::from_u64_array(random_u64_array).unwrap()
     }).take(1 << log_len).collect_vec();
     return random_vector
 }
