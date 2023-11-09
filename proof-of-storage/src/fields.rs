@@ -125,7 +125,7 @@ fn byte_array_to_u64_array<const output_width: usize>(input: &[u8], endianness: 
     ret
 }
 
-fn u64_array_to_byte_array<'a, const input_width: usize>(input: &[u64; input_width], endianness: ByteOrder) -> &'a[u8]{
+fn u64_array_to_byte_array<'a, const input_width: usize>(input: &[u64; input_width], endianness: ByteOrder) -> Vec<u8> {
     let mut u8_collection_vector: Vec<u8> = Vec::with_capacity(input_width * mem::size_of::<u64>());
     for i in 0..input.len() {
         match endianness {
@@ -137,8 +137,9 @@ fn u64_array_to_byte_array<'a, const input_width: usize>(input: &[u64; input_wid
             }
         }
     }
-    let return_value = u8_collection_vector.as_slice();
-    return return_value
+    // let return_value = u8_collection_vector.as_slice();
+    // return return_value
+    return u8_collection_vector
 }
 
 pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63>)
@@ -149,18 +150,29 @@ pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63
 
     for (index, field_element) in field_elements.iter().enumerate() {
 
-        let write_buffer = u64_array_to_byte_array::<1>(&field_element.to_u64_array(), writable_ft63::ENDIANNESS);
+        let mut write_buffer = u64_array_to_byte_array::<1>(&field_element.to_u64_array(), writable_ft63::ENDIANNESS);
+
+        let endianness = writable_ft63::ENDIANNESS;
+        while write_buffer.len() > write_out_byte_width {
+            match endianness {
+                ByteOrder::BigEndian => {
+                    write_buffer.remove(0);
+                },
+                ByteOrder::LittleEndian => {
+                    write_buffer.pop();
+                }
+            }
+        }
 
         //check if we are looking at the last `field_element` in `field_elements`
         //if so, we need to drop trailing zeroes as well
         if index == field_elements.len()-1 {
-            let mut write_buffer = write_buffer.to_vec();
             while write_buffer.last() == Some(&0) {
                 write_buffer.pop();
             }
             file.write_all(&write_buffer).unwrap();
         } else {
-            file.write_all(write_buffer).unwrap();
+            file.write_all(&write_buffer).unwrap();
         }
     }
 
