@@ -77,9 +77,7 @@ pub mod writable_ft63 {
     }
 }
 
-pub fn read_file_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
-{
-    let mut file = File::open(path).unwrap();
+pub fn read_file_to_field_elements_vec(file: &mut File) -> Vec<WriteableFt63> {
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
 
@@ -110,6 +108,14 @@ pub fn read_file_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
             // }
         })
         .collect()
+
+}
+
+
+pub fn read_file_path_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
+{
+    let mut file = File::open(path).unwrap();
+    read_file_to_field_elements_vec(&mut file)
 }
 
 fn byte_array_to_u64_array<const output_width: usize>(input: &[u8], endianness: ByteOrder) -> [u64;output_width]{

@@ -40,7 +40,7 @@ mod tests {
 
         let cleanup = Cleanup { files: vec![temp_file.to_string()] };
 
-        let file_as_field: Vec<TestField> = read_file_to_field_elements_vec(known_file);
+        let file_as_field: Vec<TestField> = read_file_path_to_field_elements_vec(known_file);
         field_elements_vec_to_file(temp_file, &file_as_field);
         assert_eq!(std::fs::read(known_file).unwrap_or(vec![]), std::fs::read(temp_file).unwrap_or(vec![]));
 
@@ -55,7 +55,7 @@ mod tests {
 
         let random_field: Vec<TestField> = random_writeable_field_vec(1);
         field_elements_vec_to_file(temp_file, &random_field);
-        let file_as_field: Vec<TestField> = read_file_to_field_elements_vec(temp_file);
+        let file_as_field: Vec<TestField> = read_file_path_to_field_elements_vec(temp_file);
         assert_eq!(random_field, file_as_field);
     }
 
@@ -86,11 +86,11 @@ mod tests {
         use merlin::Transcript;
 
 
-        let data: Vec<TestField> = fields::read_file_to_field_elements_vec("test_file.txt");
+        let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("test_file.txt");
         let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
         let data_realized_width = data_min_width.next_power_of_two();
-        let matrix_colums = (data_realized_width + 1).next_power_of_two();
-        let encoding = LigeroEncoding::<TestField>::new_from_dims(data_realized_width, matrix_colums);
+        let matrix_columns = (data_realized_width + 1).next_power_of_two();
+        let encoding = LigeroEncoding::<TestField>::new_from_dims(data_realized_width, matrix_columns);
         let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
         let root = commit.get_root();
 
@@ -198,7 +198,7 @@ mod tests {
         // type TestField = proof_of_storage::fields::ft253_192::Ft253_192;
 
         // commit to a random polynomial at a random rate
-        let coeffs: Vec<TestField> = read_file_to_field_elements_vec("test_file.txt");
+        let coeffs: Vec<TestField> = read_file_path_to_field_elements_vec("test_file.txt");
         let enc = LigeroEncoding::new(coeffs.len());
         let comm = LigeroCommit::<Blake3, _>::commit(&coeffs, &enc).unwrap();
         // this is the polynomial commitment
@@ -252,7 +252,7 @@ mod tests {
         // type TestField = proof_of_storage::fields::ft253_192::Ft253_192;
 
         // commit to a random polynomial at a random rate
-        let data: Vec<TestField> = read_file_to_field_elements_vec("test_file.txt");
+        let data: Vec<TestField> = read_file_path_to_field_elements_vec("test_file.txt");
 
         let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
         let data_realized_width = data_min_width.next_power_of_two();

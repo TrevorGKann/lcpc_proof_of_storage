@@ -22,7 +22,7 @@ fn main() {
 
     println!("TestField::S = {:?}", <TestField as FieldFFT>::S);
 
-    let data: Vec<TestField> = fields::read_file_to_field_elements_vec("proof-of-storage/test_file.txt");
+    let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("proof-of-storage/test_file.txt");
     let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
     let data_realized_width = data_min_width.next_power_of_two();
     let matrix_colums = (data_realized_width + 1).next_power_of_two();
