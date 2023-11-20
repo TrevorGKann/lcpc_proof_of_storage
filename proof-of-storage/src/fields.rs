@@ -118,7 +118,7 @@ pub fn read_file_path_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
     read_file_to_field_elements_vec(&mut file)
 }
 
-fn byte_array_to_u64_array<const output_width: usize>(input: &[u8], endianness: ByteOrder) -> [u64;output_width]{
+fn byte_array_to_u64_array<const OUTPUT_WIDTH: usize>(input: &[u8], endianness: ByteOrder) -> [u64; OUTPUT_WIDTH]{
     let mut full_length_byte_array = [0u8; mem::size_of::<u64>()];
     match writable_ft63::ENDIANNESS {
         ByteOrder::BigEndian => {
@@ -128,7 +128,7 @@ fn byte_array_to_u64_array<const output_width: usize>(input: &[u8], endianness: 
             full_length_byte_array[..input.len()].copy_from_slice(input);
         }
     }
-    let mut ret = [0u64;output_width];
+    let mut ret = [0u64; OUTPUT_WIDTH];
     match endianness {
         ByteOrder::BigEndian => {
             ret[0] = u64::from_be_bytes(full_length_byte_array);
@@ -140,8 +140,8 @@ fn byte_array_to_u64_array<const output_width: usize>(input: &[u8], endianness: 
     ret
 }
 
-fn u64_array_to_byte_array<'a, const input_width: usize>(input: &[u64; input_width], endianness: ByteOrder) -> Vec<u8> {
-    let mut u8_collection_vector: Vec<u8> = Vec::with_capacity(input_width * mem::size_of::<u64>());
+fn u64_array_to_byte_array<'a, const INPUT_WIDTH: usize>(input: &[u64; INPUT_WIDTH], endianness: ByteOrder) -> Vec<u8> {
+    let mut u8_collection_vector: Vec<u8> = Vec::with_capacity(INPUT_WIDTH * mem::size_of::<u64>());
     for i in 0..input.len() {
         match endianness {
             ByteOrder::BigEndian => {
