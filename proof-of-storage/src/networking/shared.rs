@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::time::Duration;
 
 use blake3::Hasher as Blake3;
@@ -18,124 +19,142 @@ use crate::fields::writable_ft63::WriteableFt63;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum NextMessage {
     //client messages
+    StartFileUpload{file_name: String, row_count: usize, row_size: usize},
     FileRow{row_number: usize},
+    RequestCommit,
     Challenge,
+    EndTransmissions,
 
     //server messages
+    Ready,
     Commit,
     Response,
 }
 
+type PoSField = WriteableFt63;
+type PoSEncoding = LigeroEncoding<WriteableFt63>;
+type PoSCommit = LcCommit<Blake3, PoSEncoding>;
 
-async fn handle_client(mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
-    // Read the file from the client
-    let mut file: File = read_message(&mut stream).await?;
+pub struct ServerStatePerConnection {
+    file_name: String,
+    row_count: usize,
+    row_size: usize,
+    row_number: usize,
+    encoding:  Option<Box<PoSEncoding>>,
+    commitment: Option<Box<PoSCommit>>,
+}
 
-    // Process the file and generate a commitment
-    let commitment = process_file(&mut file);
 
-    // Send the commitment to the client
-    send_message(&mut stream, &commitment).await?;
+async fn handle_client_loop(mut stream: TcpStream)  {
 
-    // Interactive proof: Repeat as needed
+    let state = ServerStatePerConnection {
+        file_name: String::new(),
+        row_count: 0,
+        row_size: 0,
+        row_number: 0,
+        encoding: None,
+        commitment: None,
+    };
+
     loop {
-        // Read the challenge from the client
-        let challenge: Challenge = read_message(&mut stream).await?;
 
-        // Generate a response to the challenge
-        let response = generate_proof_to_challenge(challenge);
+        let next_message_type: NextMessage = read_message(&mut stream).await.unwrap_or(NextMessage::EndTransmissions);
 
-        // Send the response to the client
-        send_message(&mut stream, &response).await?;
+        match next_message_type {
+            NextMessage::StartFileUpload{file_name, row_count, row_size} => {
+                println!("StartFileUpload: file_name: {}, row_count: {}, row_size: {}", file_name, row_count, row_size);
+                download_file(&mut stream, &file_name, row_count, row_size).await.unwrap();
+            },
+            NextMessage::FileRow{row_number} => {
+                println!("FileRow: row_number: {}", row_number);
+            },
+            NextMessage::RequestCommit => {
+                println!("RequestCommit");
+            },
+            NextMessage::Challenge => {
+                println!("Challenge");
+            },
+            NextMessage::EndTransmissions => {
+                println!("EndTransmissions");
+            },
+            _ => {
+                println!("Client should not send a server message type");
+            }
+        }
 
-        // Repeat the loop based on your protocol conditions
-        // You might have a termination condition based on the challenge
     }
 }
 
 
-async fn send_file_and_receive_commitment<D: Digest, E: LcEncoding>(file: File) -> Result<LcCommit<D,E>, Box<dyn std::error::Error>> {
-    // Connect to the server
-    let mut stream = TcpStream::connect("127.0.0.1:8080").await?;
+async fn download_file(mut stream: &TcpStream, file_name: &String, row_count: usize, row_size: usize) -> Result<(), dyn std::error::Error> {
+    let file_name = format!("{}.download", file_name);
+    let new_file = File::create(&file_name).unwrap();
+    let mut file = File::open(&file_name).unwrap();
+    let mut lines_read_so_far = 0;
+    while lines_read_so_far < row_count {
+        let read_line : Vec<u8> = read_message(&mut stream).await.unwrap();
+        file.write_all(&read_line).await.unwrap();
+        lines_read_so_far += 1;
+    }
 
-    // Send the file to the server
-    send_message(&mut stream, &file).await?;
-
-    // Receive the commitment from the server
-    let commitment: LcCommit<D,E> = read_message(&mut stream).await?;
-
-    Ok(commitment)
-}
-
-
-fn process_file<D: Digest, E: LcEncoding>(file: &mut File) -> LcCommit<D, E> {
-    // Process the file and generate a commitment
-    // Replace this with your actual logic
-    let data: Vec<WriteableFt63> = read_file_to_field_elements_vec(file .into());
-    let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
-    let data_realized_width = data_min_width.next_power_of_two();
-    let matrix_columns = (data_realized_width + 1).next_power_of_two();
-    let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_columns);
-    let comm = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
-    return comm;
-}
-
-// Your application-specific logic goes here
-#[derive(Debug, Serialize, Deserialize)]
-struct Challenge {
-    // Your challenge structure goes here
-    // Example:
-    // challenge_data: Vec<u8>,
-}
-
-// Your application-specific logic goes here
-fn generate_proof_to_challenge(challenge: Challenge) -> Response {
-    // Generate a response to the challenge
-    // Replace this with your actual logic
-    Response { /* Your response logic here */ }
-}
-
-// Your application-specific logic goes here
-#[derive(Debug, Serialize, Deserialize)]
-struct Response {
-    // Your response structure goes here
-    // Example:
-    // response_data: Vec<u8>,
+    file.close().await.unwrap();
+    return Ok(())
 }
 
 #[tokio::test]
 async fn main() {
     // Start the server
     tokio::spawn(async {
-        if let Err(e) = start_server().await {
+        if let Err(e) = start_server("127.0.0.1", "8080").await {
             eprintln!("Server error: {}", e);
         }
     });
 
-    // Give the server some time to start
+    // Wait for the server to start up
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    // Create a file for testing
-    let file = File::open("test_file.txt").await.unwrap();
-
-    // Send the file to the server and receive the commitment
-    let response_result = send_file_and_receive_commitment(file).await?;
-
-    // generate challenge and request response from server
+    // Upload a file
+    upload_file( "127.0.0.1", "8080","test_file.txt").await;
 
 }
 
-async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
-    let listening_IP = "127.0.0.1:8080";
-    let listener = TcpListener::bind(listening_IP).await?;
+async fn start_server(ip: &str, port: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let listening_IP = format!("{}:{}", ip, port);
+    let listener = TcpListener::bind(listening_IP.clone()).await?;
     println!("Server listening on {listening_IP}");
 
     while let Ok((stream, _)) = listener.accept().await {
-        tokio::spawn(handle_client(stream));
+        tokio::spawn(handle_client_loop(stream));
     }
 
     Ok(())
 }
+
+async fn upload_file(ip: &str, port: &str, file_name: &str) {
+    let mut stream = TcpStream::connect(format!("{}:{}", ip, port)).await.unwrap();
+    let mut file = File::open(file_name).await.unwrap();
+    let mut data_buffer = Vec::new();
+    file.read_to_end(&mut data_buffer).await.unwrap();
+    let data_width = (data_buffer.len() as f32).sqrt().ceil() as usize;
+    send_message(&stream, &NextMessage::StartFileUpload {
+        file_name: file_name.to_string(),
+        row_count: data_width,
+        row_size: data_width,
+    }).await.unwrap();
+
+    //iterate through chunks to send in the size of row_size
+    let mut chunk_start = 0;
+    while chunk_start < data_buffer.len() {
+        let chunk_end = chunk_start + data_width;
+        let chunk = &data_buffer[chunk_start..min(chunk_end, data_buffer.len())];
+        send_message(&stream, &chunk).await.unwrap();
+        chunk_start = chunk_end;
+    }
+}
+
+
+
+// Helper Functions for sending and receiving serialized structs to the stream
 
 pub async fn read_message<T>(stream: &mut TcpStream) -> Result<T, Box<dyn std::error::Error>>
     where
@@ -147,8 +166,7 @@ pub async fn read_message<T>(stream: &mut TcpStream) -> Result<T, Box<dyn std::e
     Ok(message)
 }
 
-// Helper function to send a message to the stream
-pub async fn send_message<T>(stream: &mut TcpStream, message: &T) -> Result<(), Box<dyn std::error::Error>>
+pub async fn send_message<T>(mut stream: &TcpStream, message: &T) -> Result<(), Box<dyn std::error::Error>>
     where
         T: Serialize,
 {
