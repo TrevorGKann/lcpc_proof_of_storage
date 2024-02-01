@@ -42,14 +42,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // client logic
     let stream = TcpStream::connect("0.0.0.0:8080").await?;
-    let (mut stream, mut sink) = wrap_stream::<ClientMessages,ServerMessages>(stream);
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages,ServerMessages<MyStruct>>(stream);
 
     sink.send(ClientMessages::UserLogin {username: "trevor".to_owned(), password: "password".to_owned()})
-        .await.expect("Failed to send ping to server");
+        .await.expect("Failed to send message to server");
 
     let Some(Ok(transmission)) = stream.next().await else {
-        tracing::error!("Failed to receive pong from server");
-        return core::result::Result::Err(Box::from("Failed to receive pong from server"));
+        tracing::error!("Failed to receive message from server");
+        return core::result::Result::Err(Box::from("Failed to receive message from server"));
     };
     tracing::info!("Client received: {:?}", transmission);
 
@@ -58,18 +58,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 use blake3::Hasher as Blake3;
 use futures::{SinkExt, StreamExt};
+use crate::fields;
+use crate::fields::writable_ft63::WriteableFt63;
 
 async fn handle_client_loop(mut stream: TcpStream) {
-    let (mut stream, mut sink) = wrap_stream::<ServerMessages, ClientMessages>(stream);
+    let (mut stream, mut sink) = wrap_stream::<ServerMessages<MyStruct>, ClientMessages>(stream);
     while let Some(Ok(transmission)) = stream.next().await {
         tracing::info!("Server received: {:?}", transmission);
         match transmission {
             ClientMessages::UserLogin { username, password } => {
                 sink.send(ServerMessages::UserLoginResponse { success: true })
                     .await
-                    .expect("Failed to send pong");
+                    .expect("Failed to send message to client");
             }
             _ => {}
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct MyStruct {
+    field_element: crate::fields::writable_ft63::WriteableFt63,
 }

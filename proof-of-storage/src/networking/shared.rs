@@ -32,9 +32,10 @@ pub(crate) fn wrap_stream<Into, OutOf>(stream: TcpStream) -> (SerStream<OutOf>, 
     let (read, write) = stream.into_split();
     let stream = WrappedStream::new(read, LengthDelimitedCodec::new());
     let sink = WrappedSink::new(write, LengthDelimitedCodec::new());
+    // let sink = DeSink::<Into>::new(sink, Json::default());
     (
         SerStream::new(stream, Json::default()),
-        DeSink::new(sink, Json::default()),
+        DeSink::<Into>::new(sink, Json::default()),
     )
 }
 
@@ -54,10 +55,11 @@ pub enum ClientMessages {
 
 #[derive(Debug, Serialize, Deserialize)]
 // pub enum ServerMessages<D> where D: Digest + FixedOutputReset {
-pub enum ServerMessages{
+pub enum ServerMessages<T> {
+// pub enum ServerMessages{
     UserLoginResponse{success: bool},
     CompactCommit{commit: PoSCommit},
-    // MerklePathExpansion{merkle_paths: Vec<Vec<D>>},
+    MerklePathExpansion{merkle_paths: Vec<T>},
     File{file: Vec<u8>},
     EncodedRow{row: Vec<testField>},
     PolynomialEvaluation{evaluation_result: testField},
