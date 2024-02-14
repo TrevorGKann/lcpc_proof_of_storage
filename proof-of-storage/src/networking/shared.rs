@@ -1,7 +1,5 @@
 use blake3::Hasher as Blake3;
-use blake3::traits::digest;
-use blake3::traits::digest::FixedOutputReset;
-use digest::Digest;
+use futures::Sink;
 use serde::{Deserialize, Serialize};
 use tokio::net::{
     tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -42,25 +40,27 @@ pub(crate) fn wrap_stream<Into, OutOf>(stream: TcpStream) -> (SerStream<OutOf>, 
 type testField = fields::writable_ft63::WriteableFt63;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessages {
-    UserLogin{username: String, password: String},
-    UploadNewFile{filename: String, file: Vec<u8>, rows:usize, columns:usize},
-    RequestFile{filename: String},
-    AppendToFile{filename: String, file: Vec<u8>},
-    EditFileRow{filename: String, row: usize, file: Vec<u8>},
-    RequestFileRow{filename: String, row: usize},
-    RequestEncodedRow{filename: String, row: usize},
-    RequestProof{filename: String, columns_to_verify: Vec<usize>},
-    RequestPolynomialEvaluation{filename: String, evaluation_point: testField},
+    UserLogin {username: String, password: String},
+    UploadNewFile {filename: String, file: Vec<u8>, rows:usize, columns:usize},
+    RequestFile {filename: String},
+    RequestFileRow {filename: String, row: usize},
+    EditFileRow {filename: String, row: usize, file: Vec<u8>},
+    AppendToFile {filename: String, file: Vec<u8>},
+    RequestEncodedColumn {filename: String, row: usize},
+    RequestProof {filename: String, columns_to_verify: Vec<usize>},
+    RequestPolynomialEvaluation {filename: String, evaluation_point: testField},
+    KeepAlive,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-// pub enum ServerMessages<D> where D: Digest + FixedOutputReset {
-pub enum ServerMessages<T> {
-// pub enum ServerMessages{
-    UserLoginResponse{success: bool},
-    CompactCommit{commit: PoSCommit},
-    MerklePathExpansion{merkle_paths: Vec<T>},
-    File{file: Vec<u8>},
-    EncodedRow{row: Vec<testField>},
-    PolynomialEvaluation{evaluation_result: testField},
+pub enum ServerMessages<H> where
+    H: //this doesn't seem to need anything atm, not even serde
+{
+    UserLoginResponse {success: bool},
+    CompactCommit {commit: PoSCommit},
+    MerklePathExpansion {merkle_paths: Vec<H>},
+    File {file: Vec<u8>},
+    EncodedColumn {row: Vec<testField>},
+    PolynomialEvaluation {evaluation_result: testField},
+    KeepAlive,
 }
