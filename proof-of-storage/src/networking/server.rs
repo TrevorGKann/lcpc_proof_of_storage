@@ -194,11 +194,3 @@ async fn handle_client_request_polynomial_evaluation(filename: String, evaluatio
     // send the evaluation to the client
     unimplemented!("handle_client_request_polynomial_evaluation");
 }
-
-
-
-
-#[derive(Serialize, Deserialize, Debug)]
-struct MyStruct {
-    field_element: crate::fields::writable_ft63::WriteableFt63,
-}
