@@ -1,16 +1,15 @@
 use blake3::Hasher as Blake3;
-use futures::Sink;
 use serde::{Deserialize, Serialize};
 use tokio::net::{
     tcp::{OwnedReadHalf, OwnedWriteHalf},
     TcpStream,
 };
 use tokio_serde::{formats::Json, Framed};
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
+
 use lcpc_2d::LcCommit;
 use lcpc_ligero_pc::LigeroEncoding;
-use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use tracing::{debug, info, instrument, subscriber};
-use tracing_subscriber;
+
 use crate::fields;
 use crate::fields::writable_ft63::WriteableFt63;
 
@@ -30,6 +29,7 @@ pub(crate) fn wrap_stream<Into, OutOf>(stream: TcpStream) -> (SerStream<OutOf>, 
     let (read, write) = stream.into_split();
     let stream = WrappedStream::new(read, LengthDelimitedCodec::new());
     let sink = WrappedSink::new(write, LengthDelimitedCodec::new());
+
     // let sink = DeSink::<Into>::new(sink, Json::default());
     (
         SerStream::new(stream, Json::default()),
@@ -37,7 +37,7 @@ pub(crate) fn wrap_stream<Into, OutOf>(stream: TcpStream) -> (SerStream<OutOf>, 
     )
 }
 
-type testField = fields::writable_ft63::WriteableFt63;
+type TestField = fields::writable_ft63::WriteableFt63;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessages {
     UserLogin {username: String, password: String},
@@ -48,8 +48,8 @@ pub enum ClientMessages {
     AppendToFile {filename: String, file: Vec<u8>},
     RequestEncodedColumn {filename: String, row: usize},
     RequestProof {filename: String, columns_to_verify: Vec<usize>},
-    RequestPolynomialEvaluation {filename: String, evaluation_point: testField},
-    KeepAlive,
+    RequestPolynomialEvaluation {filename: String, evaluation_point: TestField },
+    ClientKeepAlive,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,7 +60,7 @@ pub enum ServerMessages<H> where
     CompactCommit {commit: PoSCommit},
     MerklePathExpansion {merkle_paths: Vec<H>},
     File {file: Vec<u8>},
-    EncodedColumn {row: Vec<testField>},
-    PolynomialEvaluation {evaluation_result: testField},
-    KeepAlive,
+    EncodedColumn {row: Vec<TestField>},
+    PolynomialEvaluation {evaluation_result: TestField },
+    ServerKeepAlive,
 }

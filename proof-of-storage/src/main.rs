@@ -1,17 +1,13 @@
 #![feature(core_intrinsics)]
-
-use std::mem::transmute_copy;
 use blake3::Hasher as Blake3;
-use itertools::iterate;
-use ff::{Field, PrimeField};
+use ff::Field;
 use fffft::FieldFFT;
+use itertools::iterate;
 use merlin::Transcript;
 
-use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use lcpc_2d::LcEncoding;
+use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use proof_of_storage::fields;
-use lcpc_test_fields;
-use lcpc_test_fields::ft63::Ft63;
 
 // type TestField = fields::ft253_192::Ft253_192;
 type TestField = fields::writable_ft63::WriteableFt63;

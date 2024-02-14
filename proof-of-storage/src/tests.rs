@@ -1,4 +1,6 @@
 #[cfg(test)]
+
+#[allow(unused)]
 mod tests {
     use ff::{Field, PrimeField};
     use lcpc_test_fields::ft63::Ft63;

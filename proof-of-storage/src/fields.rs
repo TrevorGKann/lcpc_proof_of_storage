@@ -1,11 +1,11 @@
-use std::cmp::min;
 use std::fs::File;
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Write};
 use std::mem;
 
 use ff::PrimeField;
 use itertools::Itertools;
-use rand::{random, Rng};
+use rand::Rng;
+
 use crate::fields::writable_ft63::WriteableFt63;
 
 pub enum ByteOrder {
@@ -43,12 +43,11 @@ pub mod ft253_192 {
 }
 
 pub mod writable_ft63 {
-    use ff::{Field, PrimeField, FromUniformBytes};
+    use ff::PrimeField;
     use ff_derive_num::Num;
     use serde::{Deserialize, Serialize};
-    use lcpc_test_fields::ft63::Ft63;
-    use crate::fields::{ByteOrder, FieldBytes, FieldErr};
 
+    use crate::fields::{ByteOrder, FieldErr};
 
     pub const U64_WIDTH: usize = 1;
     pub const U8_WIDTH: usize = U64_WIDTH * 8;
@@ -63,11 +62,11 @@ pub mod writable_ft63 {
     impl WriteableFt63 {
 
         pub fn from_u64_array(input: [u64; U64_WIDTH]) -> Result<Self, FieldErr> {
-            let mut ret = Self(input);
+            let ret = Self(input);
             if ret.is_valid() {
-                return Ok(ret);
+                Ok(ret)
             } else {
-                return Err(FieldErr::InvalidFieldElement);
+                Err(FieldErr::InvalidFieldElement)
             }
         }
 
@@ -140,21 +139,21 @@ fn byte_array_to_u64_array<const OUTPUT_WIDTH: usize>(input: &[u8], endianness: 
     ret
 }
 
-fn u64_array_to_byte_array<'a, const INPUT_WIDTH: usize>(input: &[u64; INPUT_WIDTH], endianness: ByteOrder) -> Vec<u8> {
+fn u64_array_to_byte_array<const INPUT_WIDTH: usize>(input: &[u64; INPUT_WIDTH], endianness: ByteOrder) -> Vec<u8> {
     let mut u8_collection_vector: Vec<u8> = Vec::with_capacity(INPUT_WIDTH * mem::size_of::<u64>());
-    for i in 0..input.len() {
+    for input_byte in input {
         match endianness {
             ByteOrder::BigEndian => {
-                u8_collection_vector.extend_from_slice(&input[i].to_be_bytes());
+                u8_collection_vector.extend_from_slice(&input_byte.to_be_bytes());
             },
             ByteOrder::LittleEndian => {
-                u8_collection_vector.extend_from_slice(&input[i].to_le_bytes());
+                u8_collection_vector.extend_from_slice(&input_byte.to_le_bytes());
             }
         }
     }
     // let return_value = u8_collection_vector.as_slice();
     // return return_value
-    return u8_collection_vector
+    u8_collection_vector
 }
 
 pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63>)
@@ -207,5 +206,5 @@ pub fn random_writeable_field_vec(log_len: usize) -> Vec<WriteableFt63>
         let random_u64_array = byte_array_to_u64_array::<1>(&random_u8_vector, writable_ft63::ENDIANNESS);
         WriteableFt63::from_u64_array(random_u64_array).unwrap()
     }).take(1 << log_len).collect_vec();
-    return random_vector
+    random_vector
 }
