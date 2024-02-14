@@ -7,7 +7,7 @@ use tokio::net::{
 use tokio_serde::{formats::Json, Framed};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-use lcpc_2d::LcCommit;
+use lcpc_2d::{LcCommit, LcRoot};
 use lcpc_ligero_pc::LigeroEncoding;
 
 use crate::fields;
@@ -42,13 +42,13 @@ type TestField = fields::writable_ft63::WriteableFt63;
 pub enum ClientMessages {
     UserLogin {username: String, password: String},
     UploadNewFile {filename: String, file: Vec<u8>, rows:usize, columns:usize},
-    RequestFile {filename: String},
-    RequestFileRow {filename: String, row: usize},
-    EditFileRow {filename: String, row: usize, file: Vec<u8>},
-    AppendToFile {filename: String, file: Vec<u8>},
-    RequestEncodedColumn {filename: String, row: usize},
-    RequestProof {filename: String, columns_to_verify: Vec<usize>},
-    RequestPolynomialEvaluation {filename: String, evaluation_point: TestField },
+    RequestFile {file_metadata: FileMetadata},
+    RequestFileRow {file_metadata: FileMetadata, row: usize},
+    EditFileRow {file_metadata: FileMetadata, row: usize, file: Vec<u8>},
+    AppendToFile {file_metadata: FileMetadata, file: Vec<u8>},
+    RequestEncodedColumn {file_metadata: FileMetadata, row: usize},
+    RequestProof {file_metadata: FileMetadata, columns_to_verify: Vec<usize>},
+    RequestPolynomialEvaluation {file_metadata: FileMetadata, evaluation_point: TestField },
     ClientKeepAlive,
 }
 
@@ -57,10 +57,21 @@ pub enum ServerMessages<H> where
     H: //this doesn't seem to need anything atm, not even serde
 {
     UserLoginResponse {success: bool},
-    CompactCommit {commit: PoSCommit},
+    CompactCommit {root: LcRoot<Blake3,  LigeroEncoding<WriteableFt63>>, file_metadata: FileMetadata},
     MerklePathExpansion {merkle_paths: Vec<H>},
     File {file: Vec<u8>},
-    EncodedColumn {row: Vec<TestField>},
+    FileRow {row: Vec<u8>},
+    EncodedColumn {col: Vec<TestField>},
     PolynomialEvaluation {evaluation_result: TestField },
     ServerKeepAlive,
+    BadResponse {error: String},
+}
+
+//todo: these should probably be kept in a database internally to the server to keep track of the files
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileMetadata {
+    pub filename: String,
+    pub rows: usize,
+    pub columns: usize,
+    pub end_pointer: usize,
 }
