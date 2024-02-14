@@ -77,6 +77,7 @@ pub mod writable_ft63 {
 }
 
 pub fn read_file_to_field_elements_vec(file: &mut File) -> Vec<WriteableFt63> {
+    // todo: need to convert to async with tokio file
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
 
