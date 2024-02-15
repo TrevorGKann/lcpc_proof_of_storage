@@ -72,6 +72,16 @@ pub enum ServerMessages<H> where
 pub struct FileMetadata {
     pub filename: String,
     pub rows: usize,
-    pub columns: usize,
-    pub end_pointer: usize,
+    pub encoded_columns: usize,
+    pub filesize_in_bytes: usize,
+}
+
+impl FileMetadata {
+    pub fn get_file_columns(&self) -> usize {
+        self.encoded_columns / 2
+    }
+
+    pub fn get_end_coordinates(&self) -> (usize, usize) {
+        (self.rows, self.filesize_in_bytes % self.encoded_columns)
+    }
 }
