@@ -147,10 +147,8 @@ async fn handle_client_user_login(username: String, password: String) -> Interna
 async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, rows: usize, columns: usize) -> InternalServerMessage {
     // save the file to the server
 
-
     // check if rows and columns are valid first
-    if (false) {
-        //todo
+    if (dims_ok(rows, columns, file_data.len())) {
         return ServerMessages::BadResponse { error: "Invalid rows or columns".to_string() };
     }
 
@@ -167,7 +165,7 @@ async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, row
     // let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_colums);
     // let commit = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
     // let root = commit.get_root();
-    let (root, file_metadata) = convert_file_to_commit(&filename)
+    let (root, file_metadata) = convert_file_to_commit(&filename, rows, columns)
         .map_err(|e| {
             tracing::error!("failed to convert file to commit: {:?}", e);
             return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -206,11 +204,11 @@ async fn handle_client_request_file_row(file_metadata: FileMetadata, row: usize)
         .map_err(|e| tracing::error!("failed to open file: {:?}", e))
         .expect("failed to open file");
 
-    let seek_pointer = file_metadata.columns * row;
+    let seek_pointer = file_metadata.encoded_columns * row;
     file.seek(SeekFrom::Start(seek_pointer as u64));
 
-    let mut file_data = Vec::<u8>::with_capacity(file_metadata.columns);
-    file.take(file_metadata.columns as u64).read_to_end(&mut file_data);
+    let mut file_data = Vec::<u8>::with_capacity(file_metadata.encoded_columns);
+    file.take(file_metadata.encoded_columns as u64).read_to_end(&mut file_data);
 
     ServerMessages::FileRow { row: file_data }
 }
@@ -223,6 +221,12 @@ async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, ne
         return make_bad_response("file metadata is invalid".to_string());
     }
 
+    if (new_file_data.len() != file_metadata.encoded_columns) {
+        return make_bad_response("new file data is not the correct length".to_string());
+    }
+
+    //todo need to keep previous file and commit for checking that edit was successful clientside
+
     { //scope for file opening
         let mut file = tokio::fs::File::open(&file_metadata.filename).await
             .map_err(|e| {
@@ -231,7 +235,7 @@ async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, ne
             })
             .expect("failed to open file");
 
-        let seek_pointer = file_metadata.columns * row;
+        let seek_pointer = file_metadata.encoded_columns * row;
         file.seek(SeekFrom::Start(seek_pointer as u64));
 
         file.write_all(&new_file_data).await
@@ -242,24 +246,52 @@ async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, ne
             .expect("failed to write to file");
     }
 
-    let (root, file_metadata) = convert_file_to_commit(&file_metadata.filename)
+    let (root, updated_file_metadata) =
+        convert_file_to_commit(&file_metadata.filename, file_metadata.rows, file_metadata.encoded_columns)
         .map_err(|e| {
             tracing::error!("failed to convert file to commit: {:?}", e);
             return make_bad_response(format!("failed to convert file to commit: {:?}", e));
         })
         .expect("failed to convert file to commit");
 
-    ServerKeepAlive
+    CompactCommit { root, file_metadata: updated_file_metadata }
 }
 
 #[tracing::instrument]
-async fn handle_client_append_to_file(file_metadata: FileMetadata, file: Vec<u8>) -> InternalServerMessage {
+async fn handle_client_append_to_file(file_metadata: FileMetadata, file_data: Vec<u8>) -> InternalServerMessage {
     // append the file to the requested file
 
     if check_file_metadata(&file_metadata).is_err() {
         return make_bad_response("file metadata is invalid".to_string());
     }
-    unimplemented!("handle_client_append_to_file");
+
+    { //scope for file opening
+        let mut file = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&file_metadata.filename).await
+            .map_err(|e| {
+                tracing::error!("failed to open file: {:?}", e);
+                return make_bad_response(format!("failed to open file:  {:?}", e));
+            })
+            .expect("failed to open file");
+
+        file.write_all(&file_data).await
+            .map_err(|e| {
+                tracing::error!("failed to write to file: {:?}", e);
+                return make_bad_response(format!("failed to write to file: {:?}", e));
+            })
+            .expect("failed to write to file");
+    }
+
+    let (root, updated_file_metadata) =
+        convert_file_to_commit(&file_metadata.filename, file_metadata.rows, file_metadata.encoded_columns)
+            .map_err(|e| {
+                tracing::error!("failed to convert file to commit: {:?}", e);
+                return make_bad_response(format!("failed to convert file to commit: {:?}", e));
+            })
+            .expect("failed to convert file to commit");
+
+    CompactCommit { root, file_metadata: updated_file_metadata }
 }
 
 #[tracing::instrument]
@@ -288,7 +320,7 @@ async fn handle_client_request_polynomial_evaluation(file_metadata: FileMetadata
 }
 
 //todo need an option to specify column size
-fn convert_file_to_commit(filename: &str) -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, FileMetadata), Box<dyn std::error::Error>> {
+fn convert_file_to_commit(filename: &str, requested_rows: usize, requested_columns: usize) -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, FileMetadata), Box<dyn std::error::Error>> {
     let field_vector = fields::read_file_path_to_field_elements_vec(filename);
     let data_min_width = (field_vector.len() as f32).sqrt().ceil() as usize;
     let data_realized_width = data_min_width.next_power_of_two();
@@ -300,14 +332,20 @@ fn convert_file_to_commit(filename: &str) -> Result<(LcRoot<Blake3, LigeroEncodi
     let file_metadata = FileMetadata {
         filename: filename.to_string(),
         rows: field_vector.len() / matrix_colums + 1,
-        columns: matrix_colums,
-        end_pointer: field_vector.len(),
+        encoded_columns: matrix_colums,
+        filesize_in_bytes: field_vector.len(),
     };
     Ok((root, file_metadata))
 }
 
 fn make_bad_response(message: String) -> InternalServerMessage {
     BadResponse { error: message }
+}
+
+fn dims_ok(rows: usize, columns: usize, file_size: usize) -> bool {
+    let total_size = rows * columns / 2 >= file_size;
+    let col_power_2 = columns.is_power_of_two();
+    total_size && col_power_2
 }
 
 fn check_file_metadata(file_metadata: &FileMetadata) -> Result<(), Box<dyn std::error::Error>> {
