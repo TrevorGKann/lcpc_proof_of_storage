@@ -15,6 +15,7 @@ use crate::fields;
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::networking::shared::ClientMessages::ClientKeepAlive;
 use crate::networking::shared::ServerMessages::*;
+use crate::File_Metadata::*;
 
 type InternalServerMessage = ServerMessages<String>;
 
@@ -340,6 +341,11 @@ fn convert_file_to_commit(filename: &str, requested_rows: usize, requested_colum
     let root = commit.get_root();
 
     let file_metadata = FileMetadata {
+        stored_server: ServerMetaData {
+            server_name: None,
+            server_ip: "".to_string(),
+            server_port: 0, // todo: dumnmy debug
+        },
         filename: filename.to_string(),
         rows: field_vector.len() / matrix_colums + 1,
         encoded_columns: matrix_colums,

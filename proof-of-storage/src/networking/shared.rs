@@ -13,6 +13,8 @@ use lcpc_ligero_pc::LigeroEncoding;
 use crate::fields;
 use crate::fields::writable_ft63::WriteableFt63;
 
+use crate::File_Metadata::FileMetadata;
+
 
 
 type PoSField = WriteableFt63;
@@ -65,23 +67,4 @@ pub enum ServerMessages<H> where
     PolynomialEvaluation {evaluation_result: TestField },
     ServerKeepAlive,
     BadResponse {error: String},
-}
-
-//todo: these should probably be kept in a database internally to the server to keep track of the files
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FileMetadata {
-    pub filename: String,
-    pub rows: usize,
-    pub encoded_columns: usize,
-    pub filesize_in_bytes: usize,
-}
-
-impl FileMetadata {
-    pub fn get_file_columns(&self) -> usize {
-        self.encoded_columns / 2
-    }
-
-    pub fn get_end_coordinates(&self) -> (usize, usize) {
-        (self.rows, self.filesize_in_bytes % self.encoded_columns)
-    }
 }
