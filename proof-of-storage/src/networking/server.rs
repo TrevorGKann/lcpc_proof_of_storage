@@ -18,26 +18,36 @@ use crate::networking::shared::ServerMessages::*;
 
 type InternalServerMessage = ServerMessages<String>;
 
-#[tokio::test]
-async fn server_main() -> Result<(), Box<dyn std::error::Error>> {
+#[tracing::instrument]
+pub async fn server_main(port: u16, verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
+
+
+    let max_level = match verbosity {
+        1 => tracing::Level::INFO,
+        2 => tracing::Level::DEBUG,
+        3 => tracing::Level::TRACE,
+        _ => tracing::Level::ERROR,
+    };
     let subscriber = tracing_subscriber::fmt()
         .compact()
+        .with_max_level(max_level)
         .finish();
     // use that subscriber to process traces emitted after this point
     tracing::subscriber::set_global_default(subscriber)?;
 
+    tracing::info!("Server starting, verbosity level: {:?}", verbosity);
 
-    let listener = TcpListener::bind("0.0.0.0:8080").await
+    let listening_address = format!("0.0.0.0:{}", port);
+
+    let listener = TcpListener::bind(listening_address).await
         .map_err(|e| tracing::error!("server failed to start: {:?}", e))
         .expect("failed to initialize listener");
 
-    tokio::spawn(async move {
-        //server logic
+    tracing::info!("Server started on port {:?}", listener.local_addr().unwrap());
 
-        while let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(async move { handle_client_loop(stream).await });
-        }
-    });
+    while let Ok((stream, _)) = listener.accept().await {
+        tokio::spawn(async move { handle_client_loop(stream).await });
+    }
     //
     //
     // // client logic
@@ -319,8 +329,8 @@ async fn handle_client_request_polynomial_evaluation(file_metadata: FileMetadata
     unimplemented!("handle_client_request_polynomial_evaluation");
 }
 
-//todo need an option to specify column size
 fn convert_file_to_commit(filename: &str, requested_rows: usize, requested_columns: usize) -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, FileMetadata), Box<dyn std::error::Error>> {
+    //todo need logic to request certain columns and row values
     let field_vector = fields::read_file_path_to_field_elements_vec(filename);
     let data_min_width = (field_vector.len() as f32).sqrt().ceil() as usize;
     let data_realized_width = data_min_width.next_power_of_two();
