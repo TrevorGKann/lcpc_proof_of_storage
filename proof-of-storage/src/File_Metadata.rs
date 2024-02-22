@@ -30,6 +30,16 @@ pub struct FileMetadata {
     pub stored_server: ServerMetaData,
 }
 
+impl fmt::Display for FileMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.stored_server.is_some() {
+            write!(f, "File: {} - {} total bytes, stored on \"{}\"", self.filename, self.filesize_in_bytes, self.stored_server.server_name.unwrap())
+        } else {
+            write!(f, "File: \"{}\" - {} total bytes, stored at {}:", self.filename, self.filesize_in_bytes, self.stored_server.server_ip, self.stored_server.server_port)
+        }
+    }
+}
+
 impl FileMetadata {
     pub fn get_file_columns(&self) -> usize {
         self.encoded_columns / 2
