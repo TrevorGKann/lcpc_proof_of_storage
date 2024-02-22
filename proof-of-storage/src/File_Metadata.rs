@@ -35,7 +35,7 @@ impl fmt::Display for FileMetadata {
         if self.stored_server.is_some() {
             write!(f, "File: {} - {} total bytes, stored on \"{}\"", self.filename, self.filesize_in_bytes, self.stored_server.server_name.unwrap())
         } else {
-            write!(f, "File: \"{}\" - {} total bytes, stored at {}:", self.filename, self.filesize_in_bytes, self.stored_server.server_ip, self.stored_server.server_port)
+            write!(f, "File: \"{}\" - {} total bytes, stored at {}:{}", self.filename, self.filesize_in_bytes, self.stored_server.server_ip, self.stored_server.server_port)
         }
     }
 }
