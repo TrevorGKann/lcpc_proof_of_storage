@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use crate::networking::shared::ServerMessages;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerMetaData {
     pub server_name: Option<String>,
     pub server_ip: String,
@@ -42,9 +42,30 @@ impl FileMetadata {
 
 #[tracing::instrument]
 pub async fn read_file_database_from_disk(file_path: String) -> (Vec<ServerMetaData>, Vec<FileMetadata>){
-    let file_data = fs::read(file_path).await.unwrap();
-    // let json = serde_json::from_slice(&file_data).unwrap();
-    unimplemented!()
+    let file_data_result = fs::read(file_path).await;
+    if file_data_result.is_err() {
+        return (vec![], vec![]);
+    }
+    let file_data = file_data_result.unwrap();
+
+    let json = serde_json::from_slice(&file_data).unwrap_or(serde_json::json!({}));
+
+    let server_data_array: Vec<ServerMetaData>;
+    let file_data_array: Vec<FileMetadata>;
+
+    if let Some(servers) = json.get("servers") {
+        server_data_array = serde_json::from_str(servers.as_str().unwrap()).unwrap();
+    } else {
+        server_data_array = vec![];
+    }
+
+    if let Some(files) = json.get("files") {
+        file_data_array = serde_json::from_str(files.as_str().unwrap()).unwrap();
+    } else {
+        file_data_array = vec![];
+    }
+
+    (server_data_array, file_data_array)
 }
 
 #[tracing::instrument]
@@ -55,5 +76,34 @@ pub async fn write_file_database_to_disk(file_path: String, server_data_array: V
         "servers": server_json,
         "files": file_json
     });
-    tokio::fs::write(file_path, combined_json.to_string()).await.unwrap();
+    fs::write(file_path, combined_json.to_string()).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_file_metadata() {
+    let server = ServerMetaData {
+        server_name: Some("test_server".to_string()),
+        server_ip: "0.0.0.0".to_string(),
+        server_port: 8080,
+    };
+    let file = FileMetadata {
+        filename: "test_file".to_string(),
+        rows: 100,
+        encoded_columns: 1000,
+        filesize_in_bytes: 100000,
+        stored_server: server.clone(),
+    };
+    write_file_database_to_disk("test_file_db.json".to_string(), vec![server], vec![file]).await;
+    let (servers, files) = read_file_database_from_disk("test_file_db.json".to_string()).await;
+    assert_eq!(servers.len(), 1);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].filename, "test_file");
+    assert_eq!(files[0].rows, 100);
+    assert_eq!(files[0].encoded_columns, 1000);
+    assert_eq!(files[0].filesize_in_bytes, 100000);
+
+    assert_eq!(files[0].stored_server.server_name.as_ref().unwrap(), "test_server");
+    assert_eq!(files[0].stored_server.server_ip, "0.0.0.0");
+    assert_eq!(files[0].stored_server.server_port, 8080);
+    fs::remove_file("test_file_db.json").await.unwrap();
 }
