@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+
 use proof_of_storage::networking::server::server_main;
 
 #[derive(Parser, Debug)]
@@ -14,7 +15,19 @@ struct PosServerOpts {
 enum ClientSubCommands {
     /// Upload a new file to a remote server
     #[clap(alias = "up")]
-    Upload,
+    Upload {
+        /// The file to upload
+        #[clap(required)]
+        file: std::path::PathBuf,
+
+        /// the server IP to upload the file to
+        #[clap(short, long, default_value = "0.0.0.0")]
+        ip: Option<std::net::IpAddr>,
+
+        /// The number of columns to encode the file with
+        #[clap(short, long, default_value_t = 10)]
+        columns: usize,
+    },
 
     /// Download an existing file from a remote server
     #[clap(alias = "down")]
@@ -38,7 +51,7 @@ enum ClientSubCommands {
         /// verbosity level
         #[clap(short, long, action = clap::ArgAction::Count)]
         verbose: u8,
-    }
+    },
 }
 
 #[tokio::main]
@@ -46,8 +59,9 @@ async fn main() {
     let args = PosServerOpts::parse();
     let subcommand = args.subcommand.unwrap();
     match subcommand {
-        ClientSubCommands::Upload => {
+        ClientSubCommands::Upload { file, ip, columns } => {
             println!("uploading file");
+            upload_file_command(file, ip, columns).await;
         }
         ClientSubCommands::Download => {
             println!("downloading file");
@@ -58,7 +72,7 @@ async fn main() {
         ClientSubCommands::List => {
             println!("listing files");
         }
-        ClientSubCommands::Server{port, verbose} => {
+        ClientSubCommands::Server { port, verbose } => {
             let server_result = server_main(port, verbose).await;
             if let Err(e) = server_result {
                 eprintln!("server error: {}", e);
@@ -66,4 +80,14 @@ async fn main() {
             println!("server terminated");
         }
     }
+}
+
+
+async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAddr>, columns: usize) {
+    let file_name = file.to_str().unwrap().to_string();
+    let server_ip = ip.unwrap().to_string();
+    let (file_metadata, root) = proof_of_storage::networking::client::upload_file(file_name, columns, server_ip).await.unwrap();
+    println!("File upload successful");
+    println!("File Metadata: {:?}", file_metadata);
+    println!("Root: {:?}", root);
 }

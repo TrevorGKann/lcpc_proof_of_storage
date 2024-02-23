@@ -1,6 +1,8 @@
 use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+
 use crate::networking::shared::ServerMessages;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -32,8 +34,8 @@ pub struct FileMetadata {
 
 impl fmt::Display for FileMetadata {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.stored_server.is_some() {
-            write!(f, "File: {} - {} total bytes, stored on \"{}\"", self.filename, self.filesize_in_bytes, self.stored_server.server_name.unwrap())
+        if self.stored_server.server_name.as_ref().is_some() {
+            write!(f, "File: {} - {} total bytes, stored on \"{}\"", self.filename, self.filesize_in_bytes, self.stored_server.server_name.as_ref().unwrap())
         } else {
             write!(f, "File: \"{}\" - {} total bytes, stored at {}:{}", self.filename, self.filesize_in_bytes, self.stored_server.server_ip, self.stored_server.server_port)
         }
@@ -51,7 +53,7 @@ impl FileMetadata {
 }
 
 #[tracing::instrument]
-pub async fn read_file_database_from_disk(file_path: String) -> (Vec<ServerMetaData>, Vec<FileMetadata>){
+pub async fn read_file_database_from_disk(file_path: String) -> (Vec<ServerMetaData>, Vec<FileMetadata>) {
     let file_data_result = fs::read(file_path).await;
     if file_data_result.is_err() {
         return (vec![], vec![]);
@@ -79,7 +81,7 @@ pub async fn read_file_database_from_disk(file_path: String) -> (Vec<ServerMetaD
 }
 
 #[tracing::instrument]
-pub async fn write_file_database_to_disk(file_path: String, server_data_array: Vec<ServerMetaData>, file_data_array: Vec<FileMetadata>){
+pub async fn write_file_database_to_disk(file_path: String, server_data_array: Vec<ServerMetaData>, file_data_array: Vec<FileMetadata>) {
     let server_json = serde_json::to_string(&server_data_array).unwrap();
     let file_json = serde_json::to_string(&file_data_array).unwrap();
     let combined_json = serde_json::json!({

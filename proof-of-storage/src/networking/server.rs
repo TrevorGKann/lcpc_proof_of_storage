@@ -1,28 +1,29 @@
 use std::io::SeekFrom;
+
+use blake3::{Hash, Hasher as Blake3};
 use blake3::traits::digest;
-use serde::{Serialize, Deserialize};
-use tokio::net::{TcpListener, TcpStream};
+use futures::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use tokio_serde::{formats::Json, Serializer, Deserializer};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_serde::{Deserializer, formats::Json, Serializer};
+
 use lcpc_2d::{LcCommit, LcEncoding, LcRoot};
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
-use tokio::fs::File;
-use crate::networking::shared;
-use crate::networking::shared::*;
-use blake3::{Hash, Hasher as Blake3};
-use futures::{SinkExt, StreamExt};
+
 use crate::fields;
 use crate::fields::writable_ft63::WriteableFt63;
+use crate::File_Metadata::*;
+use crate::networking::shared;
+use crate::networking::shared::*;
 use crate::networking::shared::ClientMessages::ClientKeepAlive;
 use crate::networking::shared::ServerMessages::*;
-use crate::File_Metadata::*;
 
 type InternalServerMessage = ServerMessages<String>;
 
 #[tracing::instrument]
 pub async fn server_main(port: u16, verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
-
-
     let max_level = match verbosity {
         1 => tracing::Level::INFO,
         2 => tracing::Level::DEBUG,
@@ -88,8 +89,8 @@ async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::UserLogin { username, password } => {
                 handle_client_user_login(username, password).await
             }
-            ClientMessages::UploadNewFile { filename, file, rows, columns } => {
-                handle_client_upload_new_file(filename, file, rows, columns).await
+            ClientMessages::UploadNewFile { filename, file, columns } => {
+                handle_client_upload_new_file(filename, file, columns).await
             }
             ClientMessages::RequestFile { file_metadata } => {
                 handle_client_request_file(file_metadata).await
@@ -118,7 +119,7 @@ async fn handle_client_loop(mut stream: TcpStream) {
 
         //todo: remove this and implement another way to send the responses of the internal
         // functions while still possibly being able to send a keep alive message from within
-        // the functions
+        // the functions depending on how long each interaction takes
         sink.send(response)
             .await
             .expect("Failed to send message to client");
@@ -155,11 +156,11 @@ async fn handle_client_user_login(username: String, password: String) -> Interna
 }
 
 #[tracing::instrument]
-async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, rows: usize, columns: usize) -> InternalServerMessage {
+async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, columns: usize) -> InternalServerMessage {
     // save the file to the server
 
     // check if rows and columns are valid first
-    if (dims_ok(rows, columns, file_data.len())) {
+    if (dims_ok(columns, file_data.len())) {
         return ServerMessages::BadResponse { error: "Invalid rows or columns".to_string() };
     }
 
@@ -176,7 +177,7 @@ async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, row
     // let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_colums);
     // let commit = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
     // let root = commit.get_root();
-    let (root, file_metadata) = convert_file_to_commit(&filename, rows, columns)
+    let (root, file_metadata) = convert_file_to_commit(&filename, columns)
         .map_err(|e| {
             tracing::error!("failed to convert file to commit: {:?}", e);
             return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -258,12 +259,12 @@ async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, ne
     }
 
     let (root, updated_file_metadata) =
-        convert_file_to_commit(&file_metadata.filename, file_metadata.rows, file_metadata.encoded_columns)
-        .map_err(|e| {
-            tracing::error!("failed to convert file to commit: {:?}", e);
-            return make_bad_response(format!("failed to convert file to commit: {:?}", e));
-        })
-        .expect("failed to convert file to commit");
+        convert_file_to_commit(&file_metadata.filename, file_metadata.encoded_columns)
+            .map_err(|e| {
+                tracing::error!("failed to convert file to commit: {:?}", e);
+                return make_bad_response(format!("failed to convert file to commit: {:?}", e));
+            })
+            .expect("failed to convert file to commit");
 
     CompactCommit { root, file_metadata: updated_file_metadata }
 }
@@ -295,7 +296,7 @@ async fn handle_client_append_to_file(file_metadata: FileMetadata, file_data: Ve
     }
 
     let (root, updated_file_metadata) =
-        convert_file_to_commit(&file_metadata.filename, file_metadata.rows, file_metadata.encoded_columns)
+        convert_file_to_commit(&file_metadata.filename, file_metadata.encoded_columns)
             .map_err(|e| {
                 tracing::error!("failed to convert file to commit: {:?}", e);
                 return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -330,7 +331,7 @@ async fn handle_client_request_polynomial_evaluation(file_metadata: FileMetadata
     unimplemented!("handle_client_request_polynomial_evaluation");
 }
 
-fn convert_file_to_commit(filename: &str, requested_rows: usize, requested_columns: usize) -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, FileMetadata), Box<dyn std::error::Error>> {
+fn convert_file_to_commit(filename: &str, requested_columns: usize) -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, FileMetadata), Box<dyn std::error::Error>> {
     //todo need logic to request certain columns and row values
     let field_vector = fields::read_file_path_to_field_elements_vec(filename);
     let data_min_width = (field_vector.len() as f32).sqrt().ceil() as usize;
@@ -358,10 +359,10 @@ fn make_bad_response(message: String) -> InternalServerMessage {
     BadResponse { error: message }
 }
 
-fn dims_ok(rows: usize, columns: usize, file_size: usize) -> bool {
-    let total_size = rows * columns / 2 >= file_size;
+fn dims_ok(columns: usize, file_size: usize) -> bool {
+    // let total_size = rows * columns / 2 >= file_size;
     let col_power_2 = columns.is_power_of_two();
-    total_size && col_power_2
+    col_power_2
 }
 
 fn check_file_metadata(file_metadata: &FileMetadata) -> Result<(), Box<dyn std::error::Error>> {
