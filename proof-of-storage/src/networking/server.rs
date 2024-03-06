@@ -14,7 +14,7 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::fields;
 use crate::fields::writable_ft63::WriteableFt63;
-use crate::File_Metadata::*;
+use crate::file_metadata::*;
 use crate::networking::shared;
 use crate::networking::shared::*;
 use crate::networking::shared::ClientMessages::ClientKeepAlive;
@@ -188,7 +188,7 @@ async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, col
 }
 
 #[tracing::instrument]
-async fn handle_client_request_file(file_metadata: FileMetadata) -> InternalServerMessage {
+async fn handle_client_request_file(file_metadata: ClientOwnedFileMetadata) -> InternalServerMessage {
     // get the requested file from the server
     // send the file to the client
 
@@ -204,7 +204,7 @@ async fn handle_client_request_file(file_metadata: FileMetadata) -> InternalServ
 }
 
 #[tracing::instrument]
-async fn handle_client_request_file_row(file_metadata: FileMetadata, row: usize) -> InternalServerMessage {
+async fn handle_client_request_file_row(file_metadata: ClientOwnedFileMetadata, row: usize) -> InternalServerMessage {
     // get the requested row from the file
     // send the row to the client
 
@@ -226,7 +226,7 @@ async fn handle_client_request_file_row(file_metadata: FileMetadata, row: usize)
 }
 
 #[tracing::instrument]
-async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, new_file_data: Vec<u8>) -> InternalServerMessage {
+async fn handle_client_edit_file_row(file_metadata: ClientOwnedFileMetadata, row: usize, new_file_data: Vec<u8>) -> InternalServerMessage {
     // edit the requested row in the file
 
     if check_file_metadata(&file_metadata).is_err() {
@@ -270,7 +270,7 @@ async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, ne
 }
 
 #[tracing::instrument]
-async fn handle_client_append_to_file(file_metadata: FileMetadata, file_data: Vec<u8>) -> InternalServerMessage {
+async fn handle_client_append_to_file(file_metadata: ClientOwnedFileMetadata, file_data: Vec<u8>) -> InternalServerMessage {
     // append the file to the requested file
 
     if check_file_metadata(&file_metadata).is_err() {
@@ -307,7 +307,7 @@ async fn handle_client_append_to_file(file_metadata: FileMetadata, file_data: Ve
 }
 
 #[tracing::instrument]
-async fn handle_client_request_encoded_column(file_metadata: FileMetadata, row: usize) -> InternalServerMessage {
+async fn handle_client_request_encoded_column(file_metadata: ClientOwnedFileMetadata, row: usize) -> InternalServerMessage {
     // get the requested column from the file
     // send the column to the client
 
@@ -318,20 +318,20 @@ async fn handle_client_request_encoded_column(file_metadata: FileMetadata, row: 
 }
 
 #[tracing::instrument]
-async fn handle_client_request_proof(file_metadata: FileMetadata, columns_to_verify: Vec<usize>) -> InternalServerMessage {
+async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<usize>) -> InternalServerMessage {
     // get the requested proof from the file
     // send the proof to the client
     unimplemented!("handle_client_request_proof");
 }
 
 #[tracing::instrument]
-async fn handle_client_request_polynomial_evaluation(file_metadata: FileMetadata, evaluation_point: WriteableFt63) -> InternalServerMessage {
+async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedFileMetadata, evaluation_point: WriteableFt63) -> InternalServerMessage {
     // get the requested polynomial evaluation from the file
     // send the evaluation to the client
     unimplemented!("handle_client_request_polynomial_evaluation");
 }
 
-fn convert_file_to_commit(filename: &str, requested_columns: usize) -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, FileMetadata), Box<dyn std::error::Error>> {
+fn convert_file_to_commit(filename: &str, requested_columns: usize) -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, ClientOwnedFileMetadata), Box<dyn std::error::Error>> {
     //todo need logic to request certain columns and row values
     let field_vector = fields::read_file_path_to_field_elements_vec(filename);
     let data_min_width = (field_vector.len() as f32).sqrt().ceil() as usize;
@@ -341,8 +341,8 @@ fn convert_file_to_commit(filename: &str, requested_columns: usize) -> Result<(L
     let commit = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
     let root = commit.get_root();
 
-    let file_metadata = FileMetadata {
-        stored_server: ServerMetaData {
+    let file_metadata = ClientOwnedFileMetadata {
+        stored_server: ServerHost {
             server_name: None,
             server_ip: "".to_string(),
             server_port: 0, // todo: dumnmy debug
@@ -365,6 +365,6 @@ fn dims_ok(columns: usize, file_size: usize) -> bool {
     col_power_2
 }
 
-fn check_file_metadata(file_metadata: &FileMetadata) -> Result<(), Box<dyn std::error::Error>> {
+fn check_file_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<(), Box<dyn std::error::Error>> {
     todo!()
 }
