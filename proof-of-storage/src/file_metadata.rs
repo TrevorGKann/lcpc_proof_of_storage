@@ -60,7 +60,7 @@ impl fmt::Display for ClientOwnedFileMetadata {
 }
 
 #[tracing::instrument]
-pub async fn read_file_database_from_disk(file_path: String) -> (Vec<ServerHost>, Vec<ClientOwnedFileMetadata>) {
+pub async fn read_client_file_database_from_disk(file_path: String) -> (Vec<ServerHost>, Vec<ClientOwnedFileMetadata>) {
     let file_data_result = fs::read(file_path).await;
     if file_data_result.is_err() {
         return (vec![], vec![]);
@@ -88,7 +88,7 @@ pub async fn read_file_database_from_disk(file_path: String) -> (Vec<ServerHost>
 }
 
 #[tracing::instrument]
-pub async fn write_file_database_to_disk(file_path: String, server_data_array: Vec<ServerHost>, file_data_array: Vec<ClientOwnedFileMetadata>) {
+pub async fn write_client_file_database_to_disk(file_path: String, server_data_array: Vec<ServerHost>, file_data_array: Vec<ClientOwnedFileMetadata>) {
     let server_json = serde_json::to_string(&server_data_array).unwrap();
     let file_json = serde_json::to_string(&file_data_array).unwrap();
     let combined_json = serde_json::json!({
@@ -100,7 +100,7 @@ pub async fn write_file_database_to_disk(file_path: String, server_data_array: V
 
 pub struct ServerOwnedFileMetadata {
     pub filename: String,
-    pub owner: String, 
+    pub owner: String,
     pub commitment: PoSCommit,
 }
 
@@ -120,8 +120,8 @@ async fn test_client_owned_file_metadata() {
         filesize_in_bytes: 12800,
         stored_server: server.clone(),
     };
-    write_file_database_to_disk("test_file_db.json".to_string(), vec![server.clone()], vec![file.clone()]).await;
-    let (servers, files) = read_file_database_from_disk("test_file_db.json".to_string()).await;
+    write_client_file_database_to_disk("test_file_db.json".to_string(), vec![server.clone()], vec![file.clone()]).await;
+    let (servers, files) = read_client_file_database_from_disk("test_file_db.json".to_string()).await;
     assert_eq!(servers.len(), 1);
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].filename, file.filename);

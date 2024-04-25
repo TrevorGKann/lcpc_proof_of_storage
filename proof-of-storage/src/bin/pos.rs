@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+use proof_of_storage::file_metadata::{ClientOwnedFileMetadata, read_client_file_database_from_disk, ServerHost, write_client_file_database_to_disk};
 use proof_of_storage::networking::server::server_main;
 
 #[derive(Parser, Debug)]
@@ -7,12 +8,13 @@ use proof_of_storage::networking::server::server_main;
 struct PosServerOpts {
     /// Subcommands for the server
     #[command(subcommand)]
-    subcommand: Option<ClientSubCommands>,
+    subcommand: Option<PoSSubCommands>,
+
 }
 
 #[derive(Subcommand, Debug)]
 // #[command(version, about, long_about = None)]
-enum ClientSubCommands {
+enum PoSSubCommands {
     /// Upload a new file to a remote server
     #[clap(alias = "up")]
     Upload {
@@ -58,25 +60,34 @@ enum ClientSubCommands {
     },
 }
 
+fn isClientCommand(subcommand: &PoSSubCommands) -> bool {
+    match subcommand {
+        PoSSubCommands::Server { .. } => false,
+        _ => true,
+    }
+}
+
+
 #[tokio::main]
 async fn main() {
     let args = PosServerOpts::parse();
     let subcommand = args.subcommand.unwrap();
+
     match subcommand {
-        ClientSubCommands::Upload { file, ip, port, columns } => {
+        PoSSubCommands::Upload { file, ip, port, columns } => {
             println!("uploading file");
             upload_file_command(file, ip, port, columns).await;
         }
-        ClientSubCommands::Download => {
+        PoSSubCommands::Download => {
             println!("downloading file");
         }
-        ClientSubCommands::Proof => {
+        PoSSubCommands::Proof => {
             println!("requesting proof of storage");
         }
-        ClientSubCommands::List => {
-            println!("listing files");
+        PoSSubCommands::List => {
+            list_files().await;
         }
-        ClientSubCommands::Server { port, verbose } => {
+        PoSSubCommands::Server { port, verbose } => {
             let server_result = server_main(port, verbose).await;
             if let Err(e) = server_result {
                 eprintln!("server error: {}", e);
@@ -95,4 +106,17 @@ async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAd
     println!("File upload successful");
     println!("File Metadata: {:?}", file_metadata);
     println!("Root: {:?}", root);
+
+    let (mut hosts_database, mut file_metadata_database) = read_client_file_database_from_disk("file_database".to_string()).await;
+    hosts_database.push(file_metadata.stored_server.clone());
+    file_metadata_database.push(file_metadata);
+    write_client_file_database_to_disk("file_database".to_string(), hosts_database, file_metadata_database).await;
+}
+
+async fn list_files() {
+    let (hosts_database, file_metadata_database) = read_client_file_database_from_disk("file_database".to_string()).await;
+    println!("files:");
+    for file in file_metadata_database { println!("{}", file); }
+    println!("\nhosts:");
+    for host in hosts_database { println!("{}", host); }
 }

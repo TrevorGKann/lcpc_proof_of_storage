@@ -24,7 +24,9 @@ pub async fn upload_file(
     columns: usize,
     server_ip: String,
 ) -> Result<(ClientOwnedFileMetadata, PoSRoot), Box<dyn std::error::Error>> {
-    let mut file_data = fs::read(&file_name).await.unwrap();
+    use std::path::Path;
+    let file_path = Path::new(&file_name);
+    let mut file_data = fs::read(file_path).await.unwrap();
 
 
     tracing::debug!("reading file {} from disk", file_name);
