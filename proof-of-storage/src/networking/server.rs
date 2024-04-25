@@ -20,7 +20,7 @@ use crate::networking::shared::*;
 use crate::networking::shared::ClientMessages::ClientKeepAlive;
 use crate::networking::shared::ServerMessages::*;
 
-type InternalServerMessage = ServerMessages<String>;
+type InternalServerMessage = ServerMessages;
 
 #[tracing::instrument]
 pub async fn server_main(port: u16, verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
@@ -155,9 +155,12 @@ async fn handle_client_user_login(username: String, password: String) -> Interna
     // todo: logic here
 }
 
+/// save the file to the server
 #[tracing::instrument]
 async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, columns: usize) -> InternalServerMessage {
-    // save the file to the server
+    // parse the filename to remove all leading slashes
+    use std::path::Path;
+    let filename = Path::new(&filename).file_name().unwrap().to_str().unwrap();
 
     // check if rows and columns are valid first
     if (dims_ok(columns, file_data.len())) {
@@ -318,7 +321,7 @@ async fn handle_client_request_encoded_column(file_metadata: ClientOwnedFileMeta
 }
 
 #[tracing::instrument]
-async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<usize>) -> InternalServerMessage {
+async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<u64>) -> InternalServerMessage {
     // get the requested proof from the file
     // send the proof to the client
     unimplemented!("handle_client_request_proof");
@@ -349,6 +352,7 @@ fn convert_file_to_commit(filename: &str, requested_columns: usize) -> Result<(L
         },
         filename: filename.to_string(),
         rows: field_vector.len() / matrix_colums + 1,
+        columns: data_realized_width,
         encoded_columns: matrix_colums,
         filesize_in_bytes: field_vector.len(),
     };

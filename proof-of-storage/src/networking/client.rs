@@ -16,14 +16,21 @@ use crate::file_metadata::*;
 use crate::lcpc_online::get_PoS_soudness_n_cols;
 use crate::networking::shared::*;
 
+//todo need to not have this connect each time because it'll have to log in each time too. need to keep a constant connection
 #[tracing::instrument]
-pub async fn upload_file(file_name: String, rows: usize, columns: usize, server_ip: String) -> Result<(ClientOwnedFileMetadata, PoSRoot), Box<dyn std::error::Error>> {
+pub async fn upload_file(
+    file_name: String,
+    // rows: usize,
+    columns: usize,
+    server_ip: String,
+) -> Result<(ClientOwnedFileMetadata, PoSRoot), Box<dyn std::error::Error>> {
     let mut file_data = fs::read(&file_name).await.unwrap();
 
 
     tracing::debug!("reading file {} from disk", file_name);
+
     let mut stream = TcpStream::connect(&server_ip).await.unwrap();
-    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages<String>>(stream);
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
 
     tracing::debug!("sending file to server {}", &server_ip);
     sink.send(ClientMessages::UploadNewFile { filename: file_name, file: file_data, columns })
@@ -57,13 +64,14 @@ pub async fn verify_compact_commit(
     file_metadata: &ClientOwnedFileMetadata,
     root: &PoSRoot,
     cols_to_verify: Vec<u64>,
-    mut stream: &SerStream<ServerMessages<String>>,
-    mut sink: &DeSink<ClientMessages>,
+    stream: &mut SerStream<ServerMessages>,
+    sink: &mut DeSink<ClientMessages>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::debug!("sending proof request for {} to server", &file_metadata.filename);
 
-    sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: vec![0] })
+    sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify })
         .await.expect("Failed to send message to server");
+
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
@@ -71,23 +79,12 @@ pub async fn verify_compact_commit(
     };
     tracing::info!("Client received: {:?}", transmission);
 
-    match transmission {
-        ServerMessages::CompactCommit { root: server_root, file_metadata: server_metadata } => {
-            if root == server_root {
-                tracing::info!("File upload successful");
-                Ok(())
-            } else {
-                tracing::error!("File upload failed: {}", "Server root does not match client root");
-                Err(Box::from("Server root does not match client root"))
-            }
-        }
-        ServerMessages::BadResponse { error } => {
-            tracing::error!("File upload failed: {}", error);
-            Err(Box::from(error))
-        }
-        _ => {
-            tracing::error!("Unknown server response");
-            Err(Box::from("Unknown server response"))
-        }
-    }
+    // match transmission {
+    //     ServerMessages::
+    //     _ => {
+    //         tracing::error!("Unknown server response");
+    //         Err(Box::from("Unknown server response"))
+    //     }
+    // }
+    todo!()
 }

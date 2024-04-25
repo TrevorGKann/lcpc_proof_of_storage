@@ -100,9 +100,11 @@ pub async fn write_file_database_to_disk(file_path: String, server_data_array: V
 
 pub struct ServerOwnedFileMetadata {
     pub filename: String,
+    pub owner: String, 
     pub commitment: PoSCommit,
 }
 
+// TESTS //
 #[tokio::test]
 async fn test_client_owned_file_metadata() {
     let server = ServerHost {

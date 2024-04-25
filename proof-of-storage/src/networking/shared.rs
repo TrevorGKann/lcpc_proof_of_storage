@@ -10,7 +10,7 @@ use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use lcpc_2d::LcRoot;
 use lcpc_ligero_pc::LigeroEncoding;
 
-use crate::fields;
+use crate::{PoSColumn, PoSField};
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::ClientOwnedFileMetadata;
 
@@ -28,14 +28,33 @@ pub(crate) fn wrap_stream<Into, OutOf>(stream: TcpStream) -> (SerStream<OutOf>, 
     let stream = WrappedStream::new(read, LengthDelimitedCodec::new());
     let sink = WrappedSink::new(write, LengthDelimitedCodec::new());
 
-    // let sink = DeSink::<Into>::new(sink, Json::default());
     (
-        SerStream::new(stream, Json::default()),
+        SerStream::<OutOf>::new(stream, Json::default()),
         DeSink::<Into>::new(sink, Json::default()),
     )
 }
 
-type TestField = fields::writable_ft63::WriteableFt63;
+pub struct TypedFramedWrapper<Into, OutOf> {
+    pub stream: SerStream<OutOf>,
+    pub sink: DeSink<Into>,
+    pub server_ip: String,
+}
+pub(crate) async fn wrap_stream_from_ip<Into, OutOf>(server_ip: String) -> TypedFramedWrapper<Into, OutOf> {
+
+    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let (read, write) = stream.into_split();
+    let stream = WrappedStream::new(read, LengthDelimitedCodec::new());
+    let sink = WrappedSink::new(write, LengthDelimitedCodec::new());
+
+    TypedFramedWrapper {
+        stream: SerStream::<OutOf>::new(stream, Json::default()),
+        sink: DeSink::<Into>::new(sink, Json::default()),
+        server_ip,
+    }
+
+}
+
+type TestField = PoSField;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessages {
@@ -46,18 +65,17 @@ pub enum ClientMessages {
     EditFileRow { file_metadata: ClientOwnedFileMetadata, row: usize, file: Vec<u8> },
     AppendToFile { file_metadata: ClientOwnedFileMetadata, file: Vec<u8> },
     RequestEncodedColumn { file_metadata: ClientOwnedFileMetadata, row: usize },
-    RequestProof { file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<usize> },
+    RequestProof { file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<u64> },
     RequestPolynomialEvaluation { file_metadata: ClientOwnedFileMetadata, evaluation_point: TestField },
     ClientKeepAlive,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum ServerMessages<H> where
-    H: //this doesn't seem to need anything atm, not even serde
+pub enum ServerMessages
 {
     UserLoginResponse { success: bool },
     CompactCommit { root: LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, file_metadata: ClientOwnedFileMetadata },
-    MerklePathExpansion { merkle_paths: Vec<H> },
+    MerklePathExpansion { merkle_paths: Vec<PoSColumn> },
     File { file: Vec<u8> },
     FileRow { row: Vec<u8> },
     EncodedColumn { col: Vec<TestField> },
