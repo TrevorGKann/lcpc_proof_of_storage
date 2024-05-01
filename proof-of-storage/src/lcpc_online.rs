@@ -48,6 +48,48 @@ pub fn client_online_verify_column_paths(
     Ok(())
 }
 
+/// Given a set of columns from a root hash commitment, verify that the supplied columns are valid Merkle paths to data.
+pub fn client_online_verify_column_paths_without_full_columns(
+    commitment_root: &PoSRoot,
+    requested_columns: &[usize],
+    received_columns_digests: &[Output<Blake3>],
+    received_column_paths: &Vec<Vec<Output<Blake3>>>,
+) -> VerifierResult<(), ErrT<PoSEncoding>>
+{
+    if received_column_paths.len() != requested_columns.len() {
+        return Err(VerifierError::ColumnEval);
+    }
+
+    let mut digest = Blake3::new();
+
+    for ((col_num, column_path), column_digest)
+    in requested_columns.iter()
+        .zip(received_column_paths.iter())
+        .zip(received_columns_digests.iter())
+    {
+        // check Merkle path
+        let mut hash = column_digest.to_owned();
+        let mut col = col_num.to_owned();
+        for p in column_path {
+            if col % 2 == 0 {
+                Digest::update(&mut digest, &hash);
+                Digest::update(&mut digest, p);
+            } else {
+                Digest::update(&mut digest, p);
+                Digest::update(&mut digest, &hash);
+            }
+            hash = digest.finalize_reset();
+            col >>= 1;
+        }
+
+        let paths_match = hash == (commitment_root.root as Output<Blake3>);
+        if !paths_match {
+            return Err(VerifierError::ColumnEval);
+        }
+    }
+    Ok(())
+}
+
 
 /// Given a set of columns on an initial commitment, verify that the column values match the local encoding of the file
 pub fn client_online_verify_column_leaves(
@@ -102,6 +144,29 @@ pub fn client_verify_commitment(
 
     client_online_verify_column_leaves(locally_derived_column_leaves, requested_columns, &received_columns_leaves)?;
     client_online_verify_column_paths(commitment_root, requested_columns, received_columns)?;
+
+    Ok(())
+}
+
+pub fn client_verify_commitment_without_full_columns(
+    commitment_root: &PoSRoot,
+    locally_derived_column_leaves: &[Output<Blake3>],
+    requested_columns: &[usize],
+    received_column_digests: &[Output<Blake3>],
+    received_column_paths: &Vec<Vec<Output<Blake3>>>,
+    required_columns_for_soundness: usize,
+) -> VerifierResult<(), ErrT<PoSEncoding>>
+{
+    if required_columns_for_soundness < locally_derived_column_leaves.len()
+        || required_columns_for_soundness < requested_columns.len()
+        || required_columns_for_soundness < received_column_digests.len()
+    //todo need to add check that received_column_paths are all the right length
+    {
+        return Err(VerifierError::NumColOpens);
+    }
+
+    client_online_verify_column_leaves(locally_derived_column_leaves, requested_columns, received_column_digests)?;
+    client_online_verify_column_paths_without_full_columns(commitment_root, requested_columns, received_column_digests, received_column_paths)?;
 
     Ok(())
 }
