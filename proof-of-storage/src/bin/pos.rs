@@ -61,7 +61,7 @@ enum PoSSubCommands {
     },
 }
 
-fn isClientCommand(subcommand: &PoSSubCommands) -> bool {
+fn is_client_command(subcommand: &PoSSubCommands) -> bool {
     match subcommand {
         PoSSubCommands::Server { .. } => false,
         _ => true,
@@ -75,7 +75,7 @@ async fn main() {
     let subcommand = args.subcommand.unwrap();
     let verbosity = args.verbose;
 
-    start_tracing(&verbosity, &subcommand).or_else(|e| {
+    let _ = start_tracing(&verbosity, &subcommand).or_else(|e| {
         println!("failed to start tracing server: {:?}", e);
         Ok::<(), Box<dyn std::error::Error>>(())
     });
@@ -106,9 +106,9 @@ async fn main() {
 
 fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<(), Box<dyn std::error::Error>> {
     let max_level = match verbosity {
-        3 => tracing::Level::TRACE,
-        2 => tracing::Level::DEBUG,
         1 => tracing::Level::INFO,
+        2 => tracing::Level::DEBUG,
+        3 => tracing::Level::TRACE,
         _ => tracing::Level::ERROR,
     };
 
