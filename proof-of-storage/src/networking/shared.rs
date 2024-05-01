@@ -39,8 +39,8 @@ pub struct TypedFramedWrapper<Into, OutOf> {
     pub sink: DeSink<Into>,
     pub server_ip: String,
 }
-pub(crate) async fn wrap_stream_from_ip<Into, OutOf>(server_ip: String) -> TypedFramedWrapper<Into, OutOf> {
 
+pub(crate) async fn wrap_stream_from_ip<Into, OutOf>(server_ip: String) -> TypedFramedWrapper<Into, OutOf> {
     let mut stream = TcpStream::connect(&server_ip).await.unwrap();
     let (read, write) = stream.into_split();
     let stream = WrappedStream::new(read, LengthDelimitedCodec::new());
@@ -51,7 +51,6 @@ pub(crate) async fn wrap_stream_from_ip<Into, OutOf>(server_ip: String) -> Typed
         sink: DeSink::<Into>::new(sink, Json::default()),
         server_ip,
     }
-
 }
 
 type TestField = PoSField;
@@ -65,7 +64,7 @@ pub enum ClientMessages {
     EditFileRow { file_metadata: ClientOwnedFileMetadata, row: usize, file: Vec<u8> },
     AppendToFile { file_metadata: ClientOwnedFileMetadata, file: Vec<u8> },
     RequestEncodedColumn { file_metadata: ClientOwnedFileMetadata, row: usize },
-    RequestProof { file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<u64> },
+    RequestProof { file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<usize> },
     RequestPolynomialEvaluation { file_metadata: ClientOwnedFileMetadata, evaluation_point: TestField },
     ClientKeepAlive,
 }
@@ -75,7 +74,7 @@ pub enum ServerMessages
 {
     UserLoginResponse { success: bool },
     CompactCommit { root: LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, file_metadata: ClientOwnedFileMetadata },
-    MerklePathExpansion { merkle_paths: Vec<PoSColumn> },
+    Columns { columns: Vec<PoSColumn> },
     File { file: Vec<u8> },
     FileRow { row: Vec<u8> },
     EncodedColumn { col: Vec<TestField> },

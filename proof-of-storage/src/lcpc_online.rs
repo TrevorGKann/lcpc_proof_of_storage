@@ -13,13 +13,10 @@ pub type ErrT<E> = <E as LcEncoding>::Err;
 
 
 /// retreive a set of columns from a single commitment to send to a remote client for verification
-pub fn server_retreive_columns<D, E>(
+pub fn server_retreive_columns(
     comm: &PoSCommit,
-    requested_columns: &[usize],
+    requested_columns: Vec<usize>,
 ) -> Vec<PoSColumn>
-    where
-        D: Digest,
-        E: LcEncoding,
 {
     // extract the columns to open
     requested_columns
@@ -94,7 +91,7 @@ pub fn client_online_verify_column_paths_without_full_columns(
 /// Given a set of columns on an initial commitment, verify that the column values match the local encoding of the file
 pub fn client_online_verify_column_leaves(
     // optimization: this could either be a random linear combination or just a hash of it
-    locally_derived_column_leaves: &[Output<Blake3>],
+    locally_derived_column_leaves: &Vec<Output<Blake3>>,
     requested_columns: &[usize],
     eceived_column_leaves: &[Output<Blake3>],
 ) -> VerifierResult<(), ErrT<PoSEncoding>>
@@ -118,13 +115,13 @@ pub fn client_online_verify_column_leaves(
 pub fn get_PoS_soudness_n_cols(
     file_metadata: &ClientOwnedFileMetadata,
 ) -> usize {
-    let denominator: f64 = ((1f64 + (file_metadata.columns as f64 / file_metadata.encoded_columns as f64)) / 2f64).log2();
+    let denominator: f64 = ((1f64 + (file_metadata.num_columns as f64 / file_metadata.num_encoded_columns as f64)) / 2f64).log2();
     (-128f64 / denominator).ceil() as usize
 }
 
 pub fn client_verify_commitment(
     commitment_root: &PoSRoot,
-    locally_derived_column_leaves: &[Output<Blake3>],
+    locally_derived_column_leaves: &Vec<Output<Blake3>>,
     requested_columns: &[usize],
     received_columns: &[PoSColumn],
     required_columns_for_soundness: usize,
@@ -150,9 +147,9 @@ pub fn client_verify_commitment(
 
 pub fn client_verify_commitment_without_full_columns(
     commitment_root: &PoSRoot,
-    locally_derived_column_leaves: &[Output<Blake3>],
+    locally_derived_column_leaves: &Vec<Output<Blake3>>,
     requested_columns: &[usize],
-    received_column_digests: &[Output<Blake3>],
+    received_column_digests: &Vec<Output<Blake3>>,
     received_column_paths: &Vec<Vec<Output<Blake3>>>,
     required_columns_for_soundness: usize,
 ) -> VerifierResult<(), ErrT<PoSEncoding>>

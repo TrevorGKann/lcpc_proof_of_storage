@@ -106,10 +106,10 @@ async fn main() {
 
 fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<(), Box<dyn std::error::Error>> {
     let max_level = match verbosity {
-        0 => tracing::Level::INFO,
-        1 => tracing::Level::DEBUG,
-        2 => tracing::Level::TRACE,
-        _ => tracing::Level::ERROR,
+        3 => tracing::Level::TRACE,
+        2 => tracing::Level::DEBUG,
+        1 => tracing::Level::INFO,
+        _ => tracing::Level::ERROR,//0
     };
 
     let subscriber = tracing_subscriber::fmt()

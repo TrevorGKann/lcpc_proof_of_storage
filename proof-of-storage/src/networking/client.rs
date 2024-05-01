@@ -1,6 +1,7 @@
 use blake3::traits::digest;
 use digest::{Digest, FixedOutputReset, Output};
 use futures::{SinkExt, StreamExt};
+use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -13,7 +14,8 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use crate::*;
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
-use crate::lcpc_online::get_PoS_soudness_n_cols;
+use crate::lcpc_online::{client_verify_commitment, get_PoS_soudness_n_cols};
+use crate::networking::server;
 use crate::networking::shared::*;
 
 //todo need to not have this connect each time because it'll have to log in each time too. need to keep a constant connection
@@ -65,13 +67,15 @@ pub async fn upload_file(
 pub async fn verify_compact_commit(
     file_metadata: &ClientOwnedFileMetadata,
     root: &PoSRoot,
-    cols_to_verify: Vec<u64>,
     stream: &mut SerStream<ServerMessages>,
     sink: &mut DeSink<ClientMessages>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::debug!("sending proof request for {} to server", &file_metadata.filename);
 
-    sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify })
+    let mut cols_to_verify = (0..get_PoS_soudness_n_cols(file_metadata)).collect()
+    thread_rng().shuffle(cols_to_verify);//todo needs to be crypto random 
+
+    sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
         .await.expect("Failed to send message to server");
 
 
@@ -79,14 +83,45 @@ pub async fn verify_compact_commit(
         tracing::error!("Failed to receive message from server");
         return Err(Box::from("Failed to receive message from server"));
     };
-    tracing::info!("Client received: {:?}", transmission);
+    tracing::debug!("Client received: {:?}", transmission);
 
-    // match transmission {
-    //     ServerMessages::
-    //     _ => {
-    //         tracing::error!("Unknown server response");
-    //         Err(Box::from("Unknown server response"))
-    //     }
-    // }
+    match transmission {
+        ServerMessages::Columns { columns: received_columns } => {
+            let leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
+            let verification_result = client_verify_commitment(
+                &file_metadata.root,
+                &leaves,
+                &cols_to_verify,
+                &received_columns,
+                get_PoS_soudness_n_cols(file_metadata));
+
+            if verification_result.is_err() {
+                tracing::error!("Failed to ");
+            }
+            todo!();
+        }
+        _ => {
+            tracing::error!("Unexpected server response");
+            todo!("add custom error type for client errors")
+        }
+    }
     todo!()
+}
+
+pub async fn get_processed_column_leaves_from_file(
+    file_metadata: &ClientOwnedFileMetadata,
+    cols_to_verify: Vec<usize>,
+) -> Vec<Output<Blake3>> {
+    let (root, commit, file_metadata) = server::convert_file_to_commit(&file_metadata.filename, file_metadata.num_encoded_columns)
+        .map_err(|e| {
+            tracing::error!("failed to convert file to commit: {:?}", e);
+        })
+        .expect("failed to convert file to commit");
+
+
+    let mut leaves = Vec::with_capacity(cols_to_verify.len());
+    for col in cols_to_verify {
+        leaves.push(commit.hashes[col]);
+    }
+    leaves
 }
