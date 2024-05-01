@@ -11,7 +11,8 @@ struct PosServerOpts {
     subcommand: Option<PoSSubCommands>,
 
     /// verbosity
-    #[arg(global = true), clap(short, long, action = clap::ArgAction::Count)]
+    #[arg(global = true)]
+    #[clap(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 }
 
@@ -74,18 +75,21 @@ async fn main() {
     let subcommand = args.subcommand.unwrap();
     let verbosity = args.verbose;
 
-    start_tracing(&verbosity, &subcommand).ok_or_else(|| println!("failed to start tracing server"));
+    start_tracing(&verbosity, &subcommand).or_else(|e| {
+        println!("failed to start tracing server: {:?}", e);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    });
 
     match subcommand {
         PoSSubCommands::Upload { file, ip, port, columns } => {
-            println!("uploading file");
+            tracing::debug!("uploading file");
             upload_file_command(file, ip, port, columns).await;
         }
         PoSSubCommands::Download => {
-            println!("downloading file");
+            tracing::debug!("downloading file");
         }
         PoSSubCommands::Proof => {
-            println!("requesting proof of storage");
+            tracing::debug!("requesting proof of storage");
         }
         PoSSubCommands::List => {
             list_files().await;
@@ -93,14 +97,14 @@ async fn main() {
         PoSSubCommands::Server { port } => {
             let server_result = server_main(port, verbosity).await;
             if let Err(e) = server_result {
-                eprintln!("server error: {}", e);
+                tracing::error!("server error: {}", e);
             }
-            println!("server terminated");
+            tracing::info!("server terminated");
         }
     }
 }
 
-fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) {
+fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<(), Box<dyn std::error::Error>> {
     let max_level = match verbosity {
         3 => tracing::Level::TRACE,
         2 => tracing::Level::DEBUG,
@@ -114,7 +118,8 @@ fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) {
         .finish();
 
     // use that subscriber to process traces emitted after this point
-    tracing::subscriber::set_global_default(subscriber)?
+    tracing::subscriber::set_global_default(subscriber)?;
+    Ok(())
 }
 
 
@@ -123,9 +128,9 @@ async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAd
     let server_port = port.unwrap();
     let server_ip = ip.unwrap().to_string() + ":" + &server_port.to_string();
     let (file_metadata, root) = proof_of_storage::networking::client::upload_file(file_name, columns, server_ip).await.unwrap();
-    println!("File upload successful");
-    println!("File Metadata: {:?}", file_metadata);
-    println!("Root: {:?}", root);
+    tracing::info!("File upload successful");
+    tracing::debug!("File Metadata: {:?}", file_metadata);
+    tracing::debug!("Root: {:?}", root);
 
     let (mut hosts_database, mut file_metadata_database) = read_client_file_database_from_disk("file_database".to_string()).await;
     hosts_database.push(file_metadata.stored_server.clone());
@@ -134,7 +139,9 @@ async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAd
 }
 
 async fn list_files() {
-    let (hosts_database, file_metadata_database) = read_client_file_database_from_disk("file_database".to_string()).await;
+    let file_database_filename = "file_database".to_string();
+    tracing::debug!("reading files from {}", file_database_filename);
+    let (hosts_database, file_metadata_database) = read_client_file_database_from_disk(file_database_filename).await;
     println!("files:");
     for file in file_metadata_database { println!("{}", file); }
     println!("\nhosts:");
