@@ -156,23 +156,15 @@ async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, col
 
     tokio::fs::write(&filename, file_data).await
         .map_err(|e| tracing::error!("failed to write file: {:?}", e))
-        .expect("failed to write file");
+        .expect("failed to write file"); //todo probably shouldn't be a panic here
 
 
-    // let field_vector = fields::read_file_path_to_field_elements_vec(&filename);
-    //
-    // let data_min_width = (field_vector.len() as f32).sqrt().ceil() as usize;
-    // let data_realized_width = data_min_width.next_power_of_two();
-    // let matrix_colums = (data_realized_width + 1).next_power_of_two();
-    // let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_colums);
-    // let commit = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
-    // let root = commit.get_root();
     let (root, file_metadata) = convert_file_to_commit(&filename, columns)
         .map_err(|e| {
             tracing::error!("failed to convert file to commit: {:?}", e);
             return make_bad_response(format!("failed to convert file to commit: {:?}", e));
         })
-        .expect("failed to convert file to commit");
+        .expect("failed to convert file to commit");  //todo probably shouldn't be a panic here
 
     CompactCommit { root, file_metadata }
 }

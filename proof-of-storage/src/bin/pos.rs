@@ -132,6 +132,9 @@ async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAd
     tracing::debug!("File Metadata: {:?}", file_metadata);
     tracing::debug!("Root: {:?}", root);
 
+    //todo: need to request proof from server
+
+    // add file to file database for the `list` command
     let (mut hosts_database, mut file_metadata_database) = read_client_file_database_from_disk("file_database".to_string()).await;
     hosts_database.push(file_metadata.stored_server.clone());
     file_metadata_database.push(file_metadata);
