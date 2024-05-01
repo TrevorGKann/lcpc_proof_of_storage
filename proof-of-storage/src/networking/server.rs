@@ -24,19 +24,6 @@ type InternalServerMessage = ServerMessages;
 
 #[tracing::instrument]
 pub async fn server_main(port: u16, verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
-    let max_level = match verbosity {
-        1 => tracing::Level::INFO,
-        2 => tracing::Level::DEBUG,
-        3 => tracing::Level::TRACE,
-        _ => tracing::Level::ERROR,
-    };
-    let subscriber = tracing_subscriber::fmt()
-        .compact()
-        .with_max_level(max_level)
-        .finish();
-    // use that subscriber to process traces emitted after this point
-    tracing::subscriber::set_global_default(subscriber)?;
-
     tracing::info!("Server starting, verbosity level: {:?}", verbosity);
 
     let listening_address = format!("0.0.0.0:{}", port);

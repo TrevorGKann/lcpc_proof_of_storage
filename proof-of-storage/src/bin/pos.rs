@@ -10,6 +10,9 @@ struct PosServerOpts {
     #[command(subcommand)]
     subcommand: Option<PoSSubCommands>,
 
+    /// verbosity
+    #[arg(global = true), clap(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
 #[derive(Subcommand, Debug)]
@@ -54,9 +57,6 @@ enum PoSSubCommands {
         #[clap(short, long, default_value_t = 8080)]
         port: u16,
 
-        /// verbosity level
-        #[clap(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
     },
 }
 
@@ -72,6 +72,9 @@ fn isClientCommand(subcommand: &PoSSubCommands) -> bool {
 async fn main() {
     let args = PosServerOpts::parse();
     let subcommand = args.subcommand.unwrap();
+    let verbosity = args.verbose;
+
+    start_tracing(&verbosity, &subcommand).ok_or_else(|| println!("failed to start tracing server"));
 
     match subcommand {
         PoSSubCommands::Upload { file, ip, port, columns } => {
@@ -87,14 +90,31 @@ async fn main() {
         PoSSubCommands::List => {
             list_files().await;
         }
-        PoSSubCommands::Server { port, verbose } => {
-            let server_result = server_main(port, verbose).await;
+        PoSSubCommands::Server { port } => {
+            let server_result = server_main(port, verbosity).await;
             if let Err(e) = server_result {
                 eprintln!("server error: {}", e);
             }
             println!("server terminated");
         }
     }
+}
+
+fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) {
+    let max_level = match verbosity {
+        3 => tracing::Level::TRACE,
+        2 => tracing::Level::DEBUG,
+        1 => tracing::Level::INFO,
+        _ => tracing::Level::ERROR,
+    };
+
+    let subscriber = tracing_subscriber::fmt()
+        .compact()
+        .with_max_level(max_level)
+        .finish();
+
+    // use that subscriber to process traces emitted after this point
+    tracing::subscriber::set_global_default(subscriber)?
 }
 
 
