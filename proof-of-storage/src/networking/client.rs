@@ -64,10 +64,21 @@ pub async fn upload_file(
     }
 }
 
+/// this is a thin wrapper for verify_compact_commit function
+pub async fn request_proof(
+    file_metadata: ClientOwnedFileMetadata,
+    server_ip: String,
+    security_bits: u8,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
+
+    verify_compact_commit(&file_metadata, &mut stream, &mut sink).await
+}
+
 #[tracing::instrument]
 pub async fn verify_compact_commit(
     file_metadata: &ClientOwnedFileMetadata,
-    root: &PoSRoot,
     stream: &mut SerStream<ServerMessages>,
     sink: &mut DeSink<ClientMessages>,
 ) -> Result<(), Box<dyn std::error::Error>> {

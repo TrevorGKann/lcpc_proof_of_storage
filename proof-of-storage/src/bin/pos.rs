@@ -115,16 +115,13 @@ async fn main() {
 
             if file_metadata.is_none() {
                 tracing::error!("file not found in database");
+                return;
             }
 
-            let file_metadata = file_metadata.unwrap();
-            // if ip is supplied use it, otherwise look at the file_metadata's server_host.server_ip and server_host.server_port
-            let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
-                file_metadata.stored_server.server_ip
-            };
-            let server_port = if port.is_some() { port.unwrap() } else {
-                file_metadata.stored_server.server_port
-            };
+            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+
+            tracing::debug!("requesting proof from server");
+            request_proof_command(file_metadata.unwrap(), ip, port, security_bits).await;
         }
         PoSSubCommands::List => {
             list_files().await;
@@ -186,4 +183,18 @@ async fn list_files() {
     for file in file_metadata_database { println!("{}", file); }
     println!("\nhosts:");
     for host in hosts_database { println!("{}", host); }
+}
+
+async fn request_proof_command(file_metadata: ClientOwnedFileMetadata, ip: Option<IpAddr>, port: Option<u16>, security_bits: Option<u8>) {
+    let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
+        file_metadata.stored_server.server_ip.clone()
+    };
+    let server_port = if port.is_some() { port.unwrap() } else {
+        file_metadata.stored_server.server_port.clone()
+    };
+    let server_ip = server_ip + ":" + &server_port.to_string();
+    let security_bits = security_bits.unwrap_or(0);
+
+    let proof = proof_of_storage::networking::client::request_proof(file_metadata, server_ip, security_bits).await.unwrap();
+    tracing::info!("Proof received: {:?}", proof);
 }
