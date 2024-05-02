@@ -1,6 +1,7 @@
 use blake3::traits::digest;
 use digest::{Digest, FixedOutputReset, Output};
 use futures::{SinkExt, StreamExt};
+use rand::seq::IteratorRandom;
 use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -72,8 +73,12 @@ pub async fn verify_compact_commit(
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::debug!("sending proof request for {} to server", &file_metadata.filename);
 
-    let mut cols_to_verify = (0..get_PoS_soudness_n_cols(file_metadata)).collect()
-    thread_rng().shuffle(cols_to_verify);//todo needs to be crypto random 
+    // pick the random columns
+    let mut rng = thread_rng();
+    let vec_of_all_columns: Vec<usize> = (0..file_metadata.num_encoded_columns).collect();
+    let cols_to_verify: Vec<usize> = vec_of_all_columns.iter()
+        .map(|col_index| col_index.to_owned())
+        .choose_multiple(&mut rng, get_PoS_soudness_n_cols(file_metadata));
 
     sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
         .await.expect("Failed to send message to server");
@@ -96,16 +101,17 @@ pub async fn verify_compact_commit(
                 get_PoS_soudness_n_cols(file_metadata));
 
             if verification_result.is_err() {
-                tracing::error!("Failed to ");
+                tracing::error!("Failed to verify colums");
+                //todo return error type
+                return todo!();
             }
-            todo!();
         }
         _ => {
             tracing::error!("Unexpected server response");
             todo!("add custom error type for client errors")
         }
     }
-    todo!()
+    Ok(())
 }
 
 pub async fn get_processed_column_leaves_from_file(

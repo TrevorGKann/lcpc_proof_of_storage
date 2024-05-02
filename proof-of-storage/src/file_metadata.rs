@@ -4,6 +4,7 @@ use blake3::Hasher as Blake3;
 use blake3::traits::digest::Output;
 use fffft::FFTError;
 use serde::{Deserialize, Serialize};
+use serde::de::Error;
 use tokio::fs;
 
 use lcpc_2d::{LcCommit, LcEncoding};
@@ -101,6 +102,42 @@ pub async fn write_client_file_database_to_disk(file_path: String, server_data_a
     fs::write(file_path, combined_json.to_string()).await.unwrap();
 }
 
+#[tracing::instrument]
+pub async fn append_client_file_metadata_to_database(database_file_path: String, metadata_to_add: ClientOwnedFileMetadata)
+                                                     -> Result<(), Box<dyn std::error::Error>>
+{
+    let (mut hosts_database, mut file_metadata_database)
+        = read_client_file_database_from_disk("file_database".to_string()).await;
+
+    if is_client_metadata_unique(file_metadata_database.clone(), metadata_to_add.clone()).await {
+        hosts_database.push(metadata_to_add.stored_server.clone());
+        file_metadata_database.push(metadata_to_add);
+        write_client_file_database_to_disk(database_file_path, hosts_database, file_metadata_database).await;
+        Ok(())
+    } else {
+        Err(Box::from("File already exists in database"))
+    }
+}
+
+pub async fn get_client_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ClientOwnedFileMetadata> {
+    let (_, file_metadata_database) = read_client_file_database_from_disk(database_file_path).await;
+    for metadata in file_metadata_database {
+        if metadata.filename == filename {
+            return Some(metadata);
+        }
+    }
+    None
+}
+
+pub async fn is_client_metadata_unique(current_database: Vec<ClientOwnedFileMetadata>, new_metadata: ClientOwnedFileMetadata) -> bool {
+    for metadata in current_database {
+        if metadata.filename == new_metadata.filename {
+            return false;
+        }
+    }
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerOwnedFileMetadata {
     pub filename: String,
@@ -156,6 +193,7 @@ async fn test_client_owned_file_metadata() {
         server_ip: "0.0.0.0".to_string(),
         server_port: 8080,
     };
+
     let file = ClientOwnedFileMetadata {
         filename: "test_file".to_string(),
         num_rows: 100,
@@ -165,6 +203,7 @@ async fn test_client_owned_file_metadata() {
         stored_server: server.clone(),
         root,
     };
+
     write_client_file_database_to_disk("test_file_db.json".to_string(), vec![server.clone()], vec![file.clone()]).await;
     let (servers, files) = read_client_file_database_from_disk("test_file_db.json".to_string()).await;
     assert_eq!(servers.len(), 1);

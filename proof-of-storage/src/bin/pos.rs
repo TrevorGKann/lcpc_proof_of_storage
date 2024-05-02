@@ -1,6 +1,10 @@
+use std::io::BufRead;
+use std::net::IpAddr;
+
 use clap::{Parser, Subcommand};
 
-use proof_of_storage::file_metadata::{ClientOwnedFileMetadata, read_client_file_database_from_disk, ServerHost, write_client_file_database_to_disk};
+use proof_of_storage::file_metadata::{ClientOwnedFileMetadata, get_client_metadata_from_database_by_filename, read_client_file_database_from_disk, ServerHost, write_client_file_database_to_disk};
+use proof_of_storage::networking::client::*;
 use proof_of_storage::networking::server::server_main;
 
 #[derive(Parser, Debug)]
@@ -45,7 +49,23 @@ enum PoSSubCommands {
 
     /// Request a proof of storage for a file
     #[clap(alias = "pf")]
-    Proof,
+    Proof {
+        /// name of the file to download
+        #[clap(required = true)]
+        file: String,
+
+        /// the server IP to upload the file to
+        #[clap(short, long, default_value = "0.0.0.0")]
+        ip: Option<std::net::IpAddr>,
+
+        /// the server port to upload the file to
+        #[clap(short, long, default_value = "8080")]
+        port: Option<u16>,
+
+        /// the bits of security to use as an override #UNIMIPLEMENTED todo
+        #[clap(short, long)]
+        security_bits: Option<u8>,
+    },
 
     /// List files you currently have stored on remote servers
     #[clap(alias = "ls")]
@@ -88,13 +108,30 @@ async fn main() {
         PoSSubCommands::Download => {
             tracing::debug!("downloading file");
         }
-        PoSSubCommands::Proof => {
-            tracing::debug!("requesting proof of storage");
+        PoSSubCommands::Proof { file, ip, port, security_bits } => {
+            tracing::info!("requesting proof of storage");
+            tracing::debug!("fetching file metadata from database");
+            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+
+            if file_metadata.is_none() {
+                tracing::error!("file not found in database");
+            }
+
+            let file_metadata = file_metadata.unwrap();
+            // if ip is supplied use it, otherwise look at the file_metadata's server_host.server_ip and server_host.server_port
+            let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
+                file_metadata.stored_server.server_ip
+            };
+            let server_port = if port.is_some() { port.unwrap() } else {
+                file_metadata.stored_server.server_port
+            };
         }
         PoSSubCommands::List => {
             list_files().await;
         }
-        PoSSubCommands::Server { port } => {
+        PoSSubCommands::Server {
+            port, ..
+        } => {
             let server_result = server_main(port, verbosity).await;
             if let Err(e) = server_result {
                 tracing::error!("server error: {}", e);
