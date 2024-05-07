@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::hash::Hash;
 
 use blake3::Hasher as Blake3;
@@ -21,7 +22,7 @@ pub fn server_retreive_columns(
     // extract the columns to open
     requested_columns
         .iter()
-        .map(|&col| open_column(comm, col).unwrap())
+        .map(|&column_index| open_column(comm, column_index).unwrap())
         .collect::<Vec<PoSColumn>>()
 }
 
@@ -93,17 +94,21 @@ pub fn client_online_verify_column_leaves(
     // optimization: this could either be a random linear combination or just a hash of it
     locally_derived_column_leaves: &Vec<Output<Blake3>>,
     requested_columns: &[usize],
-    eceived_column_leaves: &[Output<Blake3>],
+    received_column_leaves: &[Output<Blake3>],
 ) -> VerifierResult<(), ErrT<PoSEncoding>>
 {
-    if locally_derived_column_leaves.len() != requested_columns.len() || eceived_column_leaves.len() != requested_columns.len() {
+    if locally_derived_column_leaves.len() != requested_columns.len() || received_column_leaves.len() != requested_columns.len() {
         return Err(VerifierError::NumColOpens);
     }
 
     let leaves_ok = locally_derived_column_leaves.iter()
-        .zip(eceived_column_leaves.iter())// double iterator through locally derived column leaves and server column leaves
+        .zip(received_column_leaves.iter())// double iterator through locally derived column leaves and server column leaves
         .all(|(client_leaf, server_leaf)| client_leaf == server_leaf);
     //check that all of them agree
+
+    for (client_leaf, server_leaf) in locally_derived_column_leaves.iter().zip(received_column_leaves.iter()) {
+        tracing::trace!("client leaf: {:x}, server leaf: {:x}", client_leaf, server_leaf);
+    }
 
     if !leaves_ok {
         return Err(VerifierError::NumColOpens); //todo should have the right errors here but this will have to do for now
@@ -116,7 +121,8 @@ pub fn get_PoS_soudness_n_cols(
     file_metadata: &ClientOwnedFileMetadata,
 ) -> usize {
     let denominator: f64 = ((1f64 + (file_metadata.num_columns as f64 / file_metadata.num_encoded_columns as f64)) / 2f64).log2();
-    (-128f64 / denominator).ceil() as usize
+    let theoretical_min = (-128f64 / denominator).ceil() as usize;
+    min(theoretical_min, file_metadata.num_encoded_columns)
 }
 
 pub fn client_verify_commitment(
@@ -135,7 +141,8 @@ pub fn client_verify_commitment(
     }
 
     // create a vec of just the received leaves
-    let received_columns_leaves: Vec<Output<Blake3>> = received_columns.iter()
+    let received_columns_leaves: Vec<Output<Blake3>> = received_columns
+        .iter()
         .map(|column| column.path[0])
         .collect();
 

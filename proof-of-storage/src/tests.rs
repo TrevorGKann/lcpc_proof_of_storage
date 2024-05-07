@@ -1,22 +1,20 @@
 #[cfg(test)]
-
 #[allow(unused)]
-mod tests {
+pub mod tests {
     use ff::{Field, PrimeField};
-    use lcpc_test_fields::ft63::Ft63;
-    use lcpc_test_fields::random_coeffs;
-    use crate::fields::ft253_192::Ft253_192;
-    use crate::fields::*;
+    use pretty_assertions::assert_eq;
     use rand::Rng;
-    use pretty_assertions::{assert_eq};
+
     use lcpc_2d::LcEncoding;
     use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
+
+    use crate::fields::*;
     use crate::fields;
 
     const CLEANUP_VALUES: bool = true;
 
-    struct Cleanup {
-        files: Vec<String>,
+    pub struct Cleanup {
+        pub files: Vec<String>,
     }
 
     impl Drop for Cleanup {
@@ -63,8 +61,6 @@ mod tests {
 
     #[test]
     fn max_element_from_bytes() {
-        use ff::FromUniformBytes;
-
         type TestField = fields::writable_ft63::WriteableFt63;
         const CAPACITY: usize = TestField::CAPACITY as usize;
         const BYTE_WIDTH: usize = CAPACITY / 8;
@@ -86,7 +82,6 @@ mod tests {
         use blake3::Hasher as Blake3;
         use itertools::iterate;
         use merlin::Transcript;
-
 
         let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("test_file.txt");
         let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
@@ -118,7 +113,7 @@ mod tests {
         transcript.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
 
         let proof = commit.prove(&outer_tensor, &encoding, &mut transcript).unwrap();
-        let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut transcript ).unwrap();
+        let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut transcript).unwrap();
     }
 
 
@@ -136,6 +131,7 @@ mod tests {
 
         repeat_with(|| T::random(&mut rng)).take(len).collect()
     }
+
     #[test]
     fn ligero_with_my_field_end_to_end() {
         use blake3::Hasher as Blake3;

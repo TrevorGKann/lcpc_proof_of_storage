@@ -9,13 +9,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_serde::{Deserializer, formats::Json, Serializer};
 
-use lcpc_2d::{LcCommit, LcEncoding, LcRoot};
+use lcpc_2d::{LcCommit, LcEncoding, LcRoot, open_column};
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::*;
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
-use crate::lcpc_online::{client_verify_commitment, get_PoS_soudness_n_cols};
+use crate::lcpc_online::{client_verify_commitment, get_PoS_soudness_n_cols, server_retreive_columns};
 use crate::networking::server;
 use crate::networking::shared::*;
 
@@ -28,12 +28,12 @@ pub async fn upload_file(
     server_ip: String,
 ) -> Result<(ClientOwnedFileMetadata, PoSRoot), Box<dyn std::error::Error>> {
     use std::path::Path;
+    tracing::debug!("reading file {} from disk", file_name);
     let file_path = Path::new(&file_name);
     let mut file_data = fs::read(file_path).await.unwrap();
 
 
-    tracing::debug!("reading file {} from disk", file_name);
-
+    tracing::debug!("connecting to server {}", &server_ip);
     let mut stream = TcpStream::connect(&server_ip).await.unwrap();
     let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
 
@@ -91,6 +91,8 @@ pub async fn verify_compact_commit(
         .map(|col_index| col_index.to_owned())
         .choose_multiple(&mut rng, get_PoS_soudness_n_cols(file_metadata));
 
+    tracing::trace!("client: requesting the following columns from the server: {:?}", cols_to_verify);
+
     sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
         .await.expect("Failed to send message to server");
 
@@ -103,10 +105,10 @@ pub async fn verify_compact_commit(
 
     match transmission {
         ServerMessages::Columns { columns: received_columns } => {
-            let leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
+            let locally_derived_leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
             let verification_result = client_verify_commitment(
                 &file_metadata.root,
-                &leaves,
+                &locally_derived_leaves,
                 &cols_to_verify,
                 &received_columns,
                 get_PoS_soudness_n_cols(file_metadata));
@@ -136,9 +138,18 @@ pub async fn get_processed_column_leaves_from_file(
         .expect("failed to convert file to commit");
 
 
-    let mut leaves = Vec::with_capacity(cols_to_verify.len());
-    for col in cols_to_verify {
-        leaves.push(commit.hashes[col]);
-    }
-    leaves
+    // let mut leaves = Vec::with_capacity(cols_to_verify.len());
+    // for col in cols_to_verify {
+    //     leaves.push(commit.hashes[col]);
+    // }
+    // leaves
+
+    let extracted_columns = server_retreive_columns(&commit, cols_to_verify);
+
+    let extracted_leaves: Vec<Output<Blake3>> = extracted_columns
+        .iter()
+        .map(|column| column.path[0])
+        .collect();
+
+    extracted_leaves
 }

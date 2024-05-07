@@ -68,7 +68,7 @@ pub async fn server_main(port: u16, verbosity: u8) -> Result<(), Box<dyn std::er
 }
 
 
-async fn handle_client_loop(mut stream: TcpStream) {
+pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
     let (mut stream, mut sink)
         = wrap_stream::<InternalServerMessage, ClientMessages>(stream);
 
@@ -152,7 +152,7 @@ async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, col
     let filename = Path::new(&filename).file_name().unwrap().to_str().unwrap();
 
     // check if rows and columns are valid first
-    if (dims_ok(columns, file_data.len())) {
+    if (!dims_ok(columns, file_data.len())) {
         return ServerMessages::BadResponse { error: "Invalid rows or columns".to_string() };
     }
 
@@ -308,13 +308,16 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
     // get the requested proof from the file
     // send the proof to the client
 
+    tracing::trace!("server: requested columns for client proof: {:?}", requested_columns);
     if check_file_metadata(&file_metadata).is_err() {
         return make_bad_response("file metadata is invalid".to_string());
     }
 
+    tracing::trace!("server: accesing file {}", &file_metadata.filename);
     let file = tokio::fs::read(&file_metadata.filename).await
         .map_err(|e| tracing::error!("failed to read file: {:?}", e))
         .expect("failed to read file");
+
 
     let (_, commit, _) =
         convert_file_to_commit(&file_metadata.filename, file_metadata.num_encoded_columns)
@@ -325,6 +328,11 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
             .expect("failed to convert file to commit");
 
     let column_collection = server_retreive_columns(&commit, requested_columns);
+
+    for i in 0..column_collection.len() {
+        tracing::trace!("server: sending leaf to client: {:x}", &column_collection[i].path[0]);
+    }
+
     ServerMessages::Columns { columns: column_collection }
 }
 
@@ -365,12 +373,15 @@ fn make_bad_response(message: String) -> InternalServerMessage {
     BadResponse { error: message }
 }
 
+#[tracing::instrument]
 fn dims_ok(columns: usize, file_size: usize) -> bool {
     // let total_size = rows * columns / 2 >= file_size;
     let col_power_2 = columns.is_power_of_two();
+    //todo should be more checks
     col_power_2
 }
 
 fn check_file_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<(), Box<dyn std::error::Error>> {
-    todo!()
+    // todo!()
+    Ok(())
 }
