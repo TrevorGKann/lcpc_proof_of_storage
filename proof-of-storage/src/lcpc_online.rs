@@ -106,7 +106,7 @@ pub fn client_online_verify_column_leaves(
         .all(|(client_leaf, server_leaf)| client_leaf == server_leaf);
     //check that all of them agree
 
-    for (client_leaf, server_leaf) in locally_derived_column_leaves.iter().zip(received_column_leaves.iter()) {
+    for (client_leaf, server_leaf) in locally_derived_column_leaves.iter().zip(received_column_leaves.iter()).take(5) {
         tracing::trace!("client leaf: {:x}, server leaf: {:x}", client_leaf, server_leaf);
     }
 

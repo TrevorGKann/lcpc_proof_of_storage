@@ -329,8 +329,8 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
 
     let column_collection = server_retreive_columns(&commit, requested_columns);
 
-    for i in 0..column_collection.len() {
-        tracing::trace!("server: sending leaf to client: {:x}", &column_collection[i].path[0]);
+    for column in column_collection.iter().take(5) {
+        tracing::trace!("server: sending leaf to client: {:x}", column.path[0]);
     }
 
     ServerMessages::Columns { columns: column_collection }

@@ -1,105 +1,107 @@
-use std::time::Duration;
-
-use pretty_assertions::assert_eq;
 #[cfg(test)]
-use tokio::net::TcpListener;
-use tokio::time::sleep;
+pub mod network_tests {
+    use std::time::Duration;
 
-use crate::networking::client;
-use crate::networking::server::handle_client_loop;
-use crate::tests::tests::Cleanup;
+    use pretty_assertions::assert_eq;
+    use tokio::net::TcpListener;
+    use tokio::time::sleep;
 
-use super::*;
+    use crate::networking::client;
+    use crate::networking::server::handle_client_loop;
+    use crate::tests::tests::Cleanup;
 
-async fn test_start_server(port: u16) {
-    tracing::info!("Server starting");
+    use super::*;
 
-    let listening_address = format!("0.0.0.0:{}", port);
+    async fn test_start_server(port: u16) {
+        tracing::info!("Server starting");
 
-    let listener = TcpListener::bind(listening_address).await
-        .map_err(|e| tracing::error!("server failed to start: {:?}", e))
-        .expect("failed to initialize listener");
+        let listening_address = format!("0.0.0.0:{}", port);
 
-    tracing::info!("Server started on port {:?}", listener.local_addr().unwrap());
+        let listener = TcpListener::bind(listening_address).await
+            .map_err(|e| tracing::error!("server failed to start: {:?}", e))
+            .expect("failed to initialize listener");
 
-    tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(async move { handle_client_loop(stream).await });
-        }
-    });
-}
+        tracing::info!("Server started on port {:?}", listener.local_addr().unwrap());
 
-fn test_start_tracing() -> Result<(), Box<dyn std::error::Error>> {
-    let subscriber = tracing_subscriber::fmt()
-        // .pretty()
-        .compact()
-        .with_file(true)
-        .with_line_number(true)
-        .with_max_level(tracing::Level::TRACE)
-        .finish();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move { handle_client_loop(stream).await });
+            }
+        });
+    }
 
-    // use that subscriber to process traces emitted after this point
-    tracing::subscriber::set_global_default(subscriber)?;
-    Ok(())
-}
+    fn test_start_tracing() -> Result<(), Box<dyn std::error::Error>> {
+        let subscriber = tracing_subscriber::fmt()
+            // .pretty()
+            .compact()
+            .with_file(true)
+            .with_line_number(true)
+            .with_max_level(tracing::Level::TRACE)
+            .finish();
 
-async fn start_test(test_name: String) -> u16 {
-    test_start_tracing();
-    tracing::info!("Starting test {}", test_name);
+        // use that subscriber to process traces emitted after this point
+        tracing::subscriber::set_global_default(subscriber)?;
+        Ok(())
+    }
 
-    // select a random port
-    let port = rand::random::<u16>();
-    tokio::spawn(test_start_server(port)).await;
-    port
-}
+    async fn start_test(test_name: String) -> u16 {
+        test_start_tracing();
+        tracing::info!("Starting test {}", test_name);
 
-#[tokio::test]
-async fn upload_file_test() {
-    // setup cleanup files
-    let source_file = "test_files/test.txt";
-    let dest_temp_file = "test.txt";
-    let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+        // select a random port
+        let port = rand::random::<u16>();
+        tokio::spawn(test_start_server(port)).await;
+        port
+    }
 
-    let port = start_test("upload_file_test".to_string()).await;
+    #[tokio::test]
+    async fn upload_file_test() {
+        // setup cleanup files
+        let source_file = "test_files/test.txt";
+        let dest_temp_file = "test.txt";
+        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
-    let response = client::upload_file(
-        source_file.to_owned(),
-        4,
-        format!("localhost:{}", port),
-    ).await;
+        let port = start_test("upload_file_test".to_string()).await;
 
-    tracing::info!("client received: {:?}", response);
+        let response = client::upload_file(
+            source_file.to_owned(),
+            4,
+            format!("localhost:{}", port),
+        ).await;
 
-    let (metadata, root) = response.unwrap();
+        tracing::info!("client received: {:?}", response);
 
-    assert_eq!(metadata.filename, "test.txt");
-    // assert_eq!(metadata.num_columns, 4); //todo uncomment once implemented
-    assert_eq!(tokio::fs::read(dest_temp_file).await.unwrap(), tokio::fs::read(source_file).await.unwrap());
-}
+        let (metadata, root) = response.unwrap();
 
-#[tokio::test]
-async fn upload_then_verify() {
-    // setup cleanup files
-    let source_file = "test_files/test.txt";
-    let dest_temp_file = "test.txt";
-    let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+        assert_eq!(metadata.filename, "test.txt");
+        // assert_eq!(metadata.num_columns, 4); //todo uncomment once implemented
+        assert_eq!(tokio::fs::read(dest_temp_file).await.unwrap(), tokio::fs::read(source_file).await.unwrap());
+    }
 
-    let port = start_test("upload_then_verify".to_string()).await;
+    #[tokio::test]
+    async fn upload_then_verify() {
+        // setup cleanup files
+        let source_file = "test_files/test.txt";
+        let dest_temp_file = "test.txt";
+        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+
+        let port = start_test("upload_then_verify".to_string()).await;
 
 
-    let response = client::upload_file(
-        source_file.to_owned(),
-        4,
-        format!("localhost:{}", port),
-    ).await;
+        let response = client::upload_file(
+            source_file.to_owned(),
+            4,
+            format!("localhost:{}", port),
+        ).await;
 
-    tracing::info!("client received: {:?}", response);
+        tracing::info!("client received: {:?}", response);
 
-    let (metadata, root) = response.unwrap();
+        let (metadata, root) = response.unwrap();
 
-    tracing::info!("requesting proof");
-    let proof_response = client::request_proof(metadata, format!("localhost:{}", port), 0).await;
-    tracing::info!("client received: {:?}", proof_response);
+        tracing::info!("requesting proof");
+        let proof_response = client::request_proof(metadata, format!("localhost:{}", port), 0).await;
+        tracing::info!("client received: {:?}", proof_response);
 
-    proof_response.unwrap();
+        proof_response.unwrap();
+    }
 }

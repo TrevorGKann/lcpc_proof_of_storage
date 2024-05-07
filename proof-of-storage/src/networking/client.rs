@@ -41,15 +41,20 @@ pub async fn upload_file(
     sink.send(ClientMessages::UploadNewFile { filename: file_name, file: file_data, columns })
         .await.expect("Failed to send message to server");
 
-    let Some(Ok(transmission)) = stream.next().await else {
+    let Some(Ok(mut transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
         return Err(Box::from("Failed to receive message from server"));
     };
     tracing::info!("Client received: {:?}", transmission);
 
     match transmission {
-        ServerMessages::CompactCommit { root, file_metadata } => {
+        ServerMessages::CompactCommit { root, mut file_metadata } => {
             tracing::info!("File upload successful");
+            //update file_metadata's host
+            file_metadata.stored_server.server_ip = server_ip.clone().split(":").collect::<Vec<&str>>()[0].to_string();
+            file_metadata.stored_server.server_port = server_ip.split(":").collect::<Vec<&str>>()[1].parse().unwrap();
+
+
             Ok((file_metadata, root))
             //todo need to test that the CompactCommit was succesfull
         }

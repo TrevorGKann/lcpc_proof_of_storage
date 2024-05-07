@@ -3,6 +3,7 @@ use std::fmt;
 use blake3::Hasher as Blake3;
 use blake3::traits::digest::Output;
 use fffft::FFTError;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde::de::Error;
 use tokio::fs;
@@ -109,14 +110,30 @@ pub async fn append_client_file_metadata_to_database(database_file_path: String,
     let (mut hosts_database, mut file_metadata_database)
         = read_client_file_database_from_disk("file_database".to_string()).await;
 
-    if is_client_metadata_unique(file_metadata_database.clone(), metadata_to_add.clone()).await {
+    if is_host_unique(hosts_database.clone(), metadata_to_add.stored_server.clone()) {
         hosts_database.push(metadata_to_add.stored_server.clone());
-        file_metadata_database.push(metadata_to_add);
-        write_client_file_database_to_disk(database_file_path, hosts_database, file_metadata_database).await;
-        Ok(())
-    } else {
-        Err(Box::from("File already exists in database"))
     }
+
+    if is_client_metadata_unique(file_metadata_database.clone(), metadata_to_add.clone()) {
+        file_metadata_database.push(metadata_to_add);
+    } else {
+        file_metadata_database = file_metadata_database
+            .iter_mut()
+            .filter(|metadata| metadata.filename == metadata_to_add.filename)
+            .update(|metadata| {
+                metadata.num_rows = metadata_to_add.num_rows;
+                metadata.num_columns = metadata_to_add.num_columns;
+                metadata.num_encoded_columns = metadata_to_add.num_encoded_columns;
+                metadata.filesize_in_bytes = metadata_to_add.filesize_in_bytes;
+                metadata.stored_server = metadata_to_add.stored_server.clone();
+                metadata.root = metadata_to_add.root.clone();
+            })
+            .map(|metadata| metadata.to_owned())
+            .collect();
+    }
+
+    write_client_file_database_to_disk(database_file_path, hosts_database, file_metadata_database).await;
+    Ok(())
 }
 
 pub async fn get_client_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ClientOwnedFileMetadata> {
@@ -129,9 +146,18 @@ pub async fn get_client_metadata_from_database_by_filename(database_file_path: S
     None
 }
 
-pub async fn is_client_metadata_unique(current_database: Vec<ClientOwnedFileMetadata>, new_metadata: ClientOwnedFileMetadata) -> bool {
+pub fn is_client_metadata_unique(current_database: Vec<ClientOwnedFileMetadata>, new_metadata: ClientOwnedFileMetadata) -> bool {
     for metadata in current_database {
         if metadata.filename == new_metadata.filename {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn is_host_unique(current_database: Vec<ServerHost>, new_host: ServerHost) -> bool {
+    for host in current_database {
+        if host.server_ip == new_host.server_ip && host.server_port == new_host.server_port {
             return false;
         }
     }
