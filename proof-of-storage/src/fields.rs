@@ -60,7 +60,6 @@ pub mod writable_ft63 {
     pub struct WriteableFt63([u64; 1]);
 
     impl WriteableFt63 {
-
         pub fn from_u64_array(input: [u64; U64_WIDTH]) -> Result<Self, FieldErr> {
             let ret = Self(input);
             if ret.is_valid() {
@@ -81,34 +80,27 @@ pub fn read_file_to_field_elements_vec(file: &mut File) -> Vec<WriteableFt63> {
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
 
+    convert_byte_vec_to_field_elements_vec(buffer)
+}
+
+pub fn convert_byte_vec_to_field_elements_vec(byte_vec: Vec<u8>) -> Vec<WriteableFt63> {
     let read_in_bytes = (WriteableFt63::CAPACITY / 8) as usize;
 
-    buffer.chunks(read_in_bytes)
+    byte_vec.chunks(read_in_bytes)
         .map(|bytes| { //todo need to add from_le/from_be variants
             let mut full_length_byte_array = [0u8; mem::size_of::<u64>()];
             match writable_ft63::ENDIANNESS {
                 ByteOrder::BigEndian => {
                     full_length_byte_array[mem::size_of::<u64>() - bytes.len()..].copy_from_slice(bytes);
-                },
+                }
                 ByteOrder::LittleEndian => {
                     full_length_byte_array[..bytes.len()].copy_from_slice(bytes);
                 }
             }
             let u64_array = [u64::from_le_bytes(full_length_byte_array)];
             WriteableFt63::from_u64_array(u64_array).unwrap()
-            // if bytes.len() < read_in_bytes {
-            //     let mut bytes = bytes.to_vec();
-            //     bytes.resize(u64_byte_width, 0);
-            //     let bytes: [u8; mem::size_of::<u128>()] = bytes.try_into().unwrap();
-            //     let number = u128::from_be_bytes(bytes);
-            //     F::from_u128(number)
-            // } else {
-            //     let number = u128::from_be_bytes(bytes.try_into().unwrap());
-            //     F::from_u128(number)
-            // }
         })
         .collect()
-
 }
 
 
@@ -118,12 +110,12 @@ pub fn read_file_path_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
     read_file_to_field_elements_vec(&mut file)
 }
 
-fn byte_array_to_u64_array<const OUTPUT_WIDTH: usize>(input: &[u8], endianness: ByteOrder) -> [u64; OUTPUT_WIDTH]{
+fn byte_array_to_u64_array<const OUTPUT_WIDTH: usize>(input: &[u8], endianness: ByteOrder) -> [u64; OUTPUT_WIDTH] {
     let mut full_length_byte_array = [0u8; mem::size_of::<u64>()];
     match writable_ft63::ENDIANNESS {
         ByteOrder::BigEndian => {
             full_length_byte_array[mem::size_of::<u64>() - input.len()..].copy_from_slice(input);
-        },
+        }
         ByteOrder::LittleEndian => {
             full_length_byte_array[..input.len()].copy_from_slice(input);
         }
@@ -132,7 +124,7 @@ fn byte_array_to_u64_array<const OUTPUT_WIDTH: usize>(input: &[u8], endianness: 
     match endianness {
         ByteOrder::BigEndian => {
             ret[0] = u64::from_be_bytes(full_length_byte_array);
-        },
+        }
         ByteOrder::LittleEndian => {
             ret[0] = u64::from_le_bytes(full_length_byte_array);
         }
@@ -146,7 +138,7 @@ fn u64_array_to_byte_array<const INPUT_WIDTH: usize>(input: &[u64; INPUT_WIDTH],
         match endianness {
             ByteOrder::BigEndian => {
                 u8_collection_vector.extend_from_slice(&input_byte.to_be_bytes());
-            },
+            }
             ByteOrder::LittleEndian => {
                 u8_collection_vector.extend_from_slice(&input_byte.to_le_bytes());
             }
@@ -164,7 +156,6 @@ pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63
     let write_out_byte_width = (WriteableFt63::CAPACITY / 8) as usize;
 
     for (index, field_element) in field_elements.iter().enumerate() {
-
         let mut write_buffer = u64_array_to_byte_array::<1>(&field_element.to_u64_array(), writable_ft63::ENDIANNESS);
 
         let endianness = writable_ft63::ENDIANNESS;
@@ -172,7 +163,7 @@ pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63
             match endianness {
                 ByteOrder::BigEndian => {
                     write_buffer.remove(0);
-                },
+                }
                 ByteOrder::LittleEndian => {
                     write_buffer.pop();
                 }
@@ -181,7 +172,7 @@ pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63
 
         //check if we are looking at the last `field_element` in `field_elements`
         //if so, we need to drop trailing zeroes as well
-        if index == field_elements.len()-1 {
+        if index == field_elements.len() - 1 {
             while write_buffer.last() == Some(&0) {
                 write_buffer.pop();
             }
@@ -190,7 +181,6 @@ pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63
             file.write_all(&write_buffer).unwrap();
         }
     }
-
 }
 
 pub fn random_writeable_field_vec(log_len: usize) -> Vec<WriteableFt63>
