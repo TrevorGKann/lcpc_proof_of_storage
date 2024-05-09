@@ -143,7 +143,7 @@ pub fn client_verify_commitment(
     // create a vec of just the received leaves
     let received_columns_leaves: Vec<Output<Blake3>> = received_columns
         .iter()
-        .map(|column| column.path[0])
+        .map(hash_column_to_digest::<Blake3>)
         .collect();
 
     client_online_verify_column_leaves(locally_derived_column_leaves, requested_columns, &received_columns_leaves)?;
