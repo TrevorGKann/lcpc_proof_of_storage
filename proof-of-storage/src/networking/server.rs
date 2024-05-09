@@ -1,9 +1,11 @@
+use std::cmp::min;
 use std::io::SeekFrom;
 
 use blake3::{Hash, Hasher as Blake3};
 use blake3::traits::digest;
 use blake3::traits::digest::Output;
 use futures::{SinkExt, StreamExt};
+use pretty_assertions::assert_eq;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -16,7 +18,7 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use crate::{fields, PoSCommit};
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
-use crate::lcpc_online::server_retreive_columns;
+use crate::lcpc_online::{get_PoS_soudness_n_cols, server_retreive_columns};
 use crate::networking::shared;
 use crate::networking::shared::*;
 use crate::networking::shared::ClientMessages::ClientKeepAlive;
@@ -313,10 +315,10 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
         return make_bad_response("file metadata is invalid".to_string());
     }
 
-    tracing::trace!("server: accesing file {}", &file_metadata.filename);
-    let file = tokio::fs::read(&file_metadata.filename).await
-        .map_err(|e| tracing::error!("failed to read file: {:?}", e))
-        .expect("failed to read file");
+    // tracing::trace!("server: accesing file {}", &file_metadata.filename);
+    // let file = tokio::fs::read(&file_metadata.filename).await
+    //     .map_err(|e| tracing::error!("failed to read file: {:?}", e))
+    //     .expect("failed to read file");
 
 
     let (_, commit, _) =
@@ -343,12 +345,46 @@ async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedF
     unimplemented!("handle_client_request_polynomial_evaluation");
 }
 
-pub fn convert_file_to_commit(filename: &str, requested_columns: usize) -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit, ClientOwnedFileMetadata), Box<dyn std::error::Error>> {
+#[tracing::instrument]
+pub fn get_aspect_ratio_default_from_field_len(field_len: usize) -> (usize, usize, usize) {
+    tracing::debug!("field_len: {}", field_len);
+
+    let data_min_width = (field_len as f32).sqrt().ceil() as usize;
+    let data_realized_width = data_min_width.next_power_of_two();
+    let matrix_colums = (data_realized_width + 1).next_power_of_two();
+
+    let num_columns = usize::div_ceil(field_len, matrix_colums);
+    let soundness_denominator: f64 = ((1f64 + (data_realized_width as f64 / matrix_colums as f64)) / 2f64).log2();
+    let theoretical_min = (-128f64 / soundness_denominator).ceil() as usize;
+    let soundness = min(theoretical_min, matrix_colums);
+
+    (data_realized_width, matrix_colums, soundness)
+}
+
+#[tracing::instrument]
+pub fn get_aspect_ratio_default_from_file_len<Field: ff::PrimeField>(file_len: usize) -> (usize, usize, usize) {
+    tracing::debug!("file_len: {}", file_len);
+    let write_out_byte_width = (Field::CAPACITY / 8) as usize;
+    let field_len = usize::div_ceil(file_len, write_out_byte_width);
+    tracing::debug!("field_len: {}", field_len);
+
+    get_aspect_ratio_default_from_field_len(field_len)
+}
+
+#[tracing::instrument]
+pub fn convert_file_to_commit(filename: &str, requested_columns: usize)
+                              -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit, ClientOwnedFileMetadata), Box<dyn std::error::Error>> {
     //todo need logic to request certain columns and row values
     let field_vector = fields::read_file_path_to_field_elements_vec(filename);
+    tracing::info!("field_vector: {:?}", field_vector.len());
+
+    //todo: ought to make customizable sizes for this
     let data_min_width = (field_vector.len() as f32).sqrt().ceil() as usize;
     let data_realized_width = data_min_width.next_power_of_two();
     let matrix_colums = (data_realized_width + 1).next_power_of_two();
+    let (data_realized_width_test, matrix_colums_test, soundness_test) = get_aspect_ratio_default_from_field_len(field_vector.len());
+
+
     let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_colums);
     let commit = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
     let root = commit.get_root();
@@ -357,7 +393,7 @@ pub fn convert_file_to_commit(filename: &str, requested_columns: usize) -> Resul
         stored_server: ServerHost {
             server_name: None,
             server_ip: "".to_string(),
-            server_port: 0, // todo: dumnmy debug
+            server_port: 0, // todo: dummy debug
         },
         filename: filename.to_string(),
         num_rows: field_vector.len() / matrix_colums + 1,
@@ -366,6 +402,14 @@ pub fn convert_file_to_commit(filename: &str, requested_columns: usize) -> Resul
         filesize_in_bytes: field_vector.len(),
         root: root.clone(),
     };
+
+
+    // Debug: delete me later
+    assert_eq!(data_realized_width, data_realized_width_test);
+    assert_eq!(matrix_colums, matrix_colums_test);
+    assert_eq!(soundness_test, get_PoS_soudness_n_cols(&file_metadata));
+
+
     Ok((root, commit, file_metadata))
 }
 

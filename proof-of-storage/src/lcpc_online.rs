@@ -4,7 +4,7 @@ use std::hash::Hash;
 use blake3::Hasher as Blake3;
 use blake3::traits::digest::{Digest, Output};
 
-use lcpc_2d::{LcEncoding, open_column, VerifierError, VerifierResult, verify_column_path};
+use lcpc_2d::{FieldHash, LcEncoding, open_column, VerifierError, VerifierResult, verify_column_path};
 
 use crate::{PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 use crate::file_metadata::ClientOwnedFileMetadata;
@@ -185,4 +185,20 @@ pub fn client_verify_polynomial_evaluation(
     required_columns_for_soundness: usize,
 ) -> VerifierResult<(), ErrT<PoSEncoding>> {
     todo!();
+}
+
+
+pub fn hash_column_to_digest<D>(
+    column: &PoSColumn
+) -> Output<D>
+    where D: Digest
+{
+    let mut hasher = D::new();
+    Digest::update(&mut hasher, <Output<D> as Default>::default());
+    for e in &column.col[..] {
+        e.digest_update(&mut hasher);
+    }
+
+    // check Merkle path
+    hasher.finalize()
 }

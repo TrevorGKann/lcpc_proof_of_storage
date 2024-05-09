@@ -75,16 +75,20 @@ pub mod writable_ft63 {
     }
 }
 
+#[tracing::instrument]
 pub fn read_file_to_field_elements_vec(file: &mut File) -> Vec<WriteableFt63> {
     // todo: need to convert to async with tokio file
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
+    tracing::trace!("read {} bytes from file", buffer.len());
 
-    convert_byte_vec_to_field_elements_vec(buffer)
+    convert_byte_vec_to_field_elements_vec(&buffer)
 }
 
-pub fn convert_byte_vec_to_field_elements_vec(byte_vec: Vec<u8>) -> Vec<WriteableFt63> {
+#[tracing::instrument]
+pub fn convert_byte_vec_to_field_elements_vec(byte_vec: &Vec<u8>) -> Vec<WriteableFt63> {
     let read_in_bytes = (WriteableFt63::CAPACITY / 8) as usize;
+
 
     byte_vec.chunks(read_in_bytes)
         .map(|bytes| { //todo need to add from_le/from_be variants
@@ -104,6 +108,7 @@ pub fn convert_byte_vec_to_field_elements_vec(byte_vec: Vec<u8>) -> Vec<Writeabl
 }
 
 
+#[tracing::instrument]
 pub fn read_file_path_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
 {
     let mut file = File::open(path).unwrap();

@@ -171,10 +171,6 @@ async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAd
     // add file to file database for the `list` command
     append_client_file_metadata_to_database("file_database".to_string(), file_metadata.clone()).await.expect("failed to append file metadata to database");
     tracing::info!("appended {} to filedatabase", file_metadata.filename);
-    // let (mut hosts_database, mut file_metadata_database) = read_client_file_database_from_disk("file_database".to_string()).await;
-    // hosts_database.push(file_metadata.stored_server.clone());
-    // file_metadata_database.push(file_metadata);
-    // write_client_file_database_to_disk("file_database".to_string(), hosts_database, file_metadata_database).await;
 }
 
 async fn list_files() {

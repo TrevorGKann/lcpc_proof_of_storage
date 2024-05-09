@@ -2,11 +2,16 @@
 pub mod network_tests {
     use std::time::Duration;
 
-    use pretty_assertions::assert_eq;
+    use blake3::Hasher as Blake3;
+    use blake3::traits::digest::Output;
+    // use pretty_assertions::assert_eq;
+    use tokio::fs;
     use tokio::net::TcpListener;
     use tokio::time::sleep;
 
+    use crate::lcpc_online::{get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
     use crate::networking::client;
+    use crate::networking::client::{convert_read_file_to_commit_only_leaves, get_processed_column_leaves_from_file};
     use crate::networking::server::handle_client_loop;
     use crate::tests::tests::Cleanup;
 
@@ -30,7 +35,7 @@ pub mod network_tests {
         });
     }
 
-    fn test_start_tracing() -> Result<(), Box<dyn std::error::Error>> {
+    fn start_tracing_for_tests() -> Result<(), Box<dyn std::error::Error>> {
         let subscriber = tracing_subscriber::fmt()
             // .pretty()
             .compact()
@@ -44,8 +49,8 @@ pub mod network_tests {
         Ok(())
     }
 
-    async fn start_test(test_name: String) -> u16 {
-        test_start_tracing();
+    async fn start_test_with_server(test_name: String) -> u16 {
+        start_tracing_for_tests();
         tracing::info!("Starting test {}", test_name);
 
         // select a random port
@@ -61,7 +66,7 @@ pub mod network_tests {
         let dest_temp_file = "test.txt";
         let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
-        let port = start_test("upload_file_test".to_string()).await;
+        let port = start_test_with_server("upload_file_test".to_string()).await;
 
         let response = client::upload_file(
             source_file.to_owned(),
@@ -85,7 +90,7 @@ pub mod network_tests {
         let dest_temp_file = "test.txt";
         let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
-        let port = start_test("upload_then_verify".to_string()).await;
+        let port = start_test_with_server("upload_then_verify".to_string()).await;
 
 
         let response = client::upload_file(
@@ -103,5 +108,57 @@ pub mod network_tests {
         tracing::info!("client received: {:?}", proof_response);
 
         proof_response.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_different_column_hashing_methods_agree() {
+        start_tracing_for_tests();
+        tracing::info!("starting test_different_column_hashing_methods_agree");
+
+        let test_file = "test_files/test.txt";
+
+        let (root, commit, file_metadata) = crate::networking::server::convert_file_to_commit(test_file, 4).unwrap();
+
+
+        let cols_to_verify = crate::networking::client::get_columns_from_random_seed(
+            1337,
+            // get_PoS_soudness_n_cols(&file_metadata),
+            2,
+            file_metadata.num_encoded_columns);
+
+        let leaves_from_file = get_processed_column_leaves_from_file(&file_metadata, cols_to_verify.clone()).await;
+
+        let server_columns = server_retreive_columns(&commit, cols_to_verify.clone());
+        let server_leaves: Vec<Output<Blake3>> = server_columns
+            .iter()
+            .map(hash_column_to_digest::<Blake3>)
+            .collect();
+
+        let mut file_data = fs::read(test_file).await.unwrap();
+        let streamed_file_leaves = convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &cols_to_verify).unwrap();
+
+        tracing::debug!("commit's hashes:");
+        for i in 0..(commit.hashes.len() / 2) {
+            tracing::debug!("col {}: {:x}", i, commit.hashes[i]);
+        }
+
+        // debug print all the leaves
+        tracing::debug!("server leaves:");
+        for hash in server_leaves.iter() {
+            tracing::debug!("{:x}", hash);
+        }
+
+        tracing::debug!("leaves from file:");
+        for hash in leaves_from_file.iter() {
+            tracing::debug!("{:x}", hash);
+        }
+
+        tracing::debug!("streamed file leaves:");
+        for (hash, col_idx) in streamed_file_leaves.iter().zip(cols_to_verify.iter()) {
+            tracing::debug!("expected col {}, hash: {:x}", col_idx, hash);
+        }
+
+        assert_eq!(leaves_from_file, server_leaves);
+        assert_eq!(leaves_from_file, streamed_file_leaves);
     }
 }
