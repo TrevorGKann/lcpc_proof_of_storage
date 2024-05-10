@@ -41,11 +41,31 @@ enum PoSSubCommands {
         /// The number of columns to encode the file with
         #[clap(short, long, default_value_t = 10)]
         columns: usize,
+
+        /// the bits of security to use as an override #UNIMIPLEMENTED todo
+        #[clap(short, long)]
+        security_bits: Option<u8>,
     },
 
     /// Download an existing file from a remote server
     #[clap(alias = "down")]
-    Download,
+    Download {
+        #[clap(required = true)]
+        file: String,
+
+        /// the server IP to upload the file to
+        #[clap(short, long, default_value = "0.0.0.0")]
+        ip: Option<std::net::IpAddr>,
+
+        /// the server port to upload the file to
+        #[clap(short, long, default_value = "8080")]
+        port: Option<u16>,
+
+        /// the bits of security to use as an override #UNIMIPLEMENTED todo
+        #[clap(short, long, default_value = 64)]
+        security_bits: Option<u8>,
+
+    },
 
     /// Request a proof of storage for a file
     #[clap(alias = "pf")]
@@ -101,12 +121,24 @@ async fn main() {
     });
 
     match subcommand {
-        PoSSubCommands::Upload { file, ip, port, columns } => {
+        PoSSubCommands::Upload { file, ip, port, columns, security_bits } => {
             tracing::debug!("uploading file");
             upload_file_command(file, ip, port, columns).await;
         }
-        PoSSubCommands::Download => {
+        PoSSubCommands::Download { file, ip, port, security_bits } => {
             tracing::debug!("downloading file");
+            tracing::debug!("fetching file metadata from database");
+            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+
+            if file_metadata.is_none() {
+                tracing::error!("file not found in database");
+                return;
+            }
+
+            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+
+            tracing::debug!("requesting file from server");
+            download_file_command().await;
         }
         PoSSubCommands::Proof { file, ip, port, security_bits } => {
             tracing::info!("requesting proof of storage");
@@ -195,4 +227,18 @@ async fn request_proof_command(file_metadata: ClientOwnedFileMetadata, ip: Optio
 
     let proof = proof_of_storage::networking::client::request_proof(file_metadata, server_ip, security_bits).await.unwrap();
     tracing::info!("Proof received: {:?}", proof);
+}
+
+async fn download_file_command(file_metadata: ClientOwnedFileMetadata, ip: Option<IpAddr>, port: Option<u16>, security_bits: Option<u8>) {
+    let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
+        file_metadata.stored_server.server_ip.clone()
+    };
+    let server_port = if port.is_some() { port.unwrap() } else {
+        file_metadata.stored_server.server_port.clone()
+    };
+    let server_ip = server_ip + ":" + &server_port.to_string();
+    let security_bits = security_bits.unwrap_or(16);
+
+    let file = proof_of_storage::networking::client::download_file(file_metadata, server_ip, security_bits).await.unwrap();
+    tracing::info!("File received: {:?}", file);
 }

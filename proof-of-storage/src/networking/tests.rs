@@ -6,6 +6,7 @@ pub mod network_tests {
     use blake3::traits::digest::Output;
     // use pretty_assertions::assert_eq;
     use tokio::fs;
+    use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
     use tokio::time::sleep;
 
@@ -49,7 +50,7 @@ pub mod network_tests {
         Ok(())
     }
 
-    async fn start_test_with_server(test_name: String) -> u16 {
+    async fn start_test_with_server_on_random_port_and_get_port(test_name: String) -> u16 {
         start_tracing_for_tests();
         tracing::info!("Starting test {}", test_name);
 
@@ -66,7 +67,7 @@ pub mod network_tests {
         let dest_temp_file = "test.txt";
         let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
-        let port = start_test_with_server("upload_file_test".to_string()).await;
+        let port = start_test_with_server_on_random_port_and_get_port("upload_file_test".to_string()).await;
 
         let response = client::upload_file(
             source_file.to_owned(),
@@ -90,7 +91,7 @@ pub mod network_tests {
         let dest_temp_file = "test.txt";
         let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
-        let port = start_test_with_server("upload_then_verify".to_string()).await;
+        let port = start_test_with_server_on_random_port_and_get_port("upload_then_verify".to_string()).await;
 
 
         let response = client::upload_file(
@@ -160,5 +161,38 @@ pub mod network_tests {
 
         assert_eq!(leaves_from_file, server_leaves);
         assert_eq!(leaves_from_file, streamed_file_leaves);
+    }
+
+    #[tokio::test]
+    async fn upload_then_download_file() {
+        // setup cleanup files
+        let source_file = "test_files/test.txt";
+        let dest_temp_file = "test.txt";
+        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+
+        let port = start_test_with_server_on_random_port_and_get_port("upload_then_download_file".to_string()).await;
+
+        let file_data = fs::read(source_file).await.unwrap();
+        tracing::info!("file start: {:?}...", file_data.iter().take(10).collect::<Vec<&u8>>());
+
+        let upload_response = client::upload_file(
+            source_file.to_owned(),
+            4,
+            format!("localhost:{}", port),
+        ).await;
+
+        tracing::info!("client received: {:?}", upload_response);
+
+        let (metadata, root) = upload_response.unwrap();
+
+        tracing::info!("requesting download");
+        client::download_file(metadata, format!("localhost:{}", port), 0)
+            .await
+            .unwrap();
+
+        let mut downloaded_data = fs::read(dest_temp_file).await.unwrap();
+
+        tracing::info!("downloaded file: {:?}", downloaded_data.iter().take(10).collect::<Vec<&u8>>());
+        assert_eq!(file_data, downloaded_data);
     }
 }

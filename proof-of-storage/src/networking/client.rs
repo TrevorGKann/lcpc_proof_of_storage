@@ -12,6 +12,7 @@ use rand_core::SeedableRng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_serde::{Deserializer, formats::Json, Serializer};
@@ -70,8 +71,6 @@ pub async fn upload_file(
             file_metadata.stored_server.server_port = server_ip.split(":").collect::<Vec<&str>>()[1].parse().unwrap();
 
 
-            // Ok((file_metadata, root))
-            //todo need to test that the CompactCommit was succesfull
             tracing::info!("client: Requesting a proof from the server...");
             tracing::trace!("client: requesting the following columns from the server: {:?}", cols_to_verify);
 
@@ -117,6 +116,94 @@ pub async fn upload_file(
         _ => {
             tracing::error!("Unknown server response");
             return Err(Box::from("Unknown server response"));
+        }
+    }
+}
+
+pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
+                           server_ip: String,
+                           security_bits: u8,
+) -> Result<(), Box<dyn std::error::Error>> {
+    tracing::info!("requesting file from server");
+
+    tracing::debug!("connecting to server {}", &server_ip);
+    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
+
+    sink.send(ClientMessages::RequestFile { file_metadata: file_metadata.clone() })
+        .await.expect("Failed to send message to server");
+
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        return Err(Box::from("Failed to receive message from server"));
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+    match transmission {
+        ServerMessages::File { file: file_data } => {
+            tracing::debug!("client: received file from server");
+            // verify that file is the correct, commited to file
+            // first derive the columns that we'll request from the server
+            let columns_to_verify = get_columns_from_random_seed(
+                1337,
+                get_PoS_soudness_n_cols(&file_metadata),
+                file_metadata.num_encoded_columns);
+            tracing::trace!("client: requesting the following columns from the server: {:?}", columns_to_verify);
+
+            let leaves_to_verify
+                = convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &columns_to_verify)
+                .unwrap();
+
+            tracing::info!("client: Requesting a proof from the server...");
+            sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: columns_to_verify.clone() })
+                .await.expect("Failed to send message to server");
+
+
+            let Some(Ok(transmission)) = stream.next().await else {
+                tracing::error!("Failed to receive message from server");
+                return Err(Box::from("Failed to receive message from server"));
+            };
+            tracing::debug!("Client received: {:?}", transmission);
+
+            match transmission {
+                ServerMessages::Columns { columns: received_columns } => {
+                    let locally_derived_leaves_test = get_processed_column_leaves_from_file(&file_metadata, columns_to_verify.clone()).await;
+
+                    let verification_result = client_verify_commitment(
+                        &file_metadata.root,
+                        &leaves_to_verify,
+                        &columns_to_verify,
+                        &received_columns,
+                        get_PoS_soudness_n_cols(&file_metadata));
+
+                    if verification_result.is_err() {
+                        tracing::error!("Failed to verify colums");
+                        //todo return error type
+                        return Err(Box::from("failed_to_verify_columns".to_string()));
+                    }
+
+                    tracing::debug!("client: file verification successful!");
+                    tracing::debug!("client: writing file to disk");
+
+                    let mut file_handle = File::create(&file_metadata.filename).await?;
+                    file_handle.write_all(&file_data).await?;
+
+                    Ok(())
+                }
+                _ => {
+                    tracing::error!("Unexpected server response");
+                    Err(Box::from("Unknown server response"))
+                }
+            }
+        }
+        ServerMessages::BadResponse { error } => {
+            tracing::error!("File upload failed: {}", error);
+            Err(Box::from(error))
+        }
+        _ => {
+            tracing::error!("Unknown server response");
+            Err(Box::from("Unknown server response"))
         }
     }
 }
