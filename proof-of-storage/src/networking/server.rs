@@ -16,6 +16,7 @@ use lcpc_2d::{LcCommit, LcEncoding, LcRoot};
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::{fields, PoSCommit};
+use crate::fields::evaluate_field_polynomial_at_point;
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
 use crate::lcpc_online::{get_PoS_soudness_n_cols, server_retreive_columns};
@@ -183,8 +184,10 @@ async fn handle_client_request_file(file_metadata: ClientOwnedFileMetadata) -> I
     if check_file_metadata(&file_metadata).is_err() {
         return make_bad_response("file metadata is invalid".to_string());
     }
+    let file_handle = get_file_handle_from_metadata(&file_metadata)
+        .unwrap();
 
-    let file = tokio::fs::read(&file_metadata.filename).await
+    let file = tokio::fs::read(&file_handle.as_str()).await
         .map_err(|e| tracing::error!("failed to read file: {:?}", e))
         .expect("failed to read file");
 
@@ -315,14 +318,11 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
         return make_bad_response("file metadata is invalid".to_string());
     }
 
-    // tracing::trace!("server: accesing file {}", &file_metadata.filename);
-    // let file = tokio::fs::read(&file_metadata.filename).await
-    //     .map_err(|e| tracing::error!("failed to read file: {:?}", e))
-    //     .expect("failed to read file");
-
+    let file_handle = get_file_handle_from_metadata(&file_metadata)
+        .unwrap();
 
     let (_, commit, _) =
-        convert_file_to_commit(&file_metadata.filename, file_metadata.num_encoded_columns)
+        convert_file_to_commit(file_handle.as_str(), file_metadata.num_encoded_columns)
             .map_err(|e| {
                 tracing::error!("failed to convert file to commit: {:?}", e);
                 return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -342,7 +342,21 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
 async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedFileMetadata, evaluation_point: WriteableFt63) -> InternalServerMessage {
     // get the requested polynomial evaluation from the file
     // send the evaluation to the client
-    unimplemented!("handle_client_request_polynomial_evaluation");
+    tracing::trace!("server: requested polynomial evaluation of {:?} at {:?}", &file_metadata.filename, evaluation_point);
+    if check_file_metadata(&file_metadata).is_err() {
+        return make_bad_response("file metadata is invalid".to_string());
+    }
+
+    let file_handle = get_file_handle_from_metadata(&file_metadata)
+        .unwrap();
+
+    let file_as_field_elements = fields::read_file_path_to_field_elements_vec(file_handle.as_str());
+
+    let result = evaluate_field_polynomial_at_point(&file_as_field_elements, &evaluation_point);
+
+    ServerMessages::PolynomialEvaluation { evaluation_result: result }
+
+    // unimplemented!("handle_client_request_polynomial_evaluation");
 }
 
 #[tracing::instrument]
@@ -428,4 +442,9 @@ fn dims_ok(columns: usize, file_size: usize) -> bool {
 fn check_file_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<(), Box<dyn std::error::Error>> {
     // todo!()
     Ok(())
+}
+
+fn get_file_handle_from_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<String, Box<dyn std::error::Error>> {
+    // todo need additional logic to search database once database is implemented.
+    Ok(file_metadata.filename.clone())
 }

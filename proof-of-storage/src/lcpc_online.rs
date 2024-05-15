@@ -3,10 +3,13 @@ use std::hash::Hash;
 
 use blake3::Hasher as Blake3;
 use blake3::traits::digest::{Digest, Output};
+use num_traits::Zero;
 
 use lcpc_2d::{FieldHash, LcEncoding, open_column, VerifierError, VerifierResult, verify_column_path};
 
-use crate::{PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
+use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
+use crate::fields::vector_multiply;
+use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::ClientOwnedFileMetadata;
 
 pub type FldT<E> = <E as LcEncoding>::F;
@@ -202,3 +205,44 @@ pub fn hash_column_to_digest<D>(
     // check Merkle path
     hasher.finalize()
 }
+
+pub fn verifiable_polynomial_evaluation(
+    commitment: &PoSCommit,
+    right_evaluation_column: &[PoSField],
+) -> Vec<PoSField>
+{
+    // view commitment.coefs as a matrix with shape commitment.n_rows by commitment.n_columns
+    // right multiply the commitment.coefs matrix by the right_evaluation_column vector and return
+    // results as a vector.
+    // a helper function exists in fields::multiply_vectors that accepts two vectors and returns a vector
+    let mut result = vec![PoSField::zero(); commitment.n_rows];
+    for (i, mut result_entry) in result.iter_mut().enumerate() {
+        result_entry = &mut vector_multiply(&commitment.comm[i * commitment.n_cols..
+            i * commitment.n_cols + commitment.n_rows],
+                                            right_evaluation_column);
+    }
+    result
+}
+
+/// Note: this does not verify the columns themselves, only the evaluation of the polynomial
+pub fn verify_polynomial_evaluation<D>(
+    right_evaluation_column: &[PoSField],
+    evaluation_result: &[PoSField],
+    requested_columns: &[usize],
+    received_columns: &[PoSColumn],
+) -> VerifierResult<(), ErrT<PoSEncoding>>
+    where D: Digest
+{
+    for (i, result_entry) in evaluation_result
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| requested_columns.contains(i)) {
+        let expected_result = fields::vector_multiply(&received_columns[i].col[..], right_evaluation_column);
+        // todo : where do I encode? 
+        if expected_result != *result_entry {
+            return Err(VerifierError::ColumnEval);
+        }
+    }
+    Ok(())
+}
+

@@ -4,6 +4,7 @@ use std::mem;
 
 use ff::PrimeField;
 use itertools::Itertools;
+use num_traits::{One, Zero};
 use rand::Rng;
 
 use crate::fields::writable_ft63::WriteableFt63;
@@ -203,4 +204,40 @@ pub fn random_writeable_field_vec(log_len: usize) -> Vec<WriteableFt63>
         WriteableFt63::from_u64_array(random_u64_array).unwrap()
     }).take(1 << log_len).collect_vec();
     random_vector
+}
+
+/// Note that the polynomial is evaluated little endian style, e.g. the array of coefficients should be passed in as
+/// [c_0, c_1, ..., c_d] where c_i is the coefficient of x^i.
+pub fn evaluate_field_polynomial_at_point(field_elements: &Vec<WriteableFt63>, point: &WriteableFt63) -> WriteableFt63
+{
+    let mut result = WriteableFt63::zero();
+    let mut current_power = WriteableFt63::one();
+    for field_element in field_elements {
+        result += *field_element * current_power;
+        current_power *= point;
+    }
+    result
+}
+
+#[test]
+fn test_polynomial_eval() {
+    let field_elements = vec![WriteableFt63::zero(), WriteableFt63::zero(), WriteableFt63::zero()];
+    let point = WriteableFt63::one();
+    assert_eq!(evaluate_field_polynomial_at_point(&field_elements, &point), WriteableFt63::zero());
+
+    let field_elements = vec![WriteableFt63::one(), WriteableFt63::one(), WriteableFt63::one()];
+    assert_eq!(evaluate_field_polynomial_at_point(&field_elements, &point), WriteableFt63::one() + WriteableFt63::one() + WriteableFt63::one());
+
+    let field_elements = vec![WriteableFt63::zero(), WriteableFt63::from_u128(1), WriteableFt63::from_u128(2)];
+    let point = WriteableFt63::from_u128(2);
+    assert_eq!(evaluate_field_polynomial_at_point(&field_elements, &point), WriteableFt63::from_u128(2 * (2u128.pow(2)) + 2 + 0));
+}
+
+
+pub fn vector_multiply(
+    a: &[WriteableFt63],
+    b: &[WriteableFt63],
+) -> WriteableFt63
+{
+    a.iter().zip(b.iter()).map(|(a, b)| *a * b).sum()
 }

@@ -164,12 +164,14 @@ pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
                 tracing::error!("Failed to receive message from server");
                 return Err(Box::from("Failed to receive message from server"));
             };
-            tracing::debug!("Client received: {:?}", transmission);
+            tracing::trace!("Client received: {:?}", transmission);
 
             match transmission {
                 ServerMessages::Columns { columns: received_columns } => {
-                    let locally_derived_leaves_test = get_processed_column_leaves_from_file(&file_metadata, columns_to_verify.clone()).await;
+                    tracing::debug!("client: received columns from server");
+                    // let locally_derived_leaves_test = get_processed_column_leaves_from_file(&file_metadata, columns_to_verify.clone()).await;
 
+                    tracing::debug!("verifying commitment");
                     let verification_result = client_verify_commitment(
                         &file_metadata.root,
                         &leaves_to_verify,
@@ -313,8 +315,10 @@ pub async fn get_processed_column_leaves_from_file(
     extracted_leaves
 }
 
-pub fn convert_read_file_to_commit_only_leaves<D>(file_data: &Vec<u8>, columns_to_extract: &Vec<usize>)
-                                                  -> Result<(Vec<Output<D>>), Box<dyn std::error::Error>>
+pub fn convert_read_file_to_commit_only_leaves<D>(
+    file_data: &Vec<u8>,
+    columns_to_extract: &Vec<usize>,
+) -> Result<(Vec<Output<D>>), Box<dyn std::error::Error>>
     where
         D: Digest,
 {

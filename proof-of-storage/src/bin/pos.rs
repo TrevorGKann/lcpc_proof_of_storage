@@ -62,7 +62,7 @@ enum PoSSubCommands {
         port: Option<u16>,
 
         /// the bits of security to use as an override #UNIMIPLEMENTED todo
-        #[clap(short, long, default_value = 64)]
+        #[clap(short, long, default_value = "64")]
         security_bits: Option<u8>,
 
     },
@@ -138,7 +138,7 @@ async fn main() {
             tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
 
             tracing::debug!("requesting file from server");
-            download_file_command().await;
+            download_file_command(file_metadata.unwrap(), ip, port, security_bits).await;
         }
         PoSSubCommands::Proof { file, ip, port, security_bits } => {
             tracing::info!("requesting proof of storage");
@@ -180,6 +180,8 @@ fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<(), Box<
 
     let subscriber = tracing_subscriber::fmt()
         .compact()
+        .with_file(true)
+        .with_line_number(true)
         .with_max_level(max_level)
         .finish();
 
