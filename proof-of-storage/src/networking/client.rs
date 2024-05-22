@@ -305,7 +305,7 @@ pub async fn get_processed_column_leaves_from_file(
     // }
     // leaves
 
-    let extracted_columns = server_retreive_columns(&commit, cols_to_verify);
+    let extracted_columns = server_retreive_columns(&commit, &cols_to_verify);
 
     let extracted_leaves: Vec<Output<Blake3>> = extracted_columns
         .iter()

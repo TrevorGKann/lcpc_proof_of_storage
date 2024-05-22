@@ -129,7 +129,7 @@ pub mod network_tests {
 
         let leaves_from_file = get_processed_column_leaves_from_file(&file_metadata, cols_to_verify.clone()).await;
 
-        let server_columns = server_retreive_columns(&commit, cols_to_verify.clone());
+        let server_columns = server_retreive_columns(&commit, &cols_to_verify);
         let server_leaves: Vec<Output<Blake3>> = server_columns
             .iter()
             .map(hash_column_to_digest::<Blake3>)

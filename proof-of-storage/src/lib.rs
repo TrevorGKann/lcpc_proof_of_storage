@@ -1,3 +1,5 @@
+extern crate core;
+
 use blake3::Hasher as Blake3;
 
 use lcpc_2d::{LcColumn, LcCommit, LcEncoding, LcEvalProof, LcRoot};

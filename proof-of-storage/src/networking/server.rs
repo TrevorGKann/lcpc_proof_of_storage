@@ -329,7 +329,7 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
             })
             .expect("failed to convert file to commit");
 
-    let column_collection = server_retreive_columns(&commit, requested_columns);
+    let column_collection = server_retreive_columns(&commit, &requested_columns);
 
     for column in column_collection.iter().take(5) {
         tracing::trace!("server: sending leaf to client: {:x}", column.path[0]);
