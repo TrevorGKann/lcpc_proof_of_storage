@@ -16,7 +16,7 @@ use lcpc_2d::{LcCommit, LcEncoding, LcRoot};
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::{fields, PoSCommit};
-use crate::fields::evaluate_field_polynomial_at_point;
+use crate::fields::{evaluate_field_polynomial_at_point, is_power_of_two, read_file_to_field_elements_vec};
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
 use crate::lcpc_online::{form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation};
@@ -149,13 +149,13 @@ async fn handle_client_user_login(username: String, password: String) -> Interna
 
 /// save the file to the server
 #[tracing::instrument]
-async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, columns: usize) -> InternalServerMessage {
+async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, pre_encoded_columns: usize) -> InternalServerMessage {
     // parse the filename to remove all leading slashes
     use std::path::Path;
     let filename = Path::new(&filename).file_name().unwrap().to_str().unwrap();
 
     // check if rows and columns are valid first
-    if (!dims_ok(columns, file_data.len())) {
+    if (!dims_ok(pre_encoded_columns, file_data.len())) {
         return ServerMessages::BadResponse { error: "Invalid rows or columns".to_string() };
     }
 
@@ -164,7 +164,7 @@ async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, col
         .expect("failed to write file"); //todo probably shouldn't be a panic here
 
 
-    let (root, commit, file_metadata) = convert_file_to_commit(&filename, columns)
+    let (root, commit, file_metadata) = convert_file_to_commit_internal(&filename, Some(pre_encoded_columns))
         .map_err(|e| {
             tracing::error!("failed to convert file to commit: {:?}", e);
             return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -228,7 +228,7 @@ async fn handle_client_edit_file_row(file_metadata: ClientOwnedFileMetadata, row
         return make_bad_response("new file data is not the correct length".to_string());
     }
 
-    //todo need to keep previous file and commit for clientside checking that edit was successful 
+    //todo need to keep previous file and commit for clientside checking that edit was successful
 
     { //scope for file opening
         let mut file = tokio::fs::File::open(&file_metadata.filename).await
@@ -250,7 +250,7 @@ async fn handle_client_edit_file_row(file_metadata: ClientOwnedFileMetadata, row
     }
 
     let (root, commit, updated_file_metadata) =
-        convert_file_to_commit(&file_metadata.filename, file_metadata.num_encoded_columns)
+        convert_file_to_commit_internal(&file_metadata.filename, Some(file_metadata.num_columns))
             .map_err(|e| {
                 tracing::error!("failed to convert file to commit: {:?}", e);
                 return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -287,7 +287,7 @@ async fn handle_client_append_to_file(file_metadata: ClientOwnedFileMetadata, fi
     }
 
     let (root, commit, updated_file_metadata) =
-        convert_file_to_commit(&file_metadata.filename, file_metadata.num_encoded_columns)
+        convert_file_to_commit_internal(&file_metadata.filename, Some(file_metadata.num_columns))
             .map_err(|e| {
                 tracing::error!("failed to convert file to commit: {:?}", e);
                 return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -318,11 +318,8 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
         return make_bad_response("file metadata is invalid".to_string());
     }
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata)
-        .unwrap();
-
-    let (_, commit, _) =
-        convert_file_to_commit(file_handle.as_str(), file_metadata.num_encoded_columns)
+    let (_, commit) =
+        convert_file_metadata_to_commit(&file_metadata)
             .map_err(|e| {
                 tracing::error!("failed to convert file to commit: {:?}", e);
                 return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -347,7 +344,7 @@ async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedF
         return make_bad_response("file metadata is invalid".to_string());
     }
 
-    let (_, commit, _) = convert_file_to_commit(&file_metadata.filename, file_metadata.num_columns)
+    let (_, commit) = convert_file_metadata_to_commit(&file_metadata)
         .map_err(|e| {
             tracing::error!("failed to convert file to commit: {:?}", e);
             return make_bad_response(format!("failed to convert file to commit: {:?}", e));
@@ -371,15 +368,24 @@ pub fn get_aspect_ratio_default_from_field_len(field_len: usize) -> (usize, usiz
     tracing::debug!("field_len: {}", field_len);
 
     let data_min_width = (field_len as f32).sqrt().ceil() as usize;
-    let data_realized_width = data_min_width.next_power_of_two();
-    let matrix_colums = (data_realized_width + 1).next_power_of_two();
+    let pre_encoded_columns = if is_power_of_two(data_min_width) {
+        data_min_width
+    } else {
+        data_min_width.next_power_of_two()
+    };
+    let encoded_matrix_columns = (pre_encoded_columns + 1).next_power_of_two();
 
-    let num_columns = usize::div_ceil(field_len, matrix_colums);
-    let soundness_denominator: f64 = ((1f64 + (data_realized_width as f64 / matrix_colums as f64)) / 2f64).log2();
+
+    let soundness = get_soundness_from_matrix_dims(pre_encoded_columns, encoded_matrix_columns);
+
+    (pre_encoded_columns, encoded_matrix_columns, soundness)
+}
+
+#[tracing::instrument]
+fn get_soundness_from_matrix_dims(pre_encoded_cols: usize, encoded_cols: usize) -> usize {
+    let soundness_denominator: f64 = ((1f64 + (pre_encoded_cols as f64 / encoded_cols as f64)) / 2f64).log2();
     let theoretical_min = (-128f64 / soundness_denominator).ceil() as usize;
-    let soundness = min(theoretical_min, matrix_colums);
-
-    (data_realized_width, matrix_colums, soundness)
+    min(theoretical_min, encoded_cols)
 }
 
 #[tracing::instrument]
@@ -392,44 +398,67 @@ pub fn get_aspect_ratio_default_from_file_len<Field: ff::PrimeField>(file_len: u
     get_aspect_ratio_default_from_field_len(field_len)
 }
 
+
 #[tracing::instrument]
-pub fn convert_file_to_commit(filename: &str, requested_columns: usize)
-                              -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit, ClientOwnedFileMetadata), Box<dyn std::error::Error>> {
-    //todo need logic to request certain columns and row values
-    let field_vector = fields::read_file_path_to_field_elements_vec(filename);
+/// a thin wrapper for convert_file_to_commit_internal that should be used with ClientOwnedFileMetadata
+pub fn convert_file_metadata_to_commit(file_metadata: &ClientOwnedFileMetadata)
+                                       -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit),
+                                           Box<dyn std::error::Error>> {
+    let server_side_filename = get_file_handle_from_metadata(&file_metadata)?;
+    let (result_root, result_commit, _)
+        = convert_file_to_commit_internal(server_side_filename.as_str(), Some(file_metadata.num_columns))?;
+    Ok((result_root, result_commit))
+}
+
+#[tracing::instrument]
+pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_columns: Option<usize>)
+                                       -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit, ClientOwnedFileMetadata),
+                                           Box<dyn std::error::Error>> {
+    // read entire file (we can't get around this)
+    // todo: use mem maps so this can be streamed
+    tracing::info!("reading file {}", filename);
+    let mut file = std::fs::File::open(filename).unwrap();
+    let (size_in_bytes, field_vector) = read_file_to_field_elements_vec(&mut file);
     tracing::info!("field_vector: {:?}", field_vector.len());
 
-    //todo: ought to make customizable sizes for this
-    let data_min_width = (field_vector.len() as f32).sqrt().ceil() as usize;
-    let data_realized_width = data_min_width.next_power_of_two();
-    let matrix_colums = (data_realized_width + 1).next_power_of_two();
-    let (data_realized_width_test, matrix_colums_test, soundness_test) = get_aspect_ratio_default_from_field_len(field_vector.len());
+    if field_vector.len() == 0 {
+        return Err("file is empty".into());
+    }
 
+    let (pre_encoded_columns, encoded_columns, soundness);
 
-    let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_colums);
+    if requested_pre_encoded_columns.is_none() {
+        (pre_encoded_columns, encoded_columns, soundness) = get_aspect_ratio_default_from_field_len(field_vector.len());
+    } else {
+        let requested_columns = requested_pre_encoded_columns.unwrap();
+        pre_encoded_columns = requested_columns;
+        // encoded columns should be at least 2x pre_encoded columns and needs to be a square
+        encoded_columns = if is_power_of_two(pre_encoded_columns) {
+            pre_encoded_columns.next_power_of_two()
+        } else {
+            (pre_encoded_columns * 2).next_power_of_two()
+        };
+        soundness = get_soundness_from_matrix_dims(pre_encoded_columns, encoded_columns);
+    }
+
+    let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(pre_encoded_columns, encoded_columns);
     let commit = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
     let root = commit.get_root();
 
     let file_metadata = ClientOwnedFileMetadata {
         stored_server: ServerHost {
+            //the client will change this, so this doesn't matter
             server_name: None,
             server_ip: "".to_string(),
-            server_port: 0, // todo: dummy debug
+            server_port: 0,
         },
         filename: filename.to_string(),
-        num_rows: field_vector.len() / matrix_colums + 1,
-        num_columns: data_realized_width,
-        num_encoded_columns: matrix_colums,
-        filesize_in_bytes: field_vector.len(),
+        num_rows: usize::div_ceil(field_vector.len(), pre_encoded_columns),
+        num_columns: pre_encoded_columns,
+        num_encoded_columns: encoded_columns,
+        filesize_in_bytes: size_in_bytes,
         root: root.clone(),
     };
-
-
-    // Debug: delete me later
-    assert_eq!(data_realized_width, data_realized_width_test);
-    assert_eq!(matrix_colums, matrix_colums_test);
-    assert_eq!(soundness_test, get_PoS_soudness_n_cols(&file_metadata));
-
 
     Ok((root, commit, file_metadata))
 }

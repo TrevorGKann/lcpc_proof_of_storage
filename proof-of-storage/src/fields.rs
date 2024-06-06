@@ -77,13 +77,13 @@ pub mod writable_ft63 {
 }
 
 #[tracing::instrument]
-pub fn read_file_to_field_elements_vec(file: &mut File) -> Vec<WriteableFt63> {
+pub fn read_file_to_field_elements_vec(file: &mut File) -> (usize, Vec<WriteableFt63>) {
     // todo: need to convert to async with tokio file
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
     tracing::trace!("read {} bytes from file", buffer.len());
 
-    convert_byte_vec_to_field_elements_vec(&buffer)
+    (buffer.len(), convert_byte_vec_to_field_elements_vec(&buffer))
 }
 
 #[tracing::instrument]
@@ -113,7 +113,8 @@ pub fn convert_byte_vec_to_field_elements_vec(byte_vec: &Vec<u8>) -> Vec<Writeab
 pub fn read_file_path_to_field_elements_vec(path: &str) -> Vec<WriteableFt63>
 {
     let mut file = File::open(path).unwrap();
-    read_file_to_field_elements_vec(&mut file)
+    let (_, result) = read_file_to_field_elements_vec(&mut file);
+    result
 }
 
 fn byte_array_to_u64_array<const OUTPUT_WIDTH: usize>(input: &[u8], endianness: ByteOrder) -> [u64; OUTPUT_WIDTH] {
@@ -240,4 +241,8 @@ pub fn vector_multiply(
 ) -> WriteableFt63
 {
     a.iter().zip(b.iter()).map(|(a, b)| *a * b).sum()
+}
+
+pub fn is_power_of_two(x: usize) -> bool {
+    x & (x - 1) == 0
 }
