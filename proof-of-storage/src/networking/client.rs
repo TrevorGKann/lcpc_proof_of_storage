@@ -1,6 +1,7 @@
 use bitvec::view::BitViewSized;
 use blake3::traits::digest;
 use digest::{Digest, FixedOutputReset, Output};
+use ff::Field;
 use futures::{SinkExt, StreamExt};
 use itertools::Itertools;
 use num_traits::{One, ToPrimitive, Zero};
@@ -21,7 +22,7 @@ use lcpc_2d::{FieldHash, LcCommit, LcEncoding, LcRoot, open_column, ProverError}
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::*;
-use crate::fields::writable_ft63;
+use crate::fields::{evaluate_field_polynomial_at_point, writable_ft63};
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
 use crate::lcpc_online::{client_verify_commitment, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
@@ -384,4 +385,109 @@ pub fn convert_read_file_to_commit_only_leaves<D>(
     // }
 
     Ok(column_digest_results)
+}
+
+pub async fn client_request_and_verify_polynomial<D>(
+    file_metadata: &ClientOwnedFileMetadata,
+    server_ip: String,
+) -> Result<(), Box<dyn std::error::Error>>
+    where
+        D: Digest,
+{
+    tracing::info!("requesting polynomial evaluation from server");
+
+    tracing::debug!("connecting to server {}", &server_ip);
+    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
+
+    let rng = &mut ChaCha8Rng::seed_from_u64(1337);
+    let evaluation_point = WriteableFt63::random(rng);
+
+    sink.send(ClientMessages::RequestPolynomialEvaluation { file_metadata: file_metadata.clone(), evaluation_point })
+        .await.expect("Failed to send message to server");
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        return Err(Box::from("Failed to receive message from server"));
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+    match transmission {
+        ServerMessages::PolynomialEvaluation { evaluation_result } => {
+            tracing::debug!("client: received polynomial evaluation from server");
+
+            let cols_to_verify = get_columns_from_random_seed(
+                1337,
+                get_PoS_soudness_n_cols(file_metadata),
+                file_metadata.num_encoded_columns,
+            );
+
+            tracing::info!("client: Requesting a proof from the server...");
+            tracing::trace!("client: requesting the following columns from the server: {:?}", cols_to_verify);
+
+            sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
+                .await.expect("Failed to send message to server");
+
+
+            let Some(Ok(transmission)) = stream.next().await else {
+                tracing::error!("Failed to receive message from server");
+                return Err(Box::from("Failed to receive message from server"));
+            };
+            tracing::debug!("Client received: {:?}", transmission);
+
+            match transmission {
+                ServerMessages::Columns { columns: received_columns } => {
+                    let locally_derived_leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
+                    let verification_result = client_verify_commitment(
+                        &file_metadata.root,
+                        &locally_derived_leaves,
+                        &cols_to_verify,
+                        &received_columns,
+                        get_PoS_soudness_n_cols(file_metadata));
+
+                    if verification_result.is_err() {
+                        tracing::error!("Failed to verify colums");
+                        //todo return error type
+                        return Err(Box::from("failed_to_verify_columns".to_string()));
+                    }
+
+                    let local_evaluation_check =
+                        lcpc_online::verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+                            &evaluation_point,
+                            &evaluation_result,
+                            file_metadata.num_rows,
+                            file_metadata.num_columns,
+                            &cols_to_verify,
+                            &received_columns,
+                        );
+
+                    if local_evaluation_check.is_err() {
+                        tracing::error!("Failed to verify polynomial evaluation");
+                        Err(Box::from("failed_to_verify_polynomial_evaluation".to_string()))
+                    } else {
+                        Ok(())
+                    }
+                }
+
+                ServerMessages::BadResponse { error } => {
+                    tracing::error!("Polynomial evaluation failed: {}", error);
+                    Err(Box::from(error))
+                }
+                _ => {
+                    tracing::error!("Unexpected server response");
+                    Err(Box::from("Unknown server response"))
+                }
+            }
+        }
+        ServerMessages::BadResponse { error } => {
+            tracing::error!("Polynomial evaluation failed: {}", error);
+            Err(Box::from(error))
+        }
+        _ => {
+            tracing::error!("Unexpected server response");
+            Err(Box::from("Unknown server response"))
+        }
+    }
+
+    // todo!()
 }

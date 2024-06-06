@@ -78,7 +78,7 @@ pub enum ServerMessages
     File { file: Vec<u8> },
     FileRow { row: Vec<u8> },
     EncodedColumn { col: Vec<TestField> },
-    PolynomialEvaluation { evaluation_result: TestField },
+    PolynomialEvaluation { evaluation_result: Vec<TestField> },
     ServerKeepAlive,
     BadResponse { error: String },
 }

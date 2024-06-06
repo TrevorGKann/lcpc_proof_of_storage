@@ -4,7 +4,7 @@ use std::io::SeekFrom;
 use blake3::{Hash, Hasher as Blake3};
 use blake3::traits::digest;
 use blake3::traits::digest::Output;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, TryFutureExt};
 use pretty_assertions::assert_eq;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
@@ -19,7 +19,7 @@ use crate::{fields, PoSCommit};
 use crate::fields::evaluate_field_polynomial_at_point;
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
-use crate::lcpc_online::{get_PoS_soudness_n_cols, server_retreive_columns};
+use crate::lcpc_online::{form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation};
 use crate::networking::shared;
 use crate::networking::shared::*;
 use crate::networking::shared::ClientMessages::ClientKeepAlive;
@@ -103,7 +103,7 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
                 handle_client_request_proof(file_metadata, columns_to_verify).await
             }
             ClientMessages::RequestPolynomialEvaluation { file_metadata, evaluation_point } => {
-                handle_client_request_polynomial_evaluation(file_metadata, evaluation_point).await
+                handle_client_request_polynomial_evaluation(file_metadata, &evaluation_point).await
             }
             _ => { ServerMessages::ServerKeepAlive }
         };
@@ -228,7 +228,7 @@ async fn handle_client_edit_file_row(file_metadata: ClientOwnedFileMetadata, row
         return make_bad_response("new file data is not the correct length".to_string());
     }
 
-    //todo need to keep previous file and commit for checking that edit was successful clientside
+    //todo need to keep previous file and commit for clientside checking that edit was successful 
 
     { //scope for file opening
         let mut file = tokio::fs::File::open(&file_metadata.filename).await
@@ -339,7 +339,7 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
 }
 
 #[tracing::instrument]
-async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedFileMetadata, evaluation_point: WriteableFt63) -> InternalServerMessage {
+async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedFileMetadata, evaluation_point: &WriteableFt63) -> InternalServerMessage {
     // get the requested polynomial evaluation from the file
     // send the evaluation to the client
     tracing::trace!("server: requested polynomial evaluation of {:?} at {:?}", &file_metadata.filename, evaluation_point);
@@ -347,14 +347,21 @@ async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedF
         return make_bad_response("file metadata is invalid".to_string());
     }
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata)
-        .unwrap();
+    let (_, commit, _) = convert_file_to_commit(&file_metadata.filename, file_metadata.num_columns)
+        .map_err(|e| {
+            tracing::error!("failed to convert file to commit: {:?}", e);
+            return make_bad_response(format!("failed to convert file to commit: {:?}", e));
+        })
+        .expect("failed to convert file to commit");
 
-    let file_as_field_elements = fields::read_file_path_to_field_elements_vec(file_handle.as_str());
+    let (evaluation_left_vector, _)
+        = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, commit.n_rows, commit.n_cols);
 
-    let result = evaluate_field_polynomial_at_point(&file_as_field_elements, &evaluation_point);
 
-    ServerMessages::PolynomialEvaluation { evaluation_result: result }
+    let result_vector = verifiable_polynomial_evaluation(&commit, &evaluation_left_vector);
+
+
+    ServerMessages::PolynomialEvaluation { evaluation_result: result_vector }
 
     // unimplemented!("handle_client_request_polynomial_evaluation");
 }

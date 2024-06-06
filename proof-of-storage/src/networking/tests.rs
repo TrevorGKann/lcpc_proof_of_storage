@@ -4,12 +4,14 @@ pub mod network_tests {
 
     use blake3::Hasher as Blake3;
     use blake3::traits::digest::Output;
+    use ff::PrimeField;
     // use pretty_assertions::assert_eq;
     use tokio::fs;
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
     use tokio::time::sleep;
 
+    use crate::fields::writable_ft63::WriteableFt63;
     use crate::lcpc_online::{get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
     use crate::networking::client;
     use crate::networking::client::{convert_read_file_to_commit_only_leaves, get_processed_column_leaves_from_file};
@@ -194,5 +196,36 @@ pub mod network_tests {
 
         tracing::info!("downloaded file: {:?}", downloaded_data.iter().take(10).collect::<Vec<&u8>>());
         assert_eq!(file_data, downloaded_data);
+    }
+
+    #[tokio::test]
+    async fn test_polynomial_evaluation() {
+        let source_file = "test_files/test.txt";
+        let dest_temp_file = "test.txt";
+        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+
+        let port = start_test_with_server_on_random_port_and_get_port("upload_then_download_file".to_string()).await;
+
+        let file_data = fs::read(source_file).await.unwrap();
+        tracing::info!("file start: {:?}...", file_data.iter().take(10).collect::<Vec<&u8>>());
+
+        let upload_response = client::upload_file(
+            source_file.to_owned(),
+            4,
+            format!("localhost:{}", port),
+        ).await;
+
+        tracing::info!("client received: {:?}", upload_response);
+
+        let (metadata, root) = upload_response.unwrap();
+
+        let point = WriteableFt63::from_u128(2);
+
+        let response = client::client_request_and_verify_polynomial::<Blake3>(
+            &metadata,
+            format!("localhost:{}", port),
+        ).await;
+
+        let evaluation_result = response.unwrap();
     }
 }

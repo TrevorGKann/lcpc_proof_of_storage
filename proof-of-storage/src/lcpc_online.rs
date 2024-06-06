@@ -269,11 +269,12 @@ pub fn verify_proper_partial_polynomial_evaluation<D>(
     Ok(())
 }
 
+/// does not verify the columns themselves, only the evaluation of the polynomial
+/// todo: verify columns
 pub fn verifiable_full_polynomial_evaluation<D>(
     left_evaluation_column: &[WriteableFt63],
     right_evaluation_column: &[WriteableFt63],
     received_result_vector: &[WriteableFt63],
-    commitment: &PoSCommit,
     requested_column_indices: &[usize],
     received_columns: &[PoSColumn],
 ) -> VerifierResult<WriteableFt63, ErrT<PoSEncoding>>
@@ -284,6 +285,40 @@ pub fn verifiable_full_polynomial_evaluation<D>(
     let decoded_result_vector = decode_row(received_result_vector.to_vec())?;
     let result = fields::vector_multiply(&(decoded_result_vector as Vec<WriteableFt63>), right_evaluation_column);
     Ok(result)
+}
+
+pub fn verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point<D>(
+    evaluation_point: &WriteableFt63,
+    received_result_vector: &[WriteableFt63],
+    n_rows: usize,
+    n_cols: usize,
+    requested_column_indices: &[usize],
+    received_columns: &[PoSColumn],
+) -> VerifierResult<WriteableFt63, ErrT<PoSEncoding>>
+    where D: Digest
+{
+    let mut left_eval_column: Vec<WriteableFt63> = Vec::with_capacity(n_rows);
+    let mut right_eval_column: Vec<WriteableFt63> = Vec::with_capacity(n_cols);
+    let mut right_accumulator = WriteableFt63::one();
+
+    // right column should be [1, x, x^2, ..., x^n-1]
+    for _ in 0..n_rows {
+        right_eval_column.push(right_accumulator);
+        right_accumulator *= evaluation_point;
+    }
+    // right_accumulator will end up at x^n
+
+    // left column, then, should be [1, x^n, x^2n, ...]
+    let mut left_accumulator = WriteableFt63::one();
+    for _ in 0..n_rows {
+        left_eval_column.push(left_accumulator);
+        left_accumulator *= right_accumulator;
+    }
+
+    verifiable_full_polynomial_evaluation::<D>(
+        &left_eval_column, &right_eval_column,
+        received_result_vector, requested_column_indices,
+        received_columns)
 }
 
 pub fn decode_row(
@@ -307,6 +342,33 @@ fn encode_then_decode_row() {
     assert_eq!(commit.coeffs, decode_row(commit.comm).unwrap()[..commit.coeffs.len()])
 }
 
+pub fn form_side_vectors_for_polynomial_evaluation_from_point(
+    evaluation_point: &WriteableFt63,
+    n_rows: usize,
+    n_cols: usize,
+) -> (Vec<WriteableFt63>, Vec<WriteableFt63>)
+{
+    let mut left_eval_column: Vec<WriteableFt63> = Vec::with_capacity(n_rows);
+    let mut right_eval_column: Vec<WriteableFt63> = Vec::with_capacity(n_cols);
+    let mut right_accumulator = WriteableFt63::one();
+
+    // right column should be [1, x, x^2, ..., x^n-1]
+    for _ in 0..n_rows {
+        right_eval_column.push(right_accumulator);
+        right_accumulator *= evaluation_point;
+    }
+    // right_accumulator will end up at x^n
+
+    // left column, then, should be [1, x^n, x^2n, ...]
+    let mut left_accumulator = WriteableFt63::one();
+    for _ in 0..n_rows {
+        left_eval_column.push(left_accumulator);
+        left_accumulator *= right_accumulator;
+    }
+
+    (left_eval_column, right_eval_column)
+}
+
 #[test]
 fn verify_polynomial_eval() {
     let coefs = fields::random_writeable_field_vec(10);
@@ -326,19 +388,8 @@ fn verify_polynomial_eval() {
     let mut right_eval_column: Vec<WriteableFt63> = Vec::with_capacity(commit.n_cols);
     let mut right_accumulator = WriteableFt63::one();
 
-    // right column should be [1, x, x^2, ..., x^n-1]
-    for _ in 0..commit.n_rows {
-        right_eval_column.push(right_accumulator);
-        right_accumulator *= eval_point;
-    }
-    // right_accumulator will end up at x^n
-
-    // left column, then, should be [1, x^n, x^2n, ...]
-    let mut left_accumulator = WriteableFt63::one();
-    for _ in 0..commit.n_rows {
-        left_eval_column.push(left_accumulator);
-        left_accumulator *= right_accumulator;
-    }
+    let (left_eval_column, right_eval_column)
+        = form_side_vectors_for_polynomial_evaluation_from_point(&eval_point, commit.n_rows, commit.n_cols);
 
     let server_partial_evaluation = verifiable_polynomial_evaluation(&commit, &left_eval_column);
 
@@ -348,7 +399,7 @@ fn verify_polynomial_eval() {
 
     let server_full_evaluation_of_polynomial = verifiable_full_polynomial_evaluation::<Blake3>(
         &left_eval_column, &right_eval_column,
-        &server_partial_evaluation, &commit,
+        &server_partial_evaluation,
         &columns_to_fetch_indices, &columns).unwrap();
     let local_evaluation = fields::evaluate_field_polynomial_at_point(&coefs, &eval_point);
 
