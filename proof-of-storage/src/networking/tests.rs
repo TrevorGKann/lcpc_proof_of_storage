@@ -120,7 +120,8 @@ pub mod network_tests {
 
         let test_file = "test_files/test.txt";
 
-        let (root, commit, file_metadata) = crate::networking::server::convert_file_to_commit(test_file, 4).unwrap();
+        let (root, commit, file_metadata)
+            = crate::networking::server::convert_file_to_commit_internal(test_file, None).unwrap();
 
 
         let cols_to_verify = crate::networking::client::get_columns_from_random_seed(

@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 #[cfg(test)]
 #[allow(unused)]
 pub mod tests {
@@ -10,6 +11,7 @@ pub mod tests {
 
     use crate::fields::*;
     use crate::fields;
+    use crate::networking::server::convert_file_to_commit_internal;
 
     const CLEANUP_VALUES: bool = true;
 
@@ -79,31 +81,36 @@ pub mod tests {
 
     #[test]
     fn end_to_end_with_set_dimensions() {
-        use blake3::Hasher as Blake3;
         use itertools::iterate;
         use merlin::Transcript;
 
-        let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("test_file.txt");
-        let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
-        let data_realized_width = data_min_width.next_power_of_two();
-        let matrix_columns = (data_realized_width + 1).next_power_of_two();
-        let encoding = LigeroEncoding::<TestField>::new_from_dims(data_realized_width, matrix_columns);
-        let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
-        let root = commit.get_root();
+        // let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("test_file.txt");
+        // let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
+        // let data_realized_width = data_min_width.next_power_of_two();
+        // let matrix_columns = (data_realized_width + 1).next_power_of_two();
+        // let encoding = LigeroEncoding::<TestField>::new_from_dims(data_realized_width, matrix_columns);
+        // let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
+        // let root = commit.get_root();
+
+        let (root, commit, metadata)
+            = convert_file_to_commit_internal("test_file.txt", None).unwrap();
+
+        let encoding
+            = LigeroEncoding::<TestField>::new_from_dims(metadata.num_columns, metadata.num_encoded_columns);
 
         // randomly select evaluation point of the polynomial
-        let x = TestField::random(&mut rand::thread_rng());
+        let x_eval_point = TestField::random(&mut rand::thread_rng());
 
         // generate the inner and outer tensor for polynomial evaluation evaluated as
         // outer_tensor.T * polynomial_matrix * inner_tensor = polynomial(x)
         // so innter_tensor = [1, x, x^2,...] and outer_tensor = [x^n, x^2n, ...]
         // where n is the polynomail matrix's number of columns
-        let inner_tensor: Vec<TestField> = iterate(TestField::ONE, |&v| v * x)
+        let inner_tensor: Vec<TestField> = iterate(TestField::ONE, |&v| v * x_eval_point)
             .take(commit.get_n_per_row())
             .collect();
         let outer_tensor: Vec<TestField> = {
-            let xr = x * inner_tensor.last().unwrap();
-            iterate(TestField::ONE, |&v| v * xr)
+            let xr_eval_point_raised_to_power_for_outer_tensor = x_eval_point * inner_tensor.last().unwrap();
+            iterate(TestField::ONE, |&v| v * xr_eval_point_raised_to_power_for_outer_tensor)
                 .take(commit.get_n_rows())
                 .collect()
         };

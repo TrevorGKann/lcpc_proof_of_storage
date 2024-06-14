@@ -425,21 +425,21 @@ pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_col
         return Err("file is empty".into());
     }
 
-    let (pre_encoded_columns, encoded_columns, soundness);
-
-    if requested_pre_encoded_columns.is_none() {
-        (pre_encoded_columns, encoded_columns, soundness) = get_aspect_ratio_default_from_field_len(field_vector.len());
-    } else {
-        let requested_columns = requested_pre_encoded_columns.unwrap();
-        pre_encoded_columns = requested_columns;
-        // encoded columns should be at least 2x pre_encoded columns and needs to be a square
-        encoded_columns = if is_power_of_two(pre_encoded_columns) {
-            pre_encoded_columns.next_power_of_two()
+    let (pre_encoded_columns, encoded_columns, soundness) =
+        if requested_pre_encoded_columns.is_none() {
+            get_aspect_ratio_default_from_field_len(field_vector.len())
         } else {
-            (pre_encoded_columns * 2).next_power_of_two()
+            let requested_columns = requested_pre_encoded_columns.unwrap();
+            let pre_encoded_columns = requested_columns;
+            // encoded columns should be at least 2x pre_encoded columns and needs to be a square
+            let encoded_columns = if is_power_of_two(pre_encoded_columns) {
+                pre_encoded_columns.next_power_of_two()
+            } else {
+                (pre_encoded_columns * 2).next_power_of_two()
+            };
+            let soundness = get_soundness_from_matrix_dims(pre_encoded_columns, encoded_columns);
+            (pre_encoded_columns, encoded_columns, soundness)
         };
-        soundness = get_soundness_from_matrix_dims(pre_encoded_columns, encoded_columns);
-    }
 
     let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(pre_encoded_columns, encoded_columns);
     let commit = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();

@@ -293,7 +293,7 @@ pub async fn get_processed_column_leaves_from_file(
     file_metadata: &ClientOwnedFileMetadata,
     cols_to_verify: Vec<usize>,
 ) -> Vec<Output<Blake3>> {
-    let (root, commit, file_metadata) = server::convert_file_to_commit(&file_metadata.filename, file_metadata.num_encoded_columns)
+    let (root, commit) = server::convert_file_metadata_to_commit(&file_metadata)
         .map_err(|e| {
             tracing::error!("failed to convert file to commit: {:?}", e);
         })
