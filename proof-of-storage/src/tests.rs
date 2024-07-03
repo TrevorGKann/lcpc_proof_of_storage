@@ -83,6 +83,7 @@ pub mod tests {
     fn end_to_end_with_set_dimensions() {
         use itertools::iterate;
         use merlin::Transcript;
+        use blake3::Hasher as Blake3;
 
         // let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("test_file.txt");
         // let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
@@ -92,11 +93,17 @@ pub mod tests {
         // let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
         // let root = commit.get_root();
 
+        let filename = "test_file.txt";
+
         let (root, commit, metadata)
-            = convert_file_to_commit_internal("test_file.txt", None).unwrap();
+            = convert_file_to_commit_internal(filename, None).unwrap();
 
         let encoding
             = LigeroEncoding::<TestField>::new_from_dims(metadata.num_columns, metadata.num_encoded_columns);
+        let mut file = std::fs::File::open(filename).unwrap();
+        let (size_in_bytes, field_vector) = read_file_to_field_elements_vec(&mut file);
+
+        let _ = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
 
         // randomly select evaluation point of the polynomial
         let x_eval_point = TestField::random(&mut rand::thread_rng());
@@ -119,14 +126,17 @@ pub mod tests {
         transcript.append_message(b"polycommit", root.as_ref());
         transcript.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
 
-        let proof = commit.prove(&outer_tensor, &encoding, &mut transcript).unwrap();
-        let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut transcript).unwrap();
+        let mut proof_transcript = transcript.clone();
+        let mut verification_transcript = transcript.clone();
+
+        let proof = commit.prove(&outer_tensor, &encoding, &mut proof_transcript).unwrap();
+        let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut verification_transcript).unwrap();
     }
 
 
     fn get_random_coeffs<T>() -> Vec<T>
-        where
-            T: ff::PrimeField,
+    where
+        T: ff::PrimeField,
     {
         use std::iter::repeat_with;
 
