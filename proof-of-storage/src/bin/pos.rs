@@ -43,7 +43,7 @@ enum PoSSubCommands {
         columns: usize,
 
         /// the bits of security to use as an override #UNIMIPLEMENTED todo
-        #[clap(short, long)]
+        #[clap(short, long, default_value = "64")]
         security_bits: Option<u8>,
     },
 
@@ -83,8 +83,95 @@ enum PoSSubCommands {
         port: Option<u16>,
 
         /// the bits of security to use as an override #UNIMIPLEMENTED todo
-        #[clap(short, long)]
+        #[clap(short, long, default_value = "64")]
         security_bits: Option<u8>,
+    },
+
+    /// append to an existing file remotely
+    #[clap(alias = "ap")]
+    Append {
+        /// name of the file to download
+        #[clap(required = true)]
+        file: String,
+        /// the server IP to upload the file to
+        #[clap(short, long, default_value = "0.0.0.0")]
+        ip: Option<std::net::IpAddr>,
+
+        /// the server port to upload the file to
+        #[clap(short, long, default_value = "8080")]
+        port: Option<u16>,
+
+        /// the bits of security to use as an override #UNIMIPLEMENTED todo
+        #[clap(short, long, default_value = "64")]
+        security_bits: Option<u8>,
+
+        /// the data to append to the file as a command line argument
+        #[clap(long, required = false)]
+        data: Option<String>,
+
+        /// the data to append to the file as a file on disk
+        #[clap(short, long, required = false)]
+        file_path: Option<std::path::PathBuf>,
+    },
+
+    /// Edit a single row of an existing file remotely
+    #[clap(alias = "ed")]
+    Edit {
+        /// name of the file to download
+        #[clap(required = true)]
+        file: String,
+
+        /// the server IP to upload the file to
+        #[clap(short, long, default_value = "0.0.0.0")]
+        ip: Option<std::net::IpAddr>,
+
+        /// the server port to upload the file to
+        #[clap(short, long, default_value = "8080")]
+        port: Option<u16>,
+
+        /// the bits of security to use as an override #UNIMIPLEMENTED todo
+        #[clap(short, long, default_value = "64")]
+        security_bits: Option<u8>,
+
+        /// the row to edit
+        #[clap(short, long, required = true)]
+        row: usize,
+
+        /// the data to append to the file as a command line argument
+        #[clap(long, required = false)]
+        data: Option<String>,
+
+        /// the data to append to the file as a file on disk
+        #[clap(short, long, required = false)]
+        file_path: Option<std::path::PathBuf>,
+    },
+
+    /// Reshape an existing file remotely
+    #[clap(alias = "rs")]
+    Reshape {
+        /// name of the file to download
+        #[clap(required = true)]
+        file: String,
+
+        /// the server IP to upload the file to
+        #[clap(short, long, default_value = "0.0.0.0")]
+        ip: Option<std::net::IpAddr>,
+
+        /// the server port to upload the file to
+        #[clap(short, long, default_value = "8080")]
+        port: Option<u16>,
+
+        /// the bits of security to use as an override #UNIMIPLEMENTED todo
+        #[clap(short, long, default_value = "64")]
+        security_bits: Option<u8>,
+
+        /// the new number of columns
+        #[clap(short, long, required = true)]
+        columns: usize,
+
+        /// the new number of rows
+        #[clap(short, long, required = true)]
+        rows: usize,
     },
 
     /// List files you currently have stored on remote servers
@@ -154,6 +241,64 @@ async fn main() {
 
             tracing::debug!("requesting proof from server");
             request_proof_command(file_metadata.unwrap(), ip, port, security_bits).await;
+        }
+        PoSSubCommands::Reshape { file, ip, port, security_bits, columns, rows } => {
+            tracing::info!("reshaping file");
+
+            tracing::debug!("fetching file metadata from database");
+            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+
+            if file_metadata.is_none() {
+                tracing::error!("file not found in database");
+                return;
+            }
+
+            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+
+            tracing::debug!("reshaping file on server");
+            todo!();
+        }
+        PoSSubCommands::Append { file, ip, port, security_bits, data, file_path } => {
+            tracing::info!("appending to file");
+
+            if data.is_none() && file_path.is_none() {
+                tracing::error!("no data provided to append; At least one of --data or --file-path must be provided.");
+                return;
+            }
+
+            tracing::debug!("fetching file metadata from database");
+            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+
+            if file_metadata.is_none() {
+                tracing::error!("file not found in database");
+                return;
+            }
+
+            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+
+            tracing::debug!("appending to file on server");
+            todo!();
+        }
+        PoSSubCommands::Edit { file, ip, port, security_bits, row, data, file_path } => {
+            tracing::info!("editing file");
+
+            if data.is_none() && file_path.is_none() {
+                tracing::error!("no data provided to append; At least one of --data or --file-path must be provided.");
+                return;
+            }
+
+            tracing::debug!("fetching file metadata from database");
+            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+
+            if file_metadata.is_none() {
+                tracing::error!("file not found in database");
+                return;
+            }
+
+            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+
+            tracing::debug!("editing file on server");
+            todo!();
         }
         PoSSubCommands::List => {
             list_files().await;
