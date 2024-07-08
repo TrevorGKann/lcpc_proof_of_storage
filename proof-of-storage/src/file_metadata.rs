@@ -202,6 +202,40 @@ pub async fn write_server_file_database_to_disk(file_path: String, file_data_arr
     fs::write(file_path, combined_json.to_string()).await.unwrap();
 }
 
+#[tracing::instrument]
+pub fn is_server_metadata_unique(current_database: Vec<ServerOwnedFileMetadata>, new_metadata: ServerOwnedFileMetadata) -> bool {
+    for metadata in current_database {
+        if metadata.filename == new_metadata.filename {
+            return false;
+        }
+    }
+    true
+}
+
+#[tracing::instrument]
+pub async fn append_server_file_metadata_to_database(database_file_path: String, metadata_to_add: ServerOwnedFileMetadata)
+                                                     -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut file_metadata_database = read_server_file_database_from_disk("file_database".to_string()).await;
+
+    if is_server_metadata_unique(file_metadata_database.clone(), metadata_to_add.clone()) {
+        file_metadata_database.push(metadata_to_add);
+    } else {
+        file_metadata_database = file_metadata_database
+            .iter_mut()
+            .filter(|metadata| metadata.filename == metadata_to_add.filename)
+            .update(|metadata| {
+                metadata.owner = metadata_to_add.owner.clone();
+                metadata.commitment = metadata_to_add.commitment.clone();
+            })
+            .map(|metadata| metadata.to_owned())
+            .collect();
+    }
+
+    write_server_file_database_to_disk(database_file_path, file_metadata_database).await;
+    Ok(())
+}
+
 
 // TESTS //
 #[tokio::test]
