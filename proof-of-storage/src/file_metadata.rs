@@ -173,8 +173,8 @@ pub struct ServerOwnedFileMetadata {
 
 
 #[tracing::instrument]
-pub async fn read_server_file_database_from_disk(file_path: String) -> Vec<ServerOwnedFileMetadata> {
-    let file_data_result = fs::read(file_path).await;
+pub async fn read_server_file_database_from_disk(file_path: &String) -> Vec<ServerOwnedFileMetadata> {
+    let file_data_result = fs::read(&file_path).await;
     if file_data_result.is_err() {
         return vec![]; //todo should probably handle error
     }
@@ -203,6 +203,18 @@ pub async fn write_server_file_database_to_disk(file_path: String, file_data_arr
 }
 
 #[tracing::instrument]
+pub async fn is_server_filename_unique(database_file_path: &String, filename: String) -> bool {
+    let file_metadata_database
+        = read_server_file_database_from_disk(&database_file_path).await;
+    for metadata in file_metadata_database {
+        if metadata.filename == filename {
+            return false;
+        }
+    }
+    true
+}
+
+#[tracing::instrument]
 pub fn is_server_metadata_unique(current_database: Vec<ServerOwnedFileMetadata>, new_metadata: ServerOwnedFileMetadata) -> bool {
     for metadata in current_database {
         if metadata.filename == new_metadata.filename {
@@ -216,7 +228,7 @@ pub fn is_server_metadata_unique(current_database: Vec<ServerOwnedFileMetadata>,
 pub async fn append_server_file_metadata_to_database(database_file_path: String, metadata_to_add: ServerOwnedFileMetadata)
                                                      -> Result<(), Box<dyn std::error::Error>>
 {
-    let mut file_metadata_database = read_server_file_database_from_disk("file_database".to_string()).await;
+    let mut file_metadata_database = read_server_file_database_from_disk(&"file_database".to_string()).await;
 
     if is_server_metadata_unique(file_metadata_database.clone(), metadata_to_add.clone()) {
         file_metadata_database.push(metadata_to_add);

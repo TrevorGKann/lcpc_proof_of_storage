@@ -39,8 +39,12 @@ enum PoSSubCommands {
         port: Option<u16>,
 
         /// The number of columns to encode the file with
-        #[clap(short, long, default_value_t = 10)]
-        columns: usize,
+        #[clap(short = 'c', long = "columns")]
+        pre_encoded_columns: Option<usize>,
+
+        /// the number of columns to encode into
+        #[clap(short = 'e', long = "encoded")]
+        encoded_columns: Option<usize>,
 
         /// the bits of security to use as an override #UNIMIPLEMENTED todo
         #[clap(short, long, default_value = "64")]
@@ -208,9 +212,9 @@ async fn main() {
     });
 
     match subcommand {
-        PoSSubCommands::Upload { file, ip, port, columns, security_bits } => {
+        PoSSubCommands::Upload { file, ip, port, pre_encoded_columns: columns, encoded_columns, security_bits } => {
             tracing::debug!("uploading file");
-            upload_file_command(file, ip, port, columns).await;
+            upload_file_command(file, ip, port, columns, encoded_columns).await;
         }
         PoSSubCommands::Download { file, ip, port, security_bits } => {
             tracing::debug!("downloading file");
@@ -336,11 +340,11 @@ fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<(), Box<
 }
 
 
-async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAddr>, port: Option<u16>, columns: usize) {
+async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAddr>, port: Option<u16>, columns: Option<usize>, encoded_columns: Option<usize>) {
     let file_name = file.to_str().unwrap().to_string();
     let server_port = port.unwrap();
     let server_ip = ip.unwrap().to_string() + ":" + &server_port.to_string();
-    let (file_metadata, root) = proof_of_storage::networking::client::upload_file(file_name, columns, server_ip).await.unwrap();
+    let (file_metadata, root) = proof_of_storage::networking::client::upload_file(file_name, columns, encoded_columns, server_ip).await.unwrap();
     tracing::info!("File upload successful");
     tracing::debug!("File Metadata: {:?}", file_metadata);
     tracing::debug!("Root: {:?}", root);

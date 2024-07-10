@@ -58,7 +58,7 @@ type TestField = PoSField;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessages {
     UserLogin { username: String, password: String },
-    UploadNewFile { filename: String, file: Vec<u8>, columns: usize },
+    UploadNewFile { filename: String, file: Vec<u8>, columns: usize, encoded_columns: usize },
     RequestFile { file_metadata: ClientOwnedFileMetadata },
     RequestFileRow { file_metadata: ClientOwnedFileMetadata, row: usize },
     EditFileRow { file_metadata: ClientOwnedFileMetadata, row: usize, file: Vec<u8> },

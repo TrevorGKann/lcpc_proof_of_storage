@@ -154,6 +154,10 @@ async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, pre
     use std::path::Path;
     let filename = Path::new(&filename).file_name().unwrap().to_str().unwrap();
 
+    if !(is_server_filename_unique(&"file_database".to_string(), filename.to_string()).await) {
+        return ServerMessages::BadResponse { error: "Filename already exists".to_string() };
+    }
+
     // check if rows and columns are valid first
     if (!dims_ok(pre_encoded_columns, file_data.len())) {
         return ServerMessages::BadResponse { error: "Invalid rows or columns".to_string() };
@@ -171,7 +175,15 @@ async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, pre
         })
         .expect("failed to convert file to commit");  //todo probably shouldn't be a panic here
 
-    //todo need to add file to database of stored files
+    tracing::info!("server: appending file metadata to database");
+    let server_metadata = ServerOwnedFileMetadata {
+        filename: filename.to_string(),
+        owner: "".to_string(), //todo add users
+        commitment: commit.clone(),
+    };
+    append_server_file_metadata_to_database("file_database".to_string(), server_metadata).await;
+    //optimize: probably should have a tokio::spawn here in case of colliding writes.
+    // in general this needs to be multi-thread safe.
 
     CompactCommit { root, file_metadata }
 }
@@ -368,21 +380,21 @@ pub fn get_aspect_ratio_default_from_field_len(field_len: usize) -> (usize, usiz
     tracing::debug!("field_len: {}", field_len);
 
     let data_min_width = (field_len as f32).sqrt().ceil() as usize;
-    let pre_encoded_columns = if is_power_of_two(data_min_width) {
+    let num_pre_encoded_columns = if is_power_of_two(data_min_width) {
         data_min_width
     } else {
         data_min_width.next_power_of_two()
     };
-    let encoded_matrix_columns = (pre_encoded_columns + 1).next_power_of_two();
+    let num_encoded_matrix_columns = (num_pre_encoded_columns + 1).next_power_of_two();
 
 
-    let soundness = get_soundness_from_matrix_dims(pre_encoded_columns, encoded_matrix_columns);
+    let soundness = get_soundness_from_matrix_dims(num_pre_encoded_columns, num_encoded_matrix_columns);
 
-    (pre_encoded_columns, encoded_matrix_columns, soundness)
+    (num_pre_encoded_columns, num_encoded_matrix_columns, soundness)
 }
 
 #[tracing::instrument]
-fn get_soundness_from_matrix_dims(pre_encoded_cols: usize, encoded_cols: usize) -> usize {
+pub(crate) fn get_soundness_from_matrix_dims(pre_encoded_cols: usize, encoded_cols: usize) -> usize {
     let soundness_denominator: f64 = ((1f64 + (pre_encoded_cols as f64 / encoded_cols as f64)) / 2f64).log2();
     let theoretical_min = (-128f64 / soundness_denominator).ceil() as usize;
     min(theoretical_min, encoded_cols)
@@ -395,6 +407,7 @@ pub fn get_aspect_ratio_default_from_file_len<Field: ff::PrimeField>(file_len: u
     let field_len = usize::div_ceil(file_len, write_out_byte_width);
     tracing::debug!("field_len: {}", field_len);
 
+    ///num_pre_encoded_columns, num_encoded_matrix_columns, soundness
     get_aspect_ratio_default_from_field_len(field_len)
 }
 

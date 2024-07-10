@@ -1,3 +1,4 @@
+use bitvec::macros::internal::funty::Unsigned;
 use bitvec::view::BitViewSized;
 use blake3::traits::digest;
 use digest::{Digest, FixedOutputReset, Output};
@@ -35,7 +36,8 @@ use crate::networking::shared::*;
 pub async fn upload_file(
     file_name: String,
     // rows: usize,
-    columns: usize,
+    columns: Option<usize>,
+    encoded_columns: Option<usize>,
     server_ip: String,
 ) -> Result<(ClientOwnedFileMetadata, PoSRoot), Box<dyn std::error::Error>> {
     use std::path::Path;
@@ -43,8 +45,46 @@ pub async fn upload_file(
     let file_path = Path::new(&file_name);
     let mut file_data = fs::read(file_path).await.unwrap();
 
-    let (_, eventual_max_columns, required_columns_to_test) = get_aspect_ratio_default_from_file_len::<WriteableFt63>(file_data.len());
-    let cols_to_verify = get_columns_from_random_seed(1337, required_columns_to_test, eventual_max_columns);
+    let (num_pre_encoded_rows, num_encoded_columns, required_columns_to_test)
+        = match (columns, encoded_columns) {
+        (Some(cols), Some(enc_cols)) => {
+            if cols < enc_cols {
+                return Err(Box::from("Number of columns must be greater than or equal to number of encoded columns"));
+            }
+            if cols < 1 || enc_cols < 2 {
+                return Err(Box::from("Number of columns and encoded columns must be greater than 0"));
+            }
+            if !enc_cols.is_power_of_two() {
+                return Err(Box::from("Number of encoded columns must be a power of 2"));
+            }
+            if !(enc_cols > 2 * cols) {
+                return Err(Box::from("Number of encoded columns must be greater than 2 * number of columns"));
+            }
+            (cols, enc_cols, crate::networking::server::get_soundness_from_matrix_dims(cols, enc_cols))
+        }
+        (Some(cols), None) => {
+            if cols < 1 {
+                return Err(Box::from("Number of columns must be greater than 0"));
+            }
+            let rounded_cols = if (cols.is_power_of_two()) { cols } else { cols.next_power_of_two() };
+            let enc_cols = rounded_cols.next_power_of_two();
+            (cols, enc_cols, crate::networking::server::get_soundness_from_matrix_dims(cols, enc_cols))
+        }
+        (None, Some(enc_cols)) => {
+            if enc_cols < 2 {
+                return Err(Box::from("Number of columns must be greater than 1, and therefore enc_cols > 2"));
+            }
+            if !enc_cols.is_power_of_two() {
+                return Err(Box::from("Number of encoded columns must be a power of 2"));
+            }
+            let cols = enc_cols / 2;
+            (cols, enc_cols, crate::networking::server::get_soundness_from_matrix_dims(cols, enc_cols))
+        }
+        _ => get_aspect_ratio_default_from_file_len::<WriteableFt63>(file_data.len())
+    };
+
+
+    let cols_to_verify = get_columns_from_random_seed(1337, required_columns_to_test, num_encoded_columns);
     tracing::debug!("pre-computing expected column leaves...");
     let locally_derived_leaves = convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &cols_to_verify).unwrap();
 
@@ -55,8 +95,12 @@ pub async fn upload_file(
 
 
     tracing::debug!("sending file to server {}", &server_ip);
-    sink.send(ClientMessages::UploadNewFile { filename: file_name, file: file_data, columns })
-        .await.expect("Failed to send message to server");
+    sink.send(ClientMessages::UploadNewFile {
+        filename: file_name,
+        file: file_data,
+        columns: num_pre_encoded_rows,
+        encoded_columns: num_encoded_columns,
+    }).await.expect("Failed to send message to server");
 
     let Some(Ok(mut transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
@@ -320,8 +364,8 @@ pub fn convert_read_file_to_commit_only_leaves<D>(
     file_data: &Vec<u8>,
     columns_to_extract: &Vec<usize>,
 ) -> Result<(Vec<Output<D>>), Box<dyn std::error::Error>>
-    where
-        D: Digest,
+where
+    D: Digest,
 {
     let field_vector_file = fields::convert_byte_vec_to_field_elements_vec(file_data);
     //todo: ought to make customizable sizes for this
@@ -347,7 +391,7 @@ pub fn convert_read_file_to_commit_only_leaves<D>(
         .par_chunks_mut(data_realized_width)
         .zip(field_vector_file.par_chunks(data_realized_width))
         .for_each(|(base_row, row_to_copy)|
-            base_row[..row_to_copy.len()].copy_from_slice(row_to_copy)
+        base_row[..row_to_copy.len()].copy_from_slice(row_to_copy)
         );
 
     // now compute FFTs
@@ -376,7 +420,7 @@ pub fn convert_read_file_to_commit_only_leaves<D>(
     let column_digest_results = digests
         .into_iter()
         .map(|hasher|
-            hasher.finalize())
+        hasher.finalize())
         .collect();
 
     // let mut column_digest_results: Vec<Output<D>> = Vec::with_capacity(digests.len());
@@ -391,8 +435,8 @@ pub async fn client_request_and_verify_polynomial<D>(
     file_metadata: &ClientOwnedFileMetadata,
     server_ip: String,
 ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        D: Digest,
+where
+    D: Digest,
 {
     tracing::info!("requesting polynomial evaluation from server");
 
