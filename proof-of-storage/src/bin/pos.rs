@@ -7,6 +7,8 @@ use proof_of_storage::file_metadata::*;
 use proof_of_storage::networking::client::*;
 use proof_of_storage::networking::server::server_main;
 
+const DEFAULT_SECURITY_BITS: u8 = 64;
+
 #[derive(Parser, Debug)]
 #[command(version, about, arg_required_else_help = true, propagate_version = true)]
 struct PosServerOpts {
@@ -169,13 +171,13 @@ enum PoSSubCommands {
         #[clap(short, long, default_value = "64")]
         security_bits: Option<u8>,
 
-        /// the new number of columns
+        /// the new number of pre-encoded columns
         #[clap(short, long, required = true)]
         columns: usize,
 
-        /// the new number of rows
-        #[clap(short, long, required = true)]
-        rows: usize,
+        /// the new number of encoded columns
+        #[clap(short, long = "encoded", required = false)]
+        encoded_columns: usize,
     },
 
     /// List files you currently have stored on remote servers
@@ -246,7 +248,7 @@ async fn main() {
             tracing::debug!("requesting proof from server");
             request_proof_command(file_metadata.unwrap(), ip, port, security_bits).await;
         }
-        PoSSubCommands::Reshape { file, ip, port, security_bits, columns, rows } => {
+        PoSSubCommands::Reshape { file, ip, port, security_bits, columns, encoded_columns } => {
             tracing::info!("reshaping file");
 
             tracing::debug!("fetching file metadata from database");
@@ -260,7 +262,7 @@ async fn main() {
             tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
 
             tracing::debug!("reshaping file on server");
-            todo!();
+            reshape_command(file_metadata.unwrap(), ip, port, security_bits, columns, encoded_columns).await;
         }
         PoSSubCommands::Append { file, ip, port, security_bits, data, file_path } => {
             tracing::info!("appending to file");
@@ -374,7 +376,7 @@ async fn request_proof_command(file_metadata: ClientOwnedFileMetadata, ip: Optio
         file_metadata.stored_server.server_port.clone()
     };
     let server_ip = server_ip + ":" + &server_port.to_string();
-    let security_bits = security_bits.unwrap_or(0);
+    let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
 
     let proof = proof_of_storage::networking::client::request_proof(file_metadata, server_ip, security_bits).await.unwrap();
     tracing::info!("Proof received: {:?}", proof);
@@ -388,8 +390,29 @@ async fn download_file_command(file_metadata: ClientOwnedFileMetadata, ip: Optio
         file_metadata.stored_server.server_port.clone()
     };
     let server_ip = server_ip + ":" + &server_port.to_string();
-    let security_bits = security_bits.unwrap_or(16);
+    let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
 
     let file = proof_of_storage::networking::client::download_file(file_metadata, server_ip, security_bits).await.unwrap();
     tracing::info!("File received: {:?}", file);
+}
+
+async fn reshape_command(
+    file_metadata: ClientOwnedFileMetadata,
+    ip: Option<IpAddr>,
+    port: Option<u16>,
+    security_bits: Option<u8>,
+    columns: usize,
+    encoded_columns: usize,
+) {
+    let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
+        file_metadata.stored_server.server_ip.clone()
+    };
+    let server_port = if port.is_some() { port.unwrap() } else {
+        file_metadata.stored_server.server_port.clone()
+    };
+    let server_ip = server_ip + ":" + &server_port.to_string();
+    let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
+
+    let file = proof_of_storage::networking::client::reshape_file(&file_metadata, server_ip, security_bits, columns, encoded_columns).await.unwrap();
+    tracing::info!("File reshaped: {:?}", file);
 }

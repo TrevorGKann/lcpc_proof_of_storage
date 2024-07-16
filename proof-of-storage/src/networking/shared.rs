@@ -66,6 +66,10 @@ pub enum ClientMessages {
     RequestEncodedColumn { file_metadata: ClientOwnedFileMetadata, row: usize },
     RequestProof { file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<usize> },
     RequestPolynomialEvaluation { file_metadata: ClientOwnedFileMetadata, evaluation_point: TestField },
+    RequestFileReshape { file_metadata: ClientOwnedFileMetadata, new_pre_encoded_columns: usize, new_encoded_columns: usize },
+    RequestReshapeEvaluation { evaluation_point: TestField, columns_to_expand_original: Vec<usize>, columns_to_expand_new: Vec<usize> },
+    ReshapeApproved,
+    ReshapeRejected,
     ClientKeepAlive,
 }
 
@@ -79,6 +83,7 @@ pub enum ServerMessages
     FileRow { row: Vec<u8> },
     EncodedColumn { col: Vec<TestField> },
     PolynomialEvaluation { evaluation_result: Vec<TestField> },
+    ReshapeEvaluation { evaluation_result: TestField, original_result_vector: Vec<TestField>, original_columns: Vec<PoSColumn>, new_result_vector: Vec<TestField>, new_columns: Vec<PoSColumn> },
     ServerKeepAlive,
     BadResponse { error: String },
 }

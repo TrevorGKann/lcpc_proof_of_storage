@@ -168,7 +168,8 @@ pub async fn upload_file(
 pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
                            server_ip: String,
                            security_bits: u8,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>>
+{
     tracing::info!("requesting file from server");
 
     tracing::debug!("connecting to server {}", &server_ip);
@@ -534,4 +535,120 @@ where
     }
 
     // todo!()
+}
+
+pub async fn reshape_file<D>(
+    file_metadata: &ClientOwnedFileMetadata,
+    server_ip: String,
+    security_bits: u8,
+    new_pre_encoded_columns: usize,
+    new_encoded_columns: usize,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    D: Digest,
+{
+    tracing::info!("requesting reshaping of file from server");
+
+    tracing::debug!("connecting to server {}", &server_ip);
+    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
+
+    sink.send(ClientMessages::RequestFileReshape { file_metadata: file_metadata.clone(), new_pre_encoded_columns, new_encoded_columns })
+        .await.expect("Failed to send message to server");
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        return Err(Box::from("Failed to receive message from server"));
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+    let ServerMessages::CompactCommit {
+        root: new_root,
+        file_metadata: new_file_metadata
+    } = transmission else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File reshape failed: {}", error);
+                Err(Box::from(error))
+            }
+            _ => {
+                tracing::error!("Unknown server response: {:?}", transmission);
+                Err(Box::from("Unknown server response"))
+            }
+        }
+    };
+
+    let mut random_seed = ChaCha8Rng::seed_from_u64(1337);
+    let evaluation_point = WriteableFt63::random(&mut random_seed);
+
+    let requested_original_columns = get_columns_from_random_seed(
+        1337,
+        get_PoS_soudness_n_cols(file_metadata),
+        file_metadata.num_encoded_columns,
+    );
+    let requested_new_columns = get_columns_from_random_seed(
+        1337,
+        get_PoS_soudness_n_cols(&new_file_metadata),
+        new_file_metadata.num_encoded_columns,
+    );
+
+    sink.send(ClientMessages::RequestReshapeEvaluation {
+        evaluation_point,
+        columns_to_expand_original: requested_original_columns.clone(),
+        columns_to_expand_new: requested_new_columns.clone(),
+    }).await.expect("Failed to send message to server");
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        return Err(Box::from("Failed to receive message from server"));
+    };
+
+    let ServerMessages::ReshapeEvaluation {
+        evaluation_result,
+        original_result_vector,
+        original_columns,
+        new_result_vector,
+        new_columns,
+    } = transmission else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File reshape failed: {}", error);
+                Err(Box::from(error))
+            }
+            _ => {
+                tracing::error!("Unknown server response: {:?}", transmission);
+                Err(Box::from("Unknown server response"))
+            }
+        }
+    };
+
+    let old_results = lcpc_online::verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+        &evaluation_point,
+        &original_result_vector,
+        file_metadata.num_rows,
+        file_metadata.num_columns,
+        &requested_original_columns,
+        &original_columns,
+    );
+
+    let new_results = lcpc_online::verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+        &evaluation_point,
+        &new_result_vector,
+        new_file_metadata.num_rows,
+        new_file_metadata.num_columns,
+        &requested_new_columns,
+        &new_columns,
+    );
+
+    if old_results.is_err() || new_results.is_err() {
+        tracing::error!("Failed to verify polynomial evaluation");
+
+        sink.send(ClientMessages::ReshapeRejected).await.expect("Failed to send message to server");
+
+        return Err(Box::from("failed_to_verify_polynomial_evaluation".to_string()));
+    }
+
+    sink.send(ClientMessages::ReshapeApproved).await.expect("Failed to send message to server");
+
+    Ok(())
 }
