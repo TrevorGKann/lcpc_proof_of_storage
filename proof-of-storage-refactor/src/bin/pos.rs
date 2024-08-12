@@ -1,7 +1,6 @@
 use std::io::BufRead;
 use std::net::IpAddr;
 
-use blake3::{Hash, Hasher as Blake3};
 use clap::{Parser, Subcommand};
 
 use proof_of_storage::file_metadata::*;
@@ -414,6 +413,6 @@ async fn reshape_command(
     let server_ip = server_ip + ":" + &server_port.to_string();
     let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
 
-    let file = proof_of_storage::networking::client::reshape_file::<Blake3>(&file_metadata, server_ip, security_bits, columns, encoded_columns).await.unwrap();
+    let file = proof_of_storage::networking::client::reshape_file(&file_metadata, server_ip, security_bits, columns, encoded_columns).await.unwrap();
     tracing::info!("File reshaped: {:?}", file);
 }

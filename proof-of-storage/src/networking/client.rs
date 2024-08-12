@@ -48,7 +48,7 @@ pub async fn upload_file(
     let (num_pre_encoded_rows, num_encoded_columns, required_columns_to_test)
         = match (columns, encoded_columns) {
         (Some(cols), Some(enc_cols)) => {
-            if cols < enc_cols {
+            if cols >= enc_cols {
                 return Err(Box::from("Number of columns must be greater than or equal to number of encoded columns"));
             }
             if cols < 1 || enc_cols < 2 {
@@ -57,7 +57,7 @@ pub async fn upload_file(
             if !enc_cols.is_power_of_two() {
                 return Err(Box::from("Number of encoded columns must be a power of 2"));
             }
-            if !(enc_cols > 2 * cols) {
+            if !(enc_cols >= 2 * cols) {
                 return Err(Box::from("Number of encoded columns must be greater than 2 * number of columns"));
             }
             (cols, enc_cols, crate::networking::server::get_soundness_from_matrix_dims(cols, enc_cols))
@@ -361,6 +361,7 @@ pub async fn get_processed_column_leaves_from_file(
     extracted_leaves
 }
 
+
 pub fn convert_read_file_to_commit_only_leaves<D>(
     file_data: &Vec<u8>,
     columns_to_extract: &Vec<usize>,
@@ -376,7 +377,7 @@ where
     let matrix_rows = usize::div_ceil(field_vector_file.len(), matrix_colums);
     //field_vector_file.len() / matrix_colums + 1;
 
-    let (data_realized_width_test, matrix_colums_test, soundness_test) = get_aspect_ratio_default_from_field_len(field_vector_file.len());
+    let (data_realized_width_test, matrix_columns_test, soundness_test) = get_aspect_ratio_default_from_field_len(field_vector_file.len());
     let matrix_rows = usize::div_ceil(field_vector_file.len(), data_realized_width_test);
 
     let encoding = PoSEncoding::new_from_dims(data_realized_width, matrix_colums);

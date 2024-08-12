@@ -24,7 +24,7 @@ paste.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 lcpc-test-fields.workspace = true
-proof-of-storage.workspace = true
+#proof-of-storage.workspace = true
 
 [features]
 bench = []

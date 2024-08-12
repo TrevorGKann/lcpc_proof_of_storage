@@ -83,8 +83,6 @@ pub mod tests {
     fn end_to_end_with_set_dimensions() {
         use itertools::iterate;
         use merlin::Transcript;
-        use blake3::Hasher as Blake3;
-
         // let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("test_file.txt");
         // let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
         // let data_realized_width = data_min_width.next_power_of_two();
@@ -103,7 +101,7 @@ pub mod tests {
         let mut file = std::fs::File::open(filename).unwrap();
         let (size_in_bytes, field_vector) = read_file_to_field_elements_vec(&mut file);
 
-        let _ = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
+        // let _ = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
 
         // randomly select evaluation point of the polynomial
         let x_eval_point = TestField::random(&mut rand::thread_rng());
@@ -314,4 +312,7 @@ pub mod tests {
         )
             .unwrap();
     }
+
+    #[test]
+    fn reshape_and_verification() {}
 }

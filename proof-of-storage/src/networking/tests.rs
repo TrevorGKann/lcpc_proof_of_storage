@@ -73,7 +73,8 @@ pub mod network_tests {
 
         let response = client::upload_file(
             source_file.to_owned(),
-            4,
+            Some(4),
+            Some(8),
             format!("localhost:{}", port),
         ).await;
 
@@ -93,12 +94,18 @@ pub mod network_tests {
         let dest_temp_file = "test.txt";
         let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
+        // delete file if it already exists on server  
+        if tokio::fs::metadata(dest_temp_file).await.is_ok() {
+            tokio::fs::remove_file(dest_temp_file).await.unwrap();
+        }
+
         let port = start_test_with_server_on_random_port_and_get_port("upload_then_verify".to_string()).await;
 
 
         let response = client::upload_file(
             source_file.to_owned(),
-            4,
+            Some(4),
+            Some(8),
             format!("localhost:{}", port),
         ).await;
 
@@ -180,7 +187,8 @@ pub mod network_tests {
 
         let upload_response = client::upload_file(
             source_file.to_owned(),
-            4,
+            Some(4),
+            Some(8),
             format!("localhost:{}", port),
         ).await;
 
@@ -212,7 +220,8 @@ pub mod network_tests {
 
         let upload_response = client::upload_file(
             source_file.to_owned(),
-            4,
+            Some(4),
+            Some(8),
             format!("localhost:{}", port),
         ).await;
 

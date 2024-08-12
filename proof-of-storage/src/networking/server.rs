@@ -81,8 +81,8 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::UserLogin { username, password } => {
                 handle_client_user_login(username, password).await
             }
-            ClientMessages::UploadNewFile { filename, file, columns } => {
-                handle_client_upload_new_file(filename, file, columns).await
+            ClientMessages::UploadNewFile { filename, file, columns, encoded_columns } => {
+                handle_client_upload_new_file(filename, file, columns, encoded_columns).await
             }
             ClientMessages::RequestFile { file_metadata } => {
                 handle_client_request_file(file_metadata).await
@@ -149,7 +149,12 @@ async fn handle_client_user_login(username: String, password: String) -> Interna
 
 /// save the file to the server
 #[tracing::instrument]
-async fn handle_client_upload_new_file(filename: String, file_data: Vec<u8>, pre_encoded_columns: usize) -> InternalServerMessage {
+async fn handle_client_upload_new_file(filename: String,
+                                       file_data: Vec<u8>,
+                                       pre_encoded_columns: usize,
+                                       encoded_columns: usize) //todo: need to use both pre and post encoded columns
+                                       -> InternalServerMessage
+{
     // parse the filename to remove all leading slashes
     use std::path::Path;
     let filename = Path::new(&filename).file_name().unwrap().to_str().unwrap();
@@ -446,7 +451,7 @@ pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_col
             let pre_encoded_columns = requested_columns;
             // encoded columns should be at least 2x pre_encoded columns and needs to be a square
             let encoded_columns = if is_power_of_two(pre_encoded_columns) {
-                pre_encoded_columns.next_power_of_two()
+                (pre_encoded_columns + 1).next_power_of_two()
             } else {
                 (pre_encoded_columns * 2).next_power_of_two()
             };
