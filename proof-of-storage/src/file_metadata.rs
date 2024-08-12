@@ -65,7 +65,7 @@ impl fmt::Display for ClientOwnedFileMetadata {
 }
 
 #[tracing::instrument]
-pub async fn read_client_file_database_from_disk(file_path: String) -> (Vec<ServerHost>, Vec<ClientOwnedFileMetadata>) {
+pub async fn read_client_file_database_from_disk(file_path: &String) -> (Vec<ServerHost>, Vec<ClientOwnedFileMetadata>) {
     let file_data_result = fs::read(file_path).await;
     if file_data_result.is_err() {
         return (vec![], vec![]);
@@ -93,7 +93,7 @@ pub async fn read_client_file_database_from_disk(file_path: String) -> (Vec<Serv
 }
 
 #[tracing::instrument]
-pub async fn write_client_file_database_to_disk(file_path: String, server_data_array: Vec<ServerHost>, file_data_array: Vec<ClientOwnedFileMetadata>) {
+pub async fn write_client_file_database_to_disk(file_path: &String, server_data_array: Vec<ServerHost>, file_data_array: Vec<ClientOwnedFileMetadata>) {
     let server_json = serde_json::to_string(&server_data_array).unwrap();
     let file_json = serde_json::to_string(&file_data_array).unwrap();
     let combined_json = serde_json::json!({
@@ -108,7 +108,7 @@ pub async fn append_client_file_metadata_to_database(database_file_path: String,
                                                      -> Result<(), Box<dyn std::error::Error>>
 {
     let (mut hosts_database, mut file_metadata_database)
-        = read_client_file_database_from_disk("file_database".to_string()).await;
+        = read_client_file_database_from_disk(&"file_database".to_string()).await;
 
     if is_host_unique(hosts_database.clone(), metadata_to_add.stored_server.clone()) {
         hosts_database.push(metadata_to_add.stored_server.clone());
@@ -132,18 +132,54 @@ pub async fn append_client_file_metadata_to_database(database_file_path: String,
             .collect();
     }
 
-    write_client_file_database_to_disk(database_file_path, hosts_database, file_metadata_database).await;
+    write_client_file_database_to_disk(&database_file_path, hosts_database, file_metadata_database).await;
     Ok(())
 }
 
 pub async fn get_client_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ClientOwnedFileMetadata> {
-    let (_, file_metadata_database) = read_client_file_database_from_disk(database_file_path).await;
+    let (_, file_metadata_database) = read_client_file_database_from_disk(&database_file_path).await;
     for metadata in file_metadata_database {
         if metadata.filename == filename {
             return Some(metadata);
         }
     }
     None
+}
+
+#[tracing::instrument]
+pub async fn remove_client_metadata_from_database_by_filename(
+    database_file_path: String,
+    filename: String,
+) -> Option<ClientOwnedFileMetadata> {
+    let (mut hosts_database, mut file_metadata_database)
+        = read_client_file_database_from_disk(&database_file_path).await;
+
+
+    let mut metadata_to_remove: Option<ClientOwnedFileMetadata> = None;
+    for metadata in &file_metadata_database {
+        if metadata.filename == filename {
+            metadata_to_remove = Some(metadata.clone());
+        }
+    }
+
+
+    if let Some(metadata) = &metadata_to_remove {
+        // // actually don't filter hosts out, since they might be shared and there's no reason to delete them atm
+        // hosts_database = hosts_database
+        //     .iter()
+        //     .filter(|existing_host| existing_host.server_ip != metadata.stored_server.server_ip || existing_host.server_port != metadata.stored_server.server_port)
+        //     .map(|host| host.to_owned())
+        //     .collect();
+        file_metadata_database = file_metadata_database
+            .iter()
+            .filter(|existing_metadata| existing_metadata.filename != metadata.filename)
+            .map(|metadata| metadata.to_owned())
+            .collect();
+
+        write_client_file_database_to_disk(&database_file_path, hosts_database, file_metadata_database).await;
+    }
+
+    metadata_to_remove
 }
 
 pub fn is_client_metadata_unique(current_database: Vec<ClientOwnedFileMetadata>, new_metadata: ClientOwnedFileMetadata) -> bool {
@@ -248,6 +284,35 @@ pub async fn append_server_file_metadata_to_database(database_file_path: String,
     Ok(())
 }
 
+#[tracing::instrument]
+pub async fn remove_server_file_metadata_from_database(
+    database_file_path: String,
+    metadata_to_remove: ServerOwnedFileMetadata,
+) -> Option<ServerOwnedFileMetadata> {
+    let mut file_metadata_database = read_server_file_database_from_disk(&database_file_path).await;
+
+    let mut removed_metadata = None;
+    for metadata in &file_metadata_database {
+        if metadata.filename == metadata_to_remove.filename {
+            removed_metadata = Some(metadata.clone());
+            break;
+        }
+    }
+
+
+    if let Some(metadata) = &removed_metadata {
+        file_metadata_database = file_metadata_database
+            .iter()
+            .filter(|existing_metadata| existing_metadata.filename != metadata.filename)
+            .map(|metadata| metadata.to_owned())
+            .collect();
+
+
+        write_server_file_database_to_disk(database_file_path, file_metadata_database).await;
+    }
+
+    removed_metadata
+}
 
 // TESTS //
 #[tokio::test]
@@ -276,8 +341,8 @@ async fn test_client_owned_file_metadata() {
         root,
     };
 
-    write_client_file_database_to_disk("test_file_db.json".to_string(), vec![server.clone()], vec![file.clone()]).await;
-    let (servers, files) = read_client_file_database_from_disk("test_file_db.json".to_string()).await;
+    write_client_file_database_to_disk(&"test_file_db.json".to_string(), vec![server.clone()], vec![file.clone()]).await;
+    let (servers, files) = read_client_file_database_from_disk(&"test_file_db.json".to_string()).await;
     assert_eq!(servers.len(), 1);
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].filename, file.filename);
