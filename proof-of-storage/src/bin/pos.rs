@@ -181,6 +181,22 @@ enum PoSSubCommands {
         encoded_columns: usize,
     },
 
+    /// delete a remote file
+    #[clap(alias = "rm")]
+    Delete {
+        /// name of the file to download
+        #[clap(required = true)]
+        file: String,
+
+        /// the server IP to upload the file to
+        #[clap(short, long, default_value = "0.0.0.0")]
+        ip: Option<std::net::IpAddr>,
+
+        /// the server port to upload the file to
+        #[clap(short, long, default_value = "8080")]
+        port: Option<u16>,
+    },
+
     /// List files you currently have stored on remote servers
     #[clap(alias = "ls")]
     List,
@@ -307,6 +323,18 @@ async fn main() {
             tracing::debug!("editing file on server");
             todo!();
         }
+        PoSSubCommands::Delete { file, ip, port } => {
+            tracing::info!("deleting file");
+            tracing::debug!("fetching file metadata from database");
+            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+            if file_metadata.is_none() {
+                tracing::error!("file not found in database");
+                return;
+            }
+            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+            tracing::debug!("deleting file from server");
+            delete_file_command(file_metadata.unwrap(), ip, port).await;
+        }
         PoSSubCommands::List => {
             list_files().await;
         }
@@ -362,7 +390,7 @@ async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAd
 async fn list_files() {
     let file_database_filename = "file_database".to_string();
     tracing::debug!("reading files from {}", file_database_filename);
-    let (hosts_database, file_metadata_database) = read_client_file_database_from_disk(file_database_filename).await;
+    let (hosts_database, file_metadata_database) = read_client_file_database_from_disk(&file_database_filename).await;
     println!("files:");
     for file in file_metadata_database { println!("{}", file); }
     println!("\nhosts:");
@@ -416,4 +444,30 @@ async fn reshape_command(
 
     let file = proof_of_storage::networking::client::reshape_file::<Blake3>(&file_metadata, server_ip, security_bits, columns, encoded_columns).await.unwrap();
     tracing::info!("File reshaped: {:?}", file);
+}
+
+async fn delete_file_command(
+    file_metadata: ClientOwnedFileMetadata,
+    ip: Option<IpAddr>,
+    port: Option<u16>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
+        file_metadata.stored_server.server_ip.clone()
+    };
+    let server_port = if port.is_some() { port.unwrap() } else {
+        file_metadata.stored_server.server_port.clone()
+    };
+    let server_ip = server_ip + ":" + &server_port.to_string();
+
+    let result = proof_of_storage::networking::client::delete_file(file_metadata.clone(), server_ip).await?;
+
+
+    tracing::info!("File deleted: {}", &file_metadata.filename);
+
+    remove_client_metadata_from_database_by_filename(
+        "file_database".to_string(),
+        file_metadata.filename,
+    ).await;
+
+    Ok(())
 }

@@ -136,6 +136,7 @@ pub async fn append_client_file_metadata_to_database(database_file_path: String,
     Ok(())
 }
 
+#[tracing::instrument]
 pub async fn get_client_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ClientOwnedFileMetadata> {
     let (_, file_metadata_database) = read_client_file_database_from_disk(&database_file_path).await;
     for metadata in file_metadata_database {
@@ -258,6 +259,16 @@ pub fn is_server_metadata_unique(current_database: Vec<ServerOwnedFileMetadata>,
         }
     }
     true
+}
+
+pub async fn get_server_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ClientOwnedFileMetadata> {
+    let file_metadata_database = read_server_file_database_from_disk(&database_file_path).await;
+    for metadata in file_metadata_database {
+        if metadata.filename == filename {
+            return Some(metadata);
+        }
+    }
+    None
 }
 
 #[tracing::instrument]

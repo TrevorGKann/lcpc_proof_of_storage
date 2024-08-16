@@ -105,7 +105,12 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::RequestPolynomialEvaluation { file_metadata, evaluation_point } => {
                 handle_client_request_polynomial_evaluation(file_metadata, &evaluation_point).await
             }
-            _ => { ServerMessages::ServerKeepAlive }
+            ClientMessages::RequestFileReshape { .. } => { todo!() }
+            ClientMessages::RequestReshapeEvaluation { .. } => { todo!() }
+            ClientMessages::ReshapeApproved => { todo!() }
+            ClientMessages::ReshapeRejected => { todo!() }
+            ClientMessages::DeleteFile { file_metadata } => { todo!() }
+            ClientKeepAlive => { ServerMessages::ServerKeepAlive }
         };
 
 
@@ -160,7 +165,7 @@ async fn handle_client_upload_new_file(filename: String,
     let filename = Path::new(&filename).file_name().unwrap().to_str().unwrap();
 
     if !(is_server_filename_unique(&"file_database".to_string(), filename.to_string()).await) {
-        return ServerMessages::BadResponse { error: "Filename already exists".to_string() };
+        return ServerMessages::BadResponse { error: "filename already exists".to_string() };
     }
 
     // check if rows and columns are valid first
@@ -479,6 +484,23 @@ pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_col
     };
 
     Ok((root, commit, file_metadata))
+}
+
+fn handle_client_delete_file(
+    file_metadata: ClientOwnedFileMetadata,
+) -> ServerMessages {
+    let server_side_filename = get_file_handle_from_metadata(&file_metadata).unwrap();
+    let delete_result = std::fs::remove_file(server_side_filename);
+    if delete_result.is_err() {
+        return make_bad_response(format!("error deleting file: {}", delete_result.unwrap_err()));
+    }
+    
+    remove_server_file_metadata_from_database(
+        "file_database".to_string(),
+        file_metadata,
+    )
+    
+    ServerMessages::DeleteFileResponse
 }
 
 fn make_bad_response(message: String) -> InternalServerMessage {

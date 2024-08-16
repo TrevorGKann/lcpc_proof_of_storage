@@ -256,6 +256,7 @@ pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
     }
 }
 
+
 /// this is a thin wrapper for verify_compact_commit function
 pub async fn request_proof(
     file_metadata: ClientOwnedFileMetadata,
@@ -650,6 +651,44 @@ where
     }
 
     sink.send(ClientMessages::ReshapeApproved).await.expect("Failed to send message to server");
+
+    Ok(())
+}
+
+pub async fn delete_file(
+    file_metadata: ClientOwnedFileMetadata,
+    server_ip: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    tracing::info!("requesting deletion of file from server");
+    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
+
+    sink.send(ClientMessages::DeleteFile { file_metadata: file_metadata.clone() })
+        .await.expect("Failed to send message to server");
+
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        return Err(Box::from("Failed to receive message from server"));
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+
+    let ServerMessages::FileDeleted { filename } = transmission
+    else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File deletion failed: {}", error);
+                Err(Box::from(error))
+            }
+            _ => {
+                tracing::error!("Unknown server response: {:?}", transmission);
+                Err(Box::from("Unknown server response"))
+            }
+        }
+    };
+
+    tracing::info!("File {} deleted from server", filename);
 
     Ok(())
 }

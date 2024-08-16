@@ -12,6 +12,7 @@ pub mod network_tests {
     use tokio::time::sleep;
 
     use crate::fields::writable_ft63::WriteableFt63;
+    use crate::file_metadata::{ClientOwnedFileMetadata, ServerHost};
     use crate::lcpc_online::{get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
     use crate::networking::client;
     use crate::networking::client::{convert_read_file_to_commit_only_leaves, get_processed_column_leaves_from_file};
@@ -181,6 +182,17 @@ pub mod network_tests {
         let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
         let port = start_test_with_server_on_random_port_and_get_port("upload_then_download_file".to_string()).await;
+
+        // try to delete the file first, in case it's already uploaded
+        let to_delete_metadata = crate::file_metadata::get_client_metadata_from_database_by_filename(
+            "file_database".to_string(),
+            "test.txt".to_string(),
+        ).await.unwrap();
+
+        let file_deleted_result = client::delete_file(
+            to_delete_metadata,
+            format!("localhost:{}", port),
+        ).await;
 
         let file_data = fs::read(source_file).await.unwrap();
         tracing::info!("file start: {:?}...", file_data.iter().take(10).collect::<Vec<&u8>>());

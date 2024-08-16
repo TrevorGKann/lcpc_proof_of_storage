@@ -70,6 +70,7 @@ pub enum ClientMessages {
     RequestReshapeEvaluation { evaluation_point: TestField, columns_to_expand_original: Vec<usize>, columns_to_expand_new: Vec<usize> },
     ReshapeApproved,
     ReshapeRejected,
+    DeleteFile { file_metadata: ClientOwnedFileMetadata },
     ClientKeepAlive,
 }
 
@@ -85,5 +86,6 @@ pub enum ServerMessages
     PolynomialEvaluation { evaluation_result: Vec<TestField> },
     ReshapeEvaluation { evaluation_result: TestField, original_result_vector: Vec<TestField>, original_columns: Vec<PoSColumn>, new_result_vector: Vec<TestField>, new_columns: Vec<PoSColumn> },
     ServerKeepAlive,
+    FileDeleted { filename: String },
     BadResponse { error: String },
 }
