@@ -221,7 +221,7 @@ async fn main() {
         PoSSubCommands::Download { file, ip, port, security_bits } => {
             tracing::debug!("downloading file");
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
 
             if file_metadata.is_none() {
                 tracing::error!("file not found in database");
@@ -236,7 +236,7 @@ async fn main() {
         PoSSubCommands::Proof { file, ip, port, security_bits } => {
             tracing::info!("requesting proof of storage");
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
 
             if file_metadata.is_none() {
                 tracing::error!("file not found in database");
@@ -252,7 +252,7 @@ async fn main() {
             tracing::info!("reshaping file");
 
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+            let file_metadata = get_client_metadata_from_database_by_filename("clent_file_database".to_string(), file).await;
 
             if file_metadata.is_none() {
                 tracing::error!("file not found in database");
@@ -273,7 +273,7 @@ async fn main() {
             }
 
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
 
             if file_metadata.is_none() {
                 tracing::error!("file not found in database");
@@ -294,7 +294,7 @@ async fn main() {
             }
 
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("file_database".to_string(), file).await;
+            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
 
             if file_metadata.is_none() {
                 tracing::error!("file not found in database");
@@ -354,12 +354,12 @@ async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAd
     //todo: need to request proof from server
 
     // add file to file database for the `list` command
-    append_client_file_metadata_to_database("file_database".to_string(), file_metadata.clone()).await.expect("failed to append file metadata to database");
+    append_client_file_metadata_to_database("client_file_database".to_string(), file_metadata.clone()).await.expect("failed to append file metadata to database");
     tracing::info!("appended {} to filedatabase", file_metadata.filename);
 }
 
 async fn list_files() {
-    let file_database_filename = "file_database".to_string();
+    let file_database_filename = "client_file_database".to_string();
     tracing::debug!("reading files from {}", file_database_filename);
     let (hosts_database, file_metadata_database) = read_client_file_database_from_disk(file_database_filename).await;
     println!("files:");

@@ -1,3 +1,4 @@
+use anyhow::{bail, ensure, Result};
 use bitvec::macros::internal::funty::Unsigned;
 use bitvec::view::BitViewSized;
 use blake3::traits::digest;
@@ -23,10 +24,10 @@ use lcpc_2d::{FieldHash, LcCommit, LcEncoding, LcRoot, open_column, ProverError}
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::*;
-use crate::fields::{evaluate_field_polynomial_at_point, writable_ft63};
+use crate::fields::{convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, writable_ft63};
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
-use crate::lcpc_online::{client_verify_commitment, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
+use crate::lcpc_online::{client_verify_commitment, CommitDimensions, CommitOrLeavesResult, CommitRequestType, convert_file_data_to_commit, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
 use crate::networking::server;
 use crate::networking::server::{get_aspect_ratio_default_from_field_len, get_aspect_ratio_default_from_file_len};
 use crate::networking::shared::*;
@@ -35,97 +36,92 @@ use crate::networking::shared::*;
 #[tracing::instrument]
 pub async fn upload_file(
     file_name: String,
-    // rows: usize,
-    columns: Option<usize>,
-    encoded_columns: Option<usize>,
+    num_pre_encoded_columns: Option<usize>,
+    num_encoded_columns: Option<usize>,
     server_ip: String,
-) -> Result<(ClientOwnedFileMetadata, PoSRoot), Box<dyn std::error::Error>> {
+) -> Result<(ClientOwnedFileMetadata, PoSRoot)> {
     use std::path::Path;
     tracing::debug!("reading file {} from disk", file_name);
     let file_path = Path::new(&file_name);
-    let mut file_data = fs::read(file_path).await.unwrap();
+    let mut file_data = fs::read(file_path).await?;
+    let mut field_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
 
-    let (num_pre_encoded_rows, num_encoded_columns, required_columns_to_test)
-        = match (columns, encoded_columns) {
-        (Some(cols), Some(enc_cols)) => {
-            if cols >= enc_cols {
-                return Err(Box::from("Number of columns must be greater than or equal to number of encoded columns"));
-            }
-            if cols < 1 || enc_cols < 2 {
-                return Err(Box::from("Number of columns and encoded columns must be greater than 0"));
-            }
-            if !enc_cols.is_power_of_two() {
-                return Err(Box::from("Number of encoded columns must be a power of 2"));
-            }
-            if !(enc_cols >= 2 * cols) {
-                return Err(Box::from("Number of encoded columns must be greater than 2 * number of columns"));
-            }
-            (cols, enc_cols, crate::networking::server::get_soundness_from_matrix_dims(cols, enc_cols))
+    let (num_pre_encoded_columns, num_encoded_columns, required_columns_to_test)
+        = match (num_pre_encoded_columns, num_encoded_columns) {
+        (Some(num_pre_encoded_columns), Some(num_encoded_columns)) => {
+            ensure!(num_pre_encoded_columns >= 1 && num_encoded_columns >= 2,
+                "Number of columns and encoded columns must be greater than 0");
+            ensure!(num_encoded_columns.is_power_of_two(),
+                "Number of encoded columns must be a power of 2");
+            ensure!(num_encoded_columns >= 2 * num_pre_encoded_columns,
+                "Number of encoded columns must be greater than 2 * number of columns");
+
+            (num_pre_encoded_columns, num_encoded_columns, crate::networking::server::get_soundness_from_matrix_dims(num_pre_encoded_columns, num_encoded_columns))
         }
         (Some(cols), None) => {
-            if cols < 1 {
-                return Err(Box::from("Number of columns must be greater than 0"));
-            }
-            let rounded_cols = if (cols.is_power_of_two()) { cols } else { cols.next_power_of_two() };
+            ensure!(cols >= 1, "Number of columns must be greater than 0");
+
+            let rounded_cols = if cols.is_power_of_two() { cols } else { cols.next_power_of_two() };
             let enc_cols = rounded_cols.next_power_of_two();
             (cols, enc_cols, crate::networking::server::get_soundness_from_matrix_dims(cols, enc_cols))
         }
         (None, Some(enc_cols)) => {
-            if enc_cols < 2 {
-                return Err(Box::from("Number of columns must be greater than 1, and therefore enc_cols > 2"));
-            }
-            if !enc_cols.is_power_of_two() {
-                return Err(Box::from("Number of encoded columns must be a power of 2"));
-            }
+            ensure!(enc_cols >= 2, "Number of encoded columns must be greater than 2");
+            ensure!(enc_cols.is_power_of_two(), "Number of encoded columns must be a power of 2");
+
             let cols = enc_cols / 2;
             (cols, enc_cols, crate::networking::server::get_soundness_from_matrix_dims(cols, enc_cols))
         }
         _ => get_aspect_ratio_default_from_file_len::<WriteableFt63>(file_data.len())
     };
 
-
     let cols_to_verify = get_columns_from_random_seed(1337, required_columns_to_test, num_encoded_columns);
     tracing::debug!("pre-computing expected column leaves...");
-    let locally_derived_leaves = convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &cols_to_verify).unwrap();
-
+    let CommitOrLeavesResult::Leaves(locally_derived_leaves) = convert_file_data_to_commit::<Blake3, WriteableFt63>(
+        &field_file_data,
+        CommitRequestType::Leaves(cols_to_verify.clone()),
+        CommitDimensions::Specified {
+            num_pre_encoded_columns,
+            num_encoded_columns,
+        },
+    )? else {
+        tracing::error!("Failed to convert file data to leaves");
+        bail!("Failed to convert file data to leaves");
+    };
 
     tracing::debug!("connecting to server {}", &server_ip);
-    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let mut stream = TcpStream::connect(&server_ip).await?;
     let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
-
 
     tracing::debug!("sending file to server {}", &server_ip);
     sink.send(ClientMessages::UploadNewFile {
         filename: file_name,
         file: file_data,
-        columns: num_pre_encoded_rows,
+        columns: num_pre_encoded_columns,
         encoded_columns: num_encoded_columns,
-    }).await.expect("Failed to send message to server");
+    }).await?;
 
-    let Some(Ok(mut transmission)) = stream.next().await else {
+    let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
-        return Err(Box::from("Failed to receive message from server"));
+        bail!("Failed to receive message from server");
     };
     tracing::info!("Client received: {:?}", transmission);
 
     match transmission {
         ServerMessages::CompactCommit { root, mut file_metadata } => {
             tracing::info!("File upload successful");
-            //update file_metadata's host
-            file_metadata.stored_server.server_ip = server_ip.clone().split(":").collect::<Vec<&str>>()[0].to_string();
-            file_metadata.stored_server.server_port = server_ip.split(":").collect::<Vec<&str>>()[1].parse().unwrap();
-
+            file_metadata.stored_server.server_ip = server_ip.clone().split(":").next().unwrap_or("").to_string();
+            file_metadata.stored_server.server_port = server_ip.split(":").nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
 
             tracing::info!("client: Requesting a proof from the server...");
             tracing::trace!("client: requesting the following columns from the server: {:?}", cols_to_verify);
 
             sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
-                .await.expect("Failed to send message to server");
-
+                .await?;
 
             let Some(Ok(transmission)) = stream.next().await else {
                 tracing::error!("Failed to receive message from server");
-                return Err(Box::from("Failed to receive message from server"));
+                bail!("Failed to receive message from server");
             };
             tracing::debug!("Client received: {:?}", transmission);
 
@@ -141,26 +137,25 @@ pub async fn upload_file(
                         &received_columns,
                         get_PoS_soudness_n_cols(&file_metadata));
 
-                    if verification_result.is_err() {
-                        tracing::error!("Failed to verify colums");
-                        //todo return error type
-                        return Err(Box::from("failed_to_verify_columns".to_string()));
+                    if let Err(err) = verification_result {
+                        tracing::error!("Failed to verify columns: {}", err);
+                        bail!("Failed to verify columns: {}", err);
                     }
                     Ok((file_metadata, root))
                 }
                 _ => {
                     tracing::error!("Unexpected server response");
-                    return Err(Box::from("Unknown server response"));
+                    bail!("Unknown server response");
                 }
             }
         }
         ServerMessages::BadResponse { error } => {
             tracing::error!("File upload failed: {}", error);
-            return Err(Box::from(error));
+            bail!("File upload failed: {}", error);
         }
         _ => {
             tracing::error!("Unknown server response");
-            return Err(Box::from("Unknown server response"));
+            bail!("Unknown server response");
         }
     }
 }
@@ -168,7 +163,7 @@ pub async fn upload_file(
 pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
                            server_ip: String,
                            security_bits: u8,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<()>
 {
     tracing::info!("requesting file from server");
 
@@ -182,78 +177,91 @@ pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
-        return Err(Box::from("Failed to receive message from server"));
+        bail!("Failed to receive message from server");
     };
     tracing::debug!("Client received: {:?}", transmission);
 
-    match transmission {
-        ServerMessages::File { file: file_data } => {
-            tracing::debug!("client: received file from server");
-            // verify that file is the correct, commited to file
-            // first derive the columns that we'll request from the server
-            let columns_to_verify = get_columns_from_random_seed(
-                1337,
-                get_PoS_soudness_n_cols(&file_metadata),
-                file_metadata.num_encoded_columns);
-            tracing::trace!("client: requesting the following columns from the server: {:?}", columns_to_verify);
-
-            let leaves_to_verify
-                = convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &columns_to_verify)
-                .unwrap();
-
-            tracing::info!("client: Requesting a proof from the server...");
-            sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: columns_to_verify.clone() })
-                .await.expect("Failed to send message to server");
-
-
-            let Some(Ok(transmission)) = stream.next().await else {
-                tracing::error!("Failed to receive message from server");
-                return Err(Box::from("Failed to receive message from server"));
-            };
-            tracing::trace!("Client received: {:?}", transmission);
-
-            match transmission {
-                ServerMessages::Columns { columns: received_columns } => {
-                    tracing::debug!("client: received columns from server");
-                    // let locally_derived_leaves_test = get_processed_column_leaves_from_file(&file_metadata, columns_to_verify.clone()).await;
-
-                    tracing::debug!("verifying commitment");
-                    let verification_result = client_verify_commitment(
-                        &file_metadata.root,
-                        &leaves_to_verify,
-                        &columns_to_verify,
-                        &received_columns,
-                        get_PoS_soudness_n_cols(&file_metadata));
-
-                    if verification_result.is_err() {
-                        tracing::error!("Failed to verify colums");
-                        //todo return error type
-                        return Err(Box::from("failed_to_verify_columns".to_string()));
-                    }
-
-                    tracing::debug!("client: file verification successful!");
-                    tracing::debug!("client: writing file to disk");
-
-                    let mut file_handle = File::create(&file_metadata.filename).await?;
-                    file_handle.write_all(&file_data).await?;
-
-                    Ok(())
-                }
-                _ => {
-                    tracing::error!("Unexpected server response");
-                    Err(Box::from("Unknown server response"))
-                }
+    let ServerMessages::File { file: file_data } = transmission else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File upload failed: {}", error);
+                bail!("Bad server response {}", error);
+            }
+            _ => {
+                tracing::error!("Unknown server response");
+                bail!("Unknown server response");
             }
         }
-        ServerMessages::BadResponse { error } => {
-            tracing::error!("File upload failed: {}", error);
-            Err(Box::from(error))
+    };
+    tracing::debug!("client: received file from server");
+    // verify that file is the correct, commited to file
+    // first derive the columns that we'll request from the server
+    let column_indices_to_verify = get_columns_from_random_seed(
+        1337,
+        get_PoS_soudness_n_cols(&file_metadata),
+        file_metadata.num_encoded_columns);
+    tracing::trace!("client: requesting the following columns from the server: {:?}", column_indices_to_verify);
+
+    tracing::info!("client: Requesting a proof from the server...");
+    sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: column_indices_to_verify.clone() })
+        .await.expect("Failed to send message to server");
+
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        bail!("Failed to receive message from server");
+    };
+    tracing::trace!("Client received: {:?}", transmission);
+
+    let ServerMessages::Columns { columns: received_columns } = transmission else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File upload failed on column retrieval: {}", error);
+                bail!("Bad response from server {}", error);
+            }
+            _ => {
+                tracing::error!("Unknown server response");
+                bail!("Unknown server response")
+            }
         }
-        _ => {
-            tracing::error!("Unknown server response");
-            Err(Box::from("Unknown server response"))
-        }
+    };
+    tracing::debug!("client: received columns from server");
+
+
+    // let locally_derived_leaves_test = get_processed_column_leaves_from_file(&file_metadata, columns_to_verify.clone()).await;
+    // let leaves_to_verify
+    //     = convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &columns_to_verify)
+    //     .unwrap();
+    //
+    let encoeded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+
+    let CommitOrLeavesResult::Leaves(leaves_to_verify) = convert_file_data_to_commit::<Blake3, WriteableFt63>(
+        &encoeded_file_data,
+        CommitRequestType::Leaves(column_indices_to_verify.clone()),
+        file_metadata.clone().into(),
+    )? else { bail!("Unexpected result from file conversion to Leaves") };
+
+    tracing::debug!("verifying commitment");
+    let verification_result = client_verify_commitment(
+        &file_metadata.root,
+        &leaves_to_verify,
+        &column_indices_to_verify,
+        &received_columns,
+        get_PoS_soudness_n_cols(&file_metadata));
+
+    if verification_result.is_err() {
+        tracing::error!("Failed to verify colums");
+        //todo return error type
+        bail!("failed_to_verify_columns");
     }
+
+    tracing::debug!("client: file verification successful!");
+    tracing::debug!("client: writing file to disk");
+
+    let mut file_handle = File::create(&file_metadata.filename).await?;
+    file_handle.write_all(&file_data).await?;
+
+    Ok(())
 }
 
 
@@ -262,13 +270,12 @@ pub async fn request_proof(
     file_metadata: ClientOwnedFileMetadata,
     server_ip: String,
     security_bits: u8,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let mut stream = TcpStream::connect(&server_ip).await.unwrap();
     let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
 
     verify_compact_commit(&file_metadata, &mut stream, &mut sink).await
 }
-
 
 pub fn get_columns_from_random_seed(
     random_seed: u64,
@@ -289,7 +296,7 @@ pub async fn verify_compact_commit(
     file_metadata: &ClientOwnedFileMetadata,
     stream: &mut SerStream<ServerMessages>,
     sink: &mut DeSink<ClientMessages>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     tracing::debug!("sending proof request for {} to server", &file_metadata.filename);
 
     // pick the random columns
@@ -307,31 +314,36 @@ pub async fn verify_compact_commit(
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
-        return Err(Box::from("Failed to receive message from server"));
+        bail!("Failed to receive message from server");
     };
     tracing::debug!("Client received: {:?}", transmission);
 
-    match transmission {
-        ServerMessages::Columns { columns: received_columns } => {
-            let locally_derived_leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
-            let verification_result = client_verify_commitment(
-                &file_metadata.root,
-                &locally_derived_leaves,
-                &cols_to_verify,
-                &received_columns,
-                get_PoS_soudness_n_cols(file_metadata));
-
-            if verification_result.is_err() {
-                tracing::error!("Failed to verify colums");
-                //todo return error type
-                return todo!();
+    let ServerMessages::Columns { columns: received_columns } = transmission else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File upload failed on column retrieval: {}", error);
+                bail!("Bad response from server {}", error);
+            }
+            _ => {
+                tracing::error!("Unknown server response");
+                bail!("Unknown server response")
             }
         }
-        _ => {
-            tracing::error!("Unexpected server response");
-            todo!("add custom error type for client errors")
-        }
+    };
+    let locally_derived_leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
+    let verification_result = client_verify_commitment(
+        &file_metadata.root,
+        &locally_derived_leaves,
+        &cols_to_verify,
+        &received_columns,
+        get_PoS_soudness_n_cols(file_metadata));
+
+    if verification_result.is_err() {
+        tracing::error!("Failed to verify colums");
+        //todo return error type
+        return todo!();
     }
+    tracing::debug!("client: file verification successful!");
     Ok(())
 }
 
@@ -362,82 +374,10 @@ pub async fn get_processed_column_leaves_from_file(
     extracted_leaves
 }
 
-
-pub fn convert_read_file_to_commit_only_leaves<D>(
-    file_data: &Vec<u8>,
-    columns_to_extract: &Vec<usize>,
-) -> Result<(Vec<Output<D>>), Box<dyn std::error::Error>>
-where
-    D: Digest,
-{
-    let field_vector_file = fields::convert_byte_vec_to_field_elements_vec(file_data);
-    //todo: ought to make customizable sizes for this
-    let data_min_width = (field_vector_file.len() as f32).sqrt().ceil() as usize;
-    let data_realized_width = data_min_width.next_power_of_two();
-    let matrix_colums = (data_realized_width + 1).next_power_of_two();
-    let matrix_rows = usize::div_ceil(field_vector_file.len(), matrix_colums);
-    //field_vector_file.len() / matrix_colums + 1;
-
-    let (data_realized_width_test, matrix_columns_test, soundness_test) = get_aspect_ratio_default_from_field_len(field_vector_file.len());
-    let matrix_rows = usize::div_ceil(field_vector_file.len(), data_realized_width_test);
-
-    let encoding = PoSEncoding::new_from_dims(data_realized_width, matrix_colums);
-
-
-    // matrix (encoded as a vector)
-    // XXX(zk) pad coeffs
-    let mut coeffs_with_padding = vec![WriteableFt63::zero(); matrix_rows * data_realized_width];
-    let mut encoded_coefs = vec![WriteableFt63::zero(); matrix_rows * matrix_colums];
-
-    // local copy of coeffs with padding
-    coeffs_with_padding
-        .par_chunks_mut(data_realized_width)
-        .zip(field_vector_file.par_chunks(data_realized_width))
-        .for_each(|(base_row, row_to_copy)|
-        base_row[..row_to_copy.len()].copy_from_slice(row_to_copy)
-        );
-
-    // now compute FFTs
-    encoded_coefs.par_chunks_mut(matrix_colums)
-        .zip(coeffs_with_padding.par_chunks(data_realized_width))
-        .try_for_each(|(r, c)| {
-            r[..c.len()].copy_from_slice(c);
-            encoding.encode(r)
-        })?;
-
-    // now set up the hashing digests
-    let mut digests = Vec::with_capacity(columns_to_extract.len());
-    for _ in 0..columns_to_extract.len() {
-        let mut new_hasher = D::new();
-        new_hasher.update(<Output<D> as Default>::default());
-        digests.push(new_hasher);
-    }
-
-    // for each row, update the digests from the requested columns
-    for row in 0..matrix_rows {
-        for (column_index, mut hasher) in columns_to_extract.iter()
-            .zip(digests.iter_mut()) {
-            encoded_coefs[row * matrix_colums + column_index].digest_update(hasher);
-        }
-    }
-    let column_digest_results = digests
-        .into_iter()
-        .map(|hasher|
-        hasher.finalize())
-        .collect();
-
-    // let mut column_digest_results: Vec<Output<D>> = Vec::with_capacity(digests.len());
-    // for hasher in digests {
-    //     column_digest_results.push(hasher.finalize());
-    // }
-
-    Ok(column_digest_results)
-}
-
 pub async fn client_request_and_verify_polynomial<D>(
     file_metadata: &ClientOwnedFileMetadata,
     server_ip: String,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<()>
 where
     D: Digest,
 {
@@ -455,88 +395,85 @@ where
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
-        return Err(Box::from("Failed to receive message from server"));
+        bail!("Failed to receive message from server");
     };
     tracing::debug!("Client received: {:?}", transmission);
 
-    match transmission {
-        ServerMessages::PolynomialEvaluation { evaluation_result } => {
-            tracing::debug!("client: received polynomial evaluation from server");
-
-            let cols_to_verify = get_columns_from_random_seed(
-                1337,
-                get_PoS_soudness_n_cols(file_metadata),
-                file_metadata.num_encoded_columns,
-            );
-
-            tracing::info!("client: Requesting a proof from the server...");
-            tracing::trace!("client: requesting the following columns from the server: {:?}", cols_to_verify);
-
-            sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
-                .await.expect("Failed to send message to server");
-
-
-            let Some(Ok(transmission)) = stream.next().await else {
-                tracing::error!("Failed to receive message from server");
-                return Err(Box::from("Failed to receive message from server"));
-            };
-            tracing::debug!("Client received: {:?}", transmission);
-
-            match transmission {
-                ServerMessages::Columns { columns: received_columns } => {
-                    let locally_derived_leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
-                    let verification_result = client_verify_commitment(
-                        &file_metadata.root,
-                        &locally_derived_leaves,
-                        &cols_to_verify,
-                        &received_columns,
-                        get_PoS_soudness_n_cols(file_metadata));
-
-                    if verification_result.is_err() {
-                        tracing::error!("Failed to verify colums");
-                        //todo return error type
-                        return Err(Box::from("failed_to_verify_columns".to_string()));
-                    }
-
-                    let local_evaluation_check =
-                        lcpc_online::verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
-                            &evaluation_point,
-                            &evaluation_result,
-                            file_metadata.num_rows,
-                            file_metadata.num_columns,
-                            &cols_to_verify,
-                            &received_columns,
-                        );
-
-                    if local_evaluation_check.is_err() {
-                        tracing::error!("Failed to verify polynomial evaluation");
-                        Err(Box::from("failed_to_verify_polynomial_evaluation".to_string()))
-                    } else {
-                        Ok(())
-                    }
-                }
-
-                ServerMessages::BadResponse { error } => {
-                    tracing::error!("Polynomial evaluation failed: {}", error);
-                    Err(Box::from(error))
-                }
-                _ => {
-                    tracing::error!("Unexpected server response");
-                    Err(Box::from("Unknown server response"))
-                }
+    let ServerMessages::PolynomialEvaluation { evaluation_result } = transmission else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File upload failed on column retrieval: {}", error);
+                bail!("Bad response from server {}", error);
+            }
+            _ => {
+                tracing::error!("Unknown server response");
+                bail!("Unknown server response")
             }
         }
-        ServerMessages::BadResponse { error } => {
-            tracing::error!("Polynomial evaluation failed: {}", error);
-            Err(Box::from(error))
+    };
+
+    tracing::debug!("client: received polynomial evaluation from server");
+
+    let cols_to_verify = get_columns_from_random_seed(
+        1337,
+        get_PoS_soudness_n_cols(file_metadata),
+        file_metadata.num_encoded_columns,
+    );
+
+    tracing::info!("client: Requesting a proof from the server...");
+    tracing::trace!("client: requesting the following columns from the server: {:?}", cols_to_verify);
+
+    sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
+        .await.expect("Failed to send message to server");
+
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        bail!("Failed to receive message from server")
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+    let ServerMessages::Columns { columns: received_columns } = transmission else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File upload failed on column retrieval: {}", error);
+                bail!("Bad response from server {}", error);
+            }
+            _ => {
+                tracing::error!("Unknown server response");
+                bail!("Unknown server response")
+            }
         }
-        _ => {
-            tracing::error!("Unexpected server response");
-            Err(Box::from("Unknown server response"))
-        }
+    };
+    let locally_derived_leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
+    let verification_result = client_verify_commitment(
+        &file_metadata.root,
+        &locally_derived_leaves,
+        &cols_to_verify,
+        &received_columns,
+        get_PoS_soudness_n_cols(file_metadata));
+
+    if verification_result.is_err() {
+        tracing::error!("Failed to verify columns");
+        bail!("Failed to verify columns");
     }
 
-    // todo!()
+    let local_evaluation_check =
+        lcpc_online::verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+            &evaluation_point,
+            &evaluation_result,
+            file_metadata.num_rows,
+            file_metadata.num_columns,
+            &cols_to_verify,
+            &received_columns,
+        );
+
+    if local_evaluation_check.is_err() {
+        tracing::error!("Failed to verify polynomial evaluation");
+        bail!("failed_to_verify_polynomial_evaluation")
+    }
+
+    Ok(())
 }
 
 pub async fn reshape_file<D>(
@@ -545,7 +482,7 @@ pub async fn reshape_file<D>(
     security_bits: u8,
     new_pre_encoded_columns: usize,
     new_encoded_columns: usize,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<()>
 where
     D: Digest,
 {
@@ -560,7 +497,7 @@ where
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
-        return Err(Box::from("Failed to receive message from server"));
+        bail!("Failed to receive message from server");
     };
     tracing::debug!("Client received: {:?}", transmission);
 
@@ -571,11 +508,11 @@ where
         return match transmission {
             ServerMessages::BadResponse { error } => {
                 tracing::error!("File reshape failed: {}", error);
-                Err(Box::from(error))
+                bail!("File reshape failed: {}", error)
             }
             _ => {
                 tracing::error!("Unknown server response: {:?}", transmission);
-                Err(Box::from("Unknown server response"))
+                bail!("Unknown server response: {:?}", transmission)
             }
         }
     };
@@ -602,7 +539,7 @@ where
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
-        return Err(Box::from("Failed to receive message from server"));
+        bail!("Failed to receive message from server");
     };
 
     let ServerMessages::ReshapeEvaluation {
@@ -615,11 +552,11 @@ where
         return match transmission {
             ServerMessages::BadResponse { error } => {
                 tracing::error!("File reshape failed: {}", error);
-                Err(Box::from(error))
+                bail!("File reshape failed: {}", error)
             }
             _ => {
                 tracing::error!("Unknown server response: {:?}", transmission);
-                Err(Box::from("Unknown server response"))
+                bail!("Unknown server response: {:?}", transmission)
             }
         }
     };
@@ -644,10 +581,11 @@ where
 
     if old_results.is_err() || new_results.is_err() {
         tracing::error!("Failed to verify polynomial evaluation");
+        tracing::error!("Rejecting reshape");
 
         sink.send(ClientMessages::ReshapeRejected).await.expect("Failed to send message to server");
 
-        return Err(Box::from("failed_to_verify_polynomial_evaluation".to_string()));
+        bail!("failed_to_verify_polynomial_evaluation")
     }
 
     sink.send(ClientMessages::ReshapeApproved).await.expect("Failed to send message to server");
@@ -658,7 +596,7 @@ where
 pub async fn delete_file(
     file_metadata: ClientOwnedFileMetadata,
     server_ip: String,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     tracing::info!("requesting deletion of file from server");
     let mut stream = TcpStream::connect(&server_ip).await.unwrap();
     let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
@@ -669,7 +607,7 @@ pub async fn delete_file(
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
-        return Err(Box::from("Failed to receive message from server"));
+        bail!("Failed to receive message from server");
     };
     tracing::debug!("Client received: {:?}", transmission);
 
@@ -679,11 +617,11 @@ pub async fn delete_file(
         return match transmission {
             ServerMessages::BadResponse { error } => {
                 tracing::error!("File deletion failed: {}", error);
-                Err(Box::from(error))
+                bail!("File deletion failed on server end: {}", error)
             }
             _ => {
                 tracing::error!("Unknown server response: {:?}", transmission);
-                Err(Box::from("Unknown server response"))
+                bail!("Unknown server response: {:?}", transmission)
             }
         }
     };

@@ -164,7 +164,7 @@ async fn handle_client_upload_new_file(filename: String,
     use std::path::Path;
     let filename = Path::new(&filename).file_name().unwrap().to_str().unwrap();
 
-    if !(is_server_filename_unique(&"file_database".to_string(), filename.to_string()).await) {
+    if !(is_server_filename_unique(&"server_file_database".to_string(), filename.to_string()).await) {
         return ServerMessages::BadResponse { error: "filename already exists".to_string() };
     }
 
@@ -191,7 +191,7 @@ async fn handle_client_upload_new_file(filename: String,
         owner: "".to_string(), //todo add users
         commitment: commit.clone(),
     };
-    append_server_file_metadata_to_database("file_database".to_string(), server_metadata).await;
+    append_server_file_metadata_to_database("server_file_database".to_string(), server_metadata).await;
     //optimize: probably should have a tokio::spawn here in case of colliding writes.
     // in general this needs to be multi-thread safe.
 
@@ -486,7 +486,7 @@ pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_col
     Ok((root, commit, file_metadata))
 }
 
-fn handle_client_delete_file(
+async fn handle_client_delete_file(
     file_metadata: ClientOwnedFileMetadata,
 ) -> ServerMessages {
     let server_side_filename = get_file_handle_from_metadata(&file_metadata).unwrap();
@@ -494,13 +494,18 @@ fn handle_client_delete_file(
     if delete_result.is_err() {
         return make_bad_response(format!("error deleting file: {}", delete_result.unwrap_err()));
     }
-    
-    remove_server_file_metadata_from_database(
-        "file_database".to_string(),
-        file_metadata,
-    )
-    
-    ServerMessages::DeleteFileResponse
+
+    let delete_result = remove_server_file_metadata_from_database_by_filename(
+        "server_file_database".to_string(),
+        file_metadata.filename.clone(),
+    ).await;
+    if !delete_result.is_some() {
+        return make_bad_response("error deleting file metadata from local database".to_string());
+    }
+
+    ServerMessages::FileDeleted {
+        filename: file_metadata.filename,
+    }
 }
 
 fn make_bad_response(message: String) -> InternalServerMessage {

@@ -185,14 +185,16 @@ pub mod network_tests {
 
         // try to delete the file first, in case it's already uploaded
         let to_delete_metadata = crate::file_metadata::get_client_metadata_from_database_by_filename(
-            "file_database".to_string(),
+            "client_file_database".to_string(),
             "test.txt".to_string(),
-        ).await.unwrap();
-
-        let file_deleted_result = client::delete_file(
-            to_delete_metadata,
-            format!("localhost:{}", port),
         ).await;
+        
+        if let Some(metadata) = to_delete_metadata {
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+        }
 
         let file_data = fs::read(source_file).await.unwrap();
         tracing::info!("file start: {:?}...", file_data.iter().take(10).collect::<Vec<&u8>>());

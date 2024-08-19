@@ -1,8 +1,10 @@
 use std::cmp::min;
 use std::hash::Hash;
 
+use anyhow::{ensure, Error, Result};
 use blake3::Hasher as Blake3;
-use blake3::traits::digest::{Digest, Output};
+use blake3::traits::digest::{Digest, FixedOutputReset, Output};
+use clap::Parser;
 use ff::{Field, PrimeField};
 use fffft::FieldFFT;
 use futures::io::WriteAll;
@@ -10,13 +12,13 @@ use num_traits::{One, Zero};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use lcpc_2d::{FieldHash, LcEncoding, open_column, VerifierError, VerifierResult, verify_column_path};
+use lcpc_2d::{FieldHash, LcColumn, LcCommit, LcEncoding, open_column, VerifierError, VerifierResult, verify_column_path};
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 use crate::fields::{is_power_of_two, random_writeable_field_vec, vector_multiply};
 use crate::fields::writable_ft63::WriteableFt63;
-use crate::file_metadata::ClientOwnedFileMetadata;
+use crate::file_metadata::{ClientOwnedFileMetadata, ServerOwnedFileMetadata};
 use crate::networking::client::get_columns_from_random_seed;
 use crate::networking::server::get_aspect_ratio_default_from_field_len;
 
@@ -40,49 +42,62 @@ pub enum CommitDimensions {
     Square,
 }
 
-pub enum CommitOrLeavesResult<D: Digest> {
-    Commit(PoSCommit),
+impl From<ClientOwnedFileMetadata> for CommitDimensions {
+    fn from(metadata: ClientOwnedFileMetadata) -> Self {
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: metadata.num_columns,
+            num_encoded_columns: metadata.num_encoded_columns,
+        }
+    }
+}
+
+impl From<ServerOwnedFileMetadata> for CommitDimensions {
+    fn from(metadata: ServerOwnedFileMetadata) -> Self {
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: metadata.commitment.n_per_row,
+            num_encoded_columns: metadata.commitment.n_cols,
+        }
+    }
+}
+
+pub enum CommitOrLeavesResult<D: Digest, F: PrimeField> {
+    Commit(LcCommit<D, LigeroEncoding<F>>),
     Leaves(Vec<Output<D>>),
-    ColumnsWithPath(Vec<PoSColumn>),
-    ColumnsWithoutPath(Vec<Vec<WriteableFt63>>),
+    ColumnsWithPath(Vec<LcColumn<D, LigeroEncoding<F>>>),
+    ColumnsWithoutPath(Vec<Vec<F>>),
 }
 
 //# refactor : one function to do all the file-to-commit conversions so it doesn't keep
 // erroring because of it
 #[tracing::instrument]
-pub fn convert_file_data_to_commit<D>(
-    field_data: &Vec<WriteableFt63>,
+pub fn convert_file_data_to_commit<D, F>(
+    field_data: &Vec<F>,
     what_to_extract: CommitRequestType,
     dimensions: CommitDimensions,
-) -> Result<CommitOrLeavesResult<D>, Box<dyn std::error::Error>>
+) -> Result<CommitOrLeavesResult<D, F>>
 where
-// F: PrimeField,
-    D: Digest,
+    F: PrimeField,
+    D: Digest + FixedOutputReset,
 {
     let data_len = field_data.len();
-    if data_len == 0 {
-        return Err(Box::from("Cannot convert empty file to commit"));
-    }
+    ensure!(data_len > 0, "Cannot convert empty file to commit");
 
 
-    // first compute matrix diemsnions
+    // first compute matrix dimensions
     let (num_pre_encoded_columns, num_encoded_columns) = match dimensions {
         CommitDimensions::Specified {
             num_pre_encoded_columns,
             num_encoded_columns,
         } => {
-            if num_pre_encoded_columns > data_len {
-                return Err(Box::from("Number of pre-encoded columns must be less than or equal to the number of rows"));
-            }
-            if num_pre_encoded_columns < 1 || num_encoded_columns < 2 {
-                return Err(Box::from("Number of columns and encoded columns must be greater than 0"));
-            }
-            if !num_encoded_columns.is_power_of_two() {
-                return Err(Box::from("Number of encoded columns must be a power of 2"));
-            }
-            if !(num_encoded_columns >= 2 * num_pre_encoded_columns) {
-                return Err(Box::from("Number of encoded columns must be greater than 2 * number of columns"));
-            }
+            ensure!(num_pre_encoded_columns <= data_len,
+                "Number of pre-encoded columns must be less than or equal to the number of rows");
+            ensure!(num_pre_encoded_columns >= 1 && num_encoded_columns >= 2,
+                "Number of columns and encoded columns must be greater than 0");
+            ensure!(num_encoded_columns.is_power_of_two(),
+                "Number of encoded columns must be a power of 2");
+            ensure!(num_encoded_columns >= 2 * num_pre_encoded_columns,
+                "Number of encoded columns must be greater than 2 * number of columns");
+
             (num_pre_encoded_columns, num_encoded_columns)
         }
         CommitDimensions::Square => {
@@ -100,23 +115,23 @@ where
     let num_matrix_rows = usize::div_ceil(data_len, num_pre_encoded_columns);
 
     // define encoding
-    let encoding = PoSEncoding::new_from_dims(num_pre_encoded_columns, num_encoded_columns);
+    let encoding = LigeroEncoding::<F>::new_from_dims(num_pre_encoded_columns, num_encoded_columns);
 
     // encode the data
 
-    match what_to_extract {
+    return match what_to_extract {
         CommitRequestType::Commit => {
-            let commit = LigeroCommit::<Blake3, _>::commit(
+            let commit = LcCommit::<D, LigeroEncoding<F>>::commit(
                 &field_data,
                 &encoding,
             )?;
-            return Ok(CommitOrLeavesResult::Commit(commit));
+            Ok(CommitOrLeavesResult::Commit(commit))
         }
         CommitRequestType::Leaves(requested_leaves) => {
             // todo: eventual optimization is not to compute the entire FFT but rather evaluate the FFT as a function at each of the requested points
 
-            let mut coeffs_with_padding = vec![WriteableFt63::zero(); num_matrix_rows * num_pre_encoded_columns];
-            let mut encoded_coefs = vec![WriteableFt63::zero(); num_matrix_rows * num_encoded_columns];
+            let mut coeffs_with_padding = vec![F::ZERO; num_matrix_rows * num_pre_encoded_columns];
+            let mut encoded_coefs = vec![F::ZERO; num_matrix_rows * num_encoded_columns];
 
             // local copy of coeffs with padding
             coeffs_with_padding
@@ -138,7 +153,7 @@ where
             let mut digests = Vec::with_capacity(requested_leaves.len());
             for _ in 0..requested_leaves.len() {
                 let mut new_hasher = D::new();
-                new_hasher.update(<Output<D> as Default>::default());
+                Digest::update(&mut new_hasher, <Output<D> as Default>::default());
                 digests.push(new_hasher);
             }
 
@@ -155,11 +170,11 @@ where
                 hasher.finalize())
                 .collect();
 
-            return Ok(CommitOrLeavesResult::Leaves(column_digest_results));
+            Ok(CommitOrLeavesResult::Leaves(column_digest_results))
         }
         CommitRequestType::ColumnsWithoutPath(requested_columns) => {
-            let mut coeffs_with_padding = vec![WriteableFt63::zero(); num_matrix_rows * num_pre_encoded_columns];
-            let mut encoded_coefs = vec![WriteableFt63::zero(); num_matrix_rows * num_encoded_columns];
+            let mut coeffs_with_padding = vec![F::ZERO; num_matrix_rows * num_pre_encoded_columns];
+            let mut encoded_coefs = vec![F::ZERO; num_matrix_rows * num_encoded_columns];
 
             // local copy of coeffs with padding
             coeffs_with_padding
@@ -189,22 +204,22 @@ where
                 }
             }
 
-            return Ok(CommitOrLeavesResult::ColumnsWithoutPath(columns));
+            Ok(CommitOrLeavesResult::ColumnsWithoutPath(columns))
         }
         CommitRequestType::ColumnsWithPath(requested_columns) => {
-            let commit = LigeroCommit::<Blake3, _>::commit(
+            let commit = LigeroCommit::<D, F>::commit(
                 &field_data,
                 &encoding,
             )?;
 
             let columns = requested_columns
                 .iter()
-                .map(|&column_index| open_column(&commit, column_index).unwrap())
-                .collect::<Vec<PoSColumn>>();
+                .map(|&column_index| open_column::<D, LigeroEncoding<F>>(&commit, column_index).unwrap())
+                .collect::<Vec<LcColumn<D, LigeroEncoding<F>>>>();
 
-            return Ok(CommitOrLeavesResult::ColumnsWithPath(columns));
+            Ok(CommitOrLeavesResult::ColumnsWithPath(columns))
         }
-    }
+    };
 }
 
 

@@ -152,7 +152,7 @@ pub async fn remove_client_metadata_from_database_by_filename(
     database_file_path: String,
     filename: String,
 ) -> Option<ClientOwnedFileMetadata> {
-    let (mut hosts_database, mut file_metadata_database)
+    let (hosts_database, mut file_metadata_database)
         = read_client_file_database_from_disk(&database_file_path).await;
 
 
@@ -261,7 +261,7 @@ pub fn is_server_metadata_unique(current_database: Vec<ServerOwnedFileMetadata>,
     true
 }
 
-pub async fn get_server_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ClientOwnedFileMetadata> {
+pub async fn get_server_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ServerOwnedFileMetadata> {
     let file_metadata_database = read_server_file_database_from_disk(&database_file_path).await;
     for metadata in file_metadata_database {
         if metadata.filename == filename {
@@ -296,15 +296,15 @@ pub async fn append_server_file_metadata_to_database(database_file_path: String,
 }
 
 #[tracing::instrument]
-pub async fn remove_server_file_metadata_from_database(
+pub async fn remove_server_file_metadata_from_database_by_filename(
     database_file_path: String,
-    metadata_to_remove: ServerOwnedFileMetadata,
+    filename_to_remove: String,
 ) -> Option<ServerOwnedFileMetadata> {
     let mut file_metadata_database = read_server_file_database_from_disk(&database_file_path).await;
 
     let mut removed_metadata = None;
     for metadata in &file_metadata_database {
-        if metadata.filename == metadata_to_remove.filename {
+        if metadata.filename == filename_to_remove {
             removed_metadata = Some(metadata.clone());
             break;
         }
