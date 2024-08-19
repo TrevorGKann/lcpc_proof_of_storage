@@ -1,6 +1,7 @@
 use std::cmp::min;
 use std::io::SeekFrom;
 
+use anyhow::{bail, ensure, Result};
 use blake3::{Hash, Hasher as Blake3};
 use blake3::traits::digest;
 use blake3::traits::digest::Output;
@@ -28,7 +29,7 @@ use crate::networking::shared::ServerMessages::*;
 type InternalServerMessage = ServerMessages;
 
 #[tracing::instrument]
-pub async fn server_main(port: u16, verbosity: u8) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn server_main(port: u16, verbosity: u8) -> Result<()> {
     tracing::info!("Server starting, verbosity level: {:?}", verbosity);
 
     let listening_address = format!("0.0.0.0:{}", port);
@@ -425,8 +426,8 @@ pub fn get_aspect_ratio_default_from_file_len<Field: ff::PrimeField>(file_len: u
 #[tracing::instrument]
 /// a thin wrapper for convert_file_to_commit_internal that should be used with ClientOwnedFileMetadata
 pub fn convert_file_metadata_to_commit(file_metadata: &ClientOwnedFileMetadata)
-                                       -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit),
-                                           Box<dyn std::error::Error>> {
+                                       -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit)>
+{
     let server_side_filename = get_file_handle_from_metadata(&file_metadata)?;
     let (result_root, result_commit, _)
         = convert_file_to_commit_internal(server_side_filename.as_str(), Some(file_metadata.num_columns))?;
@@ -435,8 +436,8 @@ pub fn convert_file_metadata_to_commit(file_metadata: &ClientOwnedFileMetadata)
 
 #[tracing::instrument]
 pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_columns: Option<usize>)
-                                       -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit, ClientOwnedFileMetadata),
-                                           Box<dyn std::error::Error>> {
+                                       -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit, ClientOwnedFileMetadata)>
+{
     // read entire file (we can't get around this)
     // todo: use mem maps so this can be streamed
     tracing::info!("reading file {}", filename);
@@ -444,9 +445,7 @@ pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_col
     let (size_in_bytes, field_vector) = read_file_to_field_elements_vec(&mut file);
     tracing::info!("field_vector: {:?}", field_vector.len());
 
-    if field_vector.len() == 0 {
-        return Err("file is empty".into());
-    }
+    ensure!(field_vector.len() > 0, "file is empty");
 
     let (pre_encoded_columns, encoded_columns, soundness) =
         if requested_pre_encoded_columns.is_none() {
@@ -520,12 +519,12 @@ fn dims_ok(columns: usize, file_size: usize) -> bool {
     col_power_2
 }
 
-fn check_file_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<(), Box<dyn std::error::Error>> {
+fn check_file_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<()> {
     // todo!()
     Ok(())
 }
 
-fn get_file_handle_from_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<String, Box<dyn std::error::Error>> {
+fn get_file_handle_from_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<String> {
     // todo need additional logic to search database once database is implemented.
     Ok(file_metadata.filename.clone())
 }
