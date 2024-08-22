@@ -22,7 +22,7 @@ type WrappedSink = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
 pub type SerStream<T> = Framed<WrappedStream, T, (), Json<T, ()>>;
 pub type DeSink<T> = Framed<WrappedSink, (), T, Json<(), T>>;
 
-//todo need to flip order of return values to match generics
+//todo ought to flip order of return values to match generics
 pub(crate) fn wrap_stream<Into, OutOf>(stream: TcpStream) -> (SerStream<OutOf>, DeSink<Into>) {
     let (read, write) = stream.into_split();
     let stream = WrappedStream::new(read, LengthDelimitedCodec::new());
@@ -32,25 +32,6 @@ pub(crate) fn wrap_stream<Into, OutOf>(stream: TcpStream) -> (SerStream<OutOf>, 
         SerStream::<OutOf>::new(stream, Json::default()),
         DeSink::<Into>::new(sink, Json::default()),
     )
-}
-
-pub struct TypedFramedWrapper<Into, OutOf> {
-    pub stream: SerStream<OutOf>,
-    pub sink: DeSink<Into>,
-    pub server_ip: String,
-}
-
-pub(crate) async fn wrap_stream_from_ip<Into, OutOf>(server_ip: String) -> TypedFramedWrapper<Into, OutOf> {
-    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
-    let (read, write) = stream.into_split();
-    let stream = WrappedStream::new(read, LengthDelimitedCodec::new());
-    let sink = WrappedSink::new(write, LengthDelimitedCodec::new());
-
-    TypedFramedWrapper {
-        stream: SerStream::<OutOf>::new(stream, Json::default()),
-        sink: DeSink::<Into>::new(sink, Json::default()),
-        server_ip,
-    }
 }
 
 type TestField = PoSField;
