@@ -1,11 +1,13 @@
 use std::fmt;
 
+use anyhow::{bail, Context, ensure, Result};
 use blake3::Hasher as Blake3;
 use blake3::traits::digest::Output;
 use fffft::FFTError;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde::de::Error;
+use serial_test::serial;
 use tokio::fs;
 
 use lcpc_2d::{LcCommit, LcEncoding};
@@ -65,50 +67,60 @@ impl fmt::Display for ClientOwnedFileMetadata {
 }
 
 #[tracing::instrument]
-pub async fn read_client_file_database_from_disk(file_path: &String) -> (Vec<ServerHost>, Vec<ClientOwnedFileMetadata>) {
+pub async fn read_client_file_database_from_disk(file_path: &String) -> Result<(Vec<ServerHost>, Vec<ClientOwnedFileMetadata>)> {
     let file_data_result = fs::read(file_path).await;
-    if file_data_result.is_err() {
-        return (vec![], vec![]);
-    }
-    let file_data = file_data_result.unwrap();
 
-    let json = serde_json::from_slice(&file_data).unwrap_or(serde_json::json!({}));
+    // if no file found, return empty vectors
+    let file_data = match file_data_result {
+        Ok(data) => data,
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                tracing::warn!("No file found at path: {}, making empty mockup", file_path);
+                return Ok((vec![], vec![]));
+            }
+            return Err(anyhow::anyhow!("Error opening database file at path: {}, error: {}", file_path, e));
+        }
+    };
 
-    let server_data_array: Vec<ServerHost>;
-    let file_data_array: Vec<ClientOwnedFileMetadata>;
+    let json: serde_json::Value = serde_json::from_slice(&file_data)?;
 
-    if let Some(servers) = json.get("servers") {
-        server_data_array = serde_json::from_str(servers.as_str().unwrap()).unwrap();
+    let server_data_array: Vec<ServerHost> = if let Some(servers) = json.get("servers") {
+        serde_json::from_str(servers.as_str().unwrap()).unwrap()
     } else {
-        server_data_array = vec![];
-    }
+        vec![]
+    };
 
-    if let Some(files) = json.get("files") {
-        file_data_array = serde_json::from_str(files.as_str().unwrap()).unwrap();
+    let file_data_array: Vec<ClientOwnedFileMetadata> = if let Some(files) = json.get("files") {
+        serde_json::from_str(files.as_str().unwrap()).unwrap()
     } else {
-        file_data_array = vec![];
-    }
+        vec![]
+    };
 
-    (server_data_array, file_data_array)
+    Ok((server_data_array, file_data_array))
 }
 
 #[tracing::instrument]
-pub async fn write_client_file_database_to_disk(file_path: &String, server_data_array: Vec<ServerHost>, file_data_array: Vec<ClientOwnedFileMetadata>) {
-    let server_json = serde_json::to_string(&server_data_array).unwrap();
-    let file_json = serde_json::to_string(&file_data_array).unwrap();
+pub async fn write_client_file_database_to_disk(file_path: &String, server_data_array: Vec<ServerHost>, file_data_array: Vec<ClientOwnedFileMetadata>)
+                                                -> Result<()>
+{
+    let server_json = serde_json::to_string(&server_data_array)?;
+    let file_json = serde_json::to_string(&file_data_array)?;
     let combined_json = serde_json::json!({
         "servers": server_json,
         "files": file_json
     });
-    fs::write(file_path, combined_json.to_string()).await.unwrap();
+    fs::write(file_path, combined_json.to_string()).await?;
+    Ok(())
 }
 
 #[tracing::instrument]
 pub async fn append_client_file_metadata_to_database(database_file_path: String, metadata_to_add: ClientOwnedFileMetadata)
-                                                     -> Result<(), Box<dyn std::error::Error>>
+                                                     -> Result<()>
 {
     let (mut hosts_database, mut file_metadata_database)
-        = read_client_file_database_from_disk(&"file_database".to_string()).await;
+        = read_client_file_database_from_disk(&"client_file_database".to_string())
+        .await
+        .context("Error reading file database")?;
 
     if is_host_unique(hosts_database.clone(), metadata_to_add.stored_server.clone()) {
         hosts_database.push(metadata_to_add.stored_server.clone());
@@ -138,13 +150,21 @@ pub async fn append_client_file_metadata_to_database(database_file_path: String,
 
 #[tracing::instrument]
 pub async fn get_client_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ClientOwnedFileMetadata> {
-    let (_, file_metadata_database) = read_client_file_database_from_disk(&database_file_path).await;
-    for metadata in file_metadata_database {
-        if metadata.filename == filename {
-            return Some(metadata);
+    let result = read_client_file_database_from_disk(&database_file_path).await;
+    match result {
+        Ok((_, file_metadata_database)) => {
+            for metadata in file_metadata_database {
+                if metadata.filename == filename {
+                    return Some(metadata);
+                }
+            }
+            None
+        }
+        Err(e) => {
+            tracing::error!("Error reading file database: {}", e);
+            panic!("Error reading file database: {}", e);
         }
     }
-    None
 }
 
 #[tracing::instrument]
@@ -152,9 +172,11 @@ pub async fn remove_client_metadata_from_database_by_filename(
     database_file_path: String,
     filename: String,
 ) -> Option<ClientOwnedFileMetadata> {
-    let (hosts_database, mut file_metadata_database)
-        = read_client_file_database_from_disk(&database_file_path).await;
-
+    let result = read_client_file_database_from_disk(&database_file_path).await;
+    let (hosts_database, mut file_metadata_database) = match result {
+        Ok(data) => data,
+        Err(_) => return None,
+    };
 
     let mut metadata_to_remove: Option<ClientOwnedFileMetadata> = None;
     for metadata in &file_metadata_database {
@@ -163,26 +185,18 @@ pub async fn remove_client_metadata_from_database_by_filename(
         }
     }
 
-
     if let Some(metadata) = &metadata_to_remove {
-        // // actually don't filter hosts out, since they might be shared and there's no reason to delete them atm
-        // hosts_database = hosts_database
-        //     .iter()
-        //     .filter(|existing_host| existing_host.server_ip != metadata.stored_server.server_ip || existing_host.server_port != metadata.stored_server.server_port)
-        //     .map(|host| host.to_owned())
-        //     .collect();
-        file_metadata_database = file_metadata_database
-            .iter()
-            .filter(|existing_metadata| existing_metadata.filename != metadata.filename)
-            .map(|metadata| metadata.to_owned())
-            .collect();
+        file_metadata_database.retain(|existing_metadata| existing_metadata.filename != metadata.filename);
 
-        write_client_file_database_to_disk(&database_file_path, hosts_database, file_metadata_database).await;
+        if let Err(_) = write_client_file_database_to_disk(&database_file_path, hosts_database, file_metadata_database).await {
+            return None;
+        }
     }
 
     metadata_to_remove
 }
 
+#[tracing::instrument]
 pub fn is_client_metadata_unique(current_database: Vec<ClientOwnedFileMetadata>, new_metadata: ClientOwnedFileMetadata) -> bool {
     for metadata in current_database {
         if metadata.filename == new_metadata.filename {
@@ -192,6 +206,7 @@ pub fn is_client_metadata_unique(current_database: Vec<ClientOwnedFileMetadata>,
     true
 }
 
+#[tracing::instrument]
 pub fn is_host_unique(current_database: Vec<ServerHost>, new_host: ServerHost) -> bool {
     for host in current_database {
         if host.server_ip == new_host.server_ip && host.server_port == new_host.server_port {
@@ -200,6 +215,7 @@ pub fn is_host_unique(current_database: Vec<ServerHost>, new_host: ServerHost) -
     }
     true
 }
+
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerOwnedFileMetadata {
@@ -231,12 +247,14 @@ pub async fn read_server_file_database_from_disk(file_path: &String) -> Vec<Serv
 }
 
 #[tracing::instrument]
-pub async fn write_server_file_database_to_disk(file_path: String, file_data_array: Vec<ServerOwnedFileMetadata>) {
-    let file_json = serde_json::to_string(&file_data_array).unwrap();
+pub async fn write_server_file_database_to_disk(file_path: String, file_data_array: Vec<ServerOwnedFileMetadata>)
+                                                -> Result<(), std::io::Error> {
+    let file_json = serde_json::to_string(&file_data_array)?;
     let combined_json = serde_json::json!({
         "files_on_server": file_json
     });
-    fs::write(file_path, combined_json.to_string()).await.unwrap();
+    fs::write(file_path, combined_json.to_string()).await?;
+    Ok(())
 }
 
 #[tracing::instrument]
@@ -273,9 +291,9 @@ pub async fn get_server_metadata_from_database_by_filename(database_file_path: S
 
 #[tracing::instrument]
 pub async fn append_server_file_metadata_to_database(database_file_path: String, metadata_to_add: ServerOwnedFileMetadata)
-                                                     -> Result<(), Box<dyn std::error::Error>>
+                                                     -> Result<()>
 {
-    let mut file_metadata_database = read_server_file_database_from_disk(&"file_database".to_string()).await;
+    let mut file_metadata_database = read_server_file_database_from_disk(&"client_file_database".to_string()).await;
 
     if is_server_metadata_unique(file_metadata_database.clone(), metadata_to_add.clone()) {
         file_metadata_database.push(metadata_to_add);
@@ -327,6 +345,7 @@ pub async fn remove_server_file_metadata_from_database_by_filename(
 
 // TESTS //
 #[tokio::test]
+#[serial]
 async fn test_client_owned_file_metadata() {
     let fake_filedata = fields::random_writeable_field_vec(20);
     let data_min_width = (fake_filedata.len() as f32).sqrt().ceil() as usize;
@@ -352,8 +371,19 @@ async fn test_client_owned_file_metadata() {
         root,
     };
 
-    write_client_file_database_to_disk(&"test_file_db.json".to_string(), vec![server.clone()], vec![file.clone()]).await;
-    let (servers, files) = read_client_file_database_from_disk(&"test_file_db.json".to_string()).await;
+    write_client_file_database_to_disk(
+        &"test_file_db.json".to_string(),
+        vec![server.clone()],
+        vec![file.clone()],
+    )
+        .await
+        .unwrap();
+
+    let (servers, files)
+        = read_client_file_database_from_disk(&"test_file_db.json".to_string())
+        .await
+        .unwrap();
+
     assert_eq!(servers.len(), 1);
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].filename, file.filename);
@@ -368,5 +398,3 @@ async fn test_client_owned_file_metadata() {
     assert_eq!(files[0].stored_server.server_port, server.server_port);
     fs::remove_file("test_file_db.json").await.unwrap();
 }
-
-//todo need methods to search the database for existing files and retrieve their commits

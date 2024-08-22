@@ -7,7 +7,6 @@ use ff::Field;
 use futures::{SinkExt, StreamExt};
 use itertools::Itertools;
 use num_traits::{One, ToPrimitive, Zero};
-use pretty_assertions::assert_eq;
 use rand::seq::IteratorRandom;
 use rand::thread_rng;
 use rand_chacha::ChaCha8Rng;
@@ -105,59 +104,72 @@ pub async fn upload_file(
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::info!("Client received: {:?}", transmission);
+    tracing::debug!("Client received: {:?}", transmission);
 
-    match transmission {
-        ServerMessages::CompactCommit { root, mut file_metadata } => {
-            tracing::info!("File upload successful");
-            file_metadata.stored_server.server_ip = server_ip.clone().split(":").next().unwrap_or("").to_string();
-            file_metadata.stored_server.server_port = server_ip.split(":").nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-
-            tracing::info!("client: Requesting a proof from the server...");
-            tracing::trace!("client: requesting the following columns from the server: {:?}", cols_to_verify);
-
-            sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
-                .await?;
-
-            let Some(Ok(transmission)) = stream.next().await else {
-                tracing::error!("Failed to receive message from server");
-                bail!("Failed to receive message from server");
-            };
-            tracing::debug!("Client received: {:?}", transmission);
-
-            match transmission {
-                ServerMessages::Columns { columns: received_columns } => {
-                    let locally_derived_leaves_test = get_processed_column_leaves_from_file(&file_metadata, cols_to_verify.clone()).await;
-                    assert_eq!(locally_derived_leaves, locally_derived_leaves_test);
-
-                    let verification_result = client_verify_commitment(
-                        &file_metadata.root,
-                        &locally_derived_leaves,
-                        &cols_to_verify,
-                        &received_columns,
-                        get_PoS_soudness_n_cols(&file_metadata));
-
-                    if let Err(err) = verification_result {
-                        tracing::error!("Failed to verify columns: {}", err);
-                        bail!("Failed to verify columns: {}", err);
-                    }
-                    Ok((file_metadata, root))
-                }
-                _ => {
-                    tracing::error!("Unexpected server response");
-                    bail!("Unknown server response");
-                }
+    let ServerMessages::CompactCommit { root, mut file_metadata } = transmission else {
+        match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File upload failed: {}", error);
+                bail!("File upload failed: {}", error);
+            }
+            _ => {
+                tracing::error!("Unknown server response");
+                bail!("Unknown server response");
             }
         }
-        ServerMessages::BadResponse { error } => {
-            tracing::error!("File upload failed: {}", error);
-            bail!("File upload failed: {}", error);
+    };
+
+    tracing::info!("File upload successful");
+    file_metadata.stored_server.server_ip = server_ip.clone().split(":").next().unwrap_or("").to_string();
+    file_metadata.stored_server.server_port = server_ip.split(":").nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    tracing::info!("client: Requesting a proof from the server...");
+    tracing::trace!("client: requesting the following columns from the server: {:?}", cols_to_verify);
+
+    sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
+        .await?;
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        bail!("Failed to receive message from server");
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+    let ServerMessages::Columns { columns: received_columns } = transmission else {
+        match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("Proof request failed: {}", error);
+                bail!("Proof request failed: {}", error);
+            }
+            _ => {
+                tracing::error!("Unknown server response");
+                bail!("Unknown server response");
+            }
         }
-        _ => {
-            tracing::error!("Unknown server response");
-            bail!("Unknown server response");
-        }
+    };
+
+    let locally_derived_leaves_test = get_processed_column_leaves_from_file(&file_metadata, cols_to_verify.clone()).await;
+    assert_eq!(locally_derived_leaves, locally_derived_leaves_test);
+
+    let verification_result = client_verify_commitment(
+        &file_metadata.root,
+        &locally_derived_leaves,
+        &cols_to_verify,
+        &received_columns,
+        get_PoS_soudness_n_cols(&file_metadata));
+
+    if let Err(err) = verification_result {
+        tracing::error!("Failed to verify columns: {}", err);
+        bail!("Failed to verify columns: {}", err);
+        // todo: need to send bad response to server to tell it to delete file
     }
+
+    append_client_file_metadata_to_database(
+        "client_file_database".to_string(),
+        file_metadata.clone())
+        .await?;
+
+    Ok((file_metadata, root))
 }
 
 pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
@@ -627,6 +639,11 @@ pub async fn delete_file(
     };
 
     tracing::info!("File {} deleted from server", filename);
+
+    let _ = remove_client_metadata_from_database_by_filename(
+        "client_file_database".to_string(),
+        file_metadata.filename,
+    ).await;
 
     Ok(())
 }

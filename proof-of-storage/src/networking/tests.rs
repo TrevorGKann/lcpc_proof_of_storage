@@ -2,20 +2,23 @@
 pub mod network_tests {
     use std::time::Duration;
 
+    use anyhow::{bail, ensure, Result};
     use blake3::Hasher as Blake3;
     use blake3::traits::digest::Output;
     use ff::PrimeField;
+    use serial_test::serial;
     // use pretty_assertions::assert_eq;
     use tokio::fs;
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
     use tokio::time::sleep;
 
+    use crate::fields::convert_byte_vec_to_field_elements_vec;
     use crate::fields::writable_ft63::WriteableFt63;
     use crate::file_metadata::{ClientOwnedFileMetadata, ServerHost};
-    use crate::lcpc_online::{get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
+    use crate::lcpc_online::{CommitOrLeavesResult, CommitRequestType, convert_file_data_to_commit, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
     use crate::networking::client;
-    use crate::networking::client::{convert_read_file_to_commit_only_leaves, get_processed_column_leaves_from_file};
+    use crate::networking::client::get_processed_column_leaves_from_file;
     use crate::networking::server::handle_client_loop;
     use crate::tests::tests::Cleanup;
 
@@ -39,7 +42,7 @@ pub mod network_tests {
         });
     }
 
-    fn start_tracing_for_tests() -> Result<(), Box<dyn std::error::Error>> {
+    fn start_tracing_for_tests() -> Result<()> {
         let subscriber = tracing_subscriber::fmt()
             // .pretty()
             .compact()
@@ -64,14 +67,33 @@ pub mod network_tests {
     }
 
     #[tokio::test]
-    async fn upload_file_test() {
+    #[serial]
+    async fn upload_and_delete_file_test() {
         // setup cleanup files
         let source_file = "test_files/test.txt";
         let dest_temp_file = "test.txt";
-        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+        // let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
         let port = start_test_with_server_on_random_port_and_get_port("upload_file_test".to_string()).await;
 
+        // try to delete the file first, in case it's already uploaded
+        let to_delete_metadata = crate::file_metadata::get_client_metadata_from_database_by_filename(
+            "client_file_database".to_string(),
+            "test.txt".to_string(),
+        ).await;
+
+        if let Some(metadata) = to_delete_metadata {
+            tracing::debug!("client requesting file deletion");
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+            tracing::debug!("client received: {:?}", delete_result);
+        } else {
+            tracing::debug!("client did not request file deletion, no file found on database");
+        }
+
+        // upload the file
         let response = client::upload_file(
             source_file.to_owned(),
             Some(4),
@@ -79,29 +101,57 @@ pub mod network_tests {
             format!("localhost:{}", port),
         ).await;
 
-        tracing::info!("client received: {:?}", response);
+        tracing::debug!("client received: {:?}", response);
 
         let (metadata, root) = response.unwrap();
 
         assert_eq!(metadata.filename, "test.txt");
         // assert_eq!(metadata.num_columns, 4); //todo uncomment once implemented
         assert_eq!(tokio::fs::read(dest_temp_file).await.unwrap(), tokio::fs::read(source_file).await.unwrap());
+
+
+        // Cleanup the server afterwards
+        let to_delete_metadata = crate::file_metadata::get_client_metadata_from_database_by_filename(
+            "client_file_database".to_string(),
+            "test.txt".to_string(),
+        ).await;
+
+        if let Some(metadata) = to_delete_metadata {
+            tracing::debug!("client requesting file deletion");
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+            tracing::debug!("client received: {:?}", delete_result);
+        }
     }
 
     #[tokio::test]
+    #[serial]
     async fn upload_then_verify() {
         // setup cleanup files
         let source_file = "test_files/test.txt";
         let dest_temp_file = "test.txt";
         let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
-        // delete file if it already exists on server  
-        if tokio::fs::metadata(dest_temp_file).await.is_ok() {
-            tokio::fs::remove_file(dest_temp_file).await.unwrap();
-        }
-
         let port = start_test_with_server_on_random_port_and_get_port("upload_then_verify".to_string()).await;
 
+        // try to delete the file first, in case it's already uploaded
+        let to_delete_metadata = crate::file_metadata::get_client_metadata_from_database_by_filename(
+            "client_file_database".to_string(),
+            "test.txt".to_string(),
+        ).await;
+
+        if let Some(metadata) = to_delete_metadata {
+            tracing::debug!("client requesting file deletion");
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+            tracing::debug!("client received: {:?}", delete_result);
+        } else {
+            tracing::debug!("client did not request file deletion, no file found on database");
+        }
 
         let response = client::upload_file(
             source_file.to_owned(),
@@ -110,18 +160,19 @@ pub mod network_tests {
             format!("localhost:{}", port),
         ).await;
 
-        tracing::info!("client received: {:?}", response);
+        tracing::debug!("client received: {:?}", response);
 
         let (metadata, root) = response.unwrap();
 
         tracing::info!("requesting proof");
         let proof_response = client::request_proof(metadata, format!("localhost:{}", port), 0).await;
-        tracing::info!("client received: {:?}", proof_response);
+        tracing::debug!("client received: {:?}", proof_response);
 
         proof_response.unwrap();
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_different_column_hashing_methods_agree() {
         start_tracing_for_tests();
         tracing::info!("starting test_different_column_hashing_methods_agree");
@@ -147,7 +198,15 @@ pub mod network_tests {
             .collect();
 
         let mut file_data = fs::read(test_file).await.unwrap();
-        let streamed_file_leaves = convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &cols_to_verify).unwrap();
+        let mut encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+        let CommitOrLeavesResult::Leaves(streamed_file_leaves)
+            = convert_file_data_to_commit::<Blake3, _>(&encoded_file_data,
+                                                       CommitRequestType::Leaves(cols_to_verify.clone()),
+                                                       file_metadata.into()).unwrap()
+        else {
+            panic!("Non-leaf result from file conversion when leaves were expected")
+        };
+        // convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &cols_to_verify).unwrap();
 
         tracing::debug!("commit's hashes:");
         for i in 0..(commit.hashes.len() / 2) {
@@ -175,6 +234,7 @@ pub mod network_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn upload_then_download_file() {
         // setup cleanup files
         let source_file = "test_files/test.txt";
@@ -188,7 +248,7 @@ pub mod network_tests {
             "client_file_database".to_string(),
             "test.txt".to_string(),
         ).await;
-        
+
         if let Some(metadata) = to_delete_metadata {
             let delete_result = client::delete_file(
                 metadata,
@@ -206,7 +266,7 @@ pub mod network_tests {
             format!("localhost:{}", port),
         ).await;
 
-        tracing::info!("client received: {:?}", upload_response);
+        tracing::debug!("client received: {:?}", upload_response);
 
         let (metadata, root) = upload_response.unwrap();
 
@@ -222,12 +282,30 @@ pub mod network_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_polynomial_evaluation() {
         let source_file = "test_files/test.txt";
         let dest_temp_file = "test.txt";
         let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
 
         let port = start_test_with_server_on_random_port_and_get_port("upload_then_download_file".to_string()).await;
+
+        // try to delete the file first, in case it's already uploaded
+        let to_delete_metadata = crate::file_metadata::get_client_metadata_from_database_by_filename(
+            "client_file_database".to_string(),
+            "test.txt".to_string(),
+        ).await;
+
+        if let Some(metadata) = to_delete_metadata {
+            tracing::debug!("client requesting file deletion");
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+            tracing::debug!("client received: {:?}", delete_result);
+        } else {
+            tracing::debug!("client did not request file deletion, no file found on database");
+        }
 
         let file_data = fs::read(source_file).await.unwrap();
         tracing::info!("file start: {:?}...", file_data.iter().take(10).collect::<Vec<&u8>>());
@@ -239,7 +317,7 @@ pub mod network_tests {
             format!("localhost:{}", port),
         ).await;
 
-        tracing::info!("client received: {:?}", upload_response);
+        tracing::debug!("client received: {:?}", upload_response);
 
         let (metadata, root) = upload_response.unwrap();
 

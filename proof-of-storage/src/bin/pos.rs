@@ -1,6 +1,7 @@
 use std::io::BufRead;
 use std::net::IpAddr;
 
+use anyhow::{bail, ensure, Result};
 use blake3::{Hash, Hasher as Blake3};
 use clap::{Parser, Subcommand};
 
@@ -212,10 +213,7 @@ enum PoSSubCommands {
 }
 
 fn is_client_command(subcommand: &PoSSubCommands) -> bool {
-    match subcommand {
-        PoSSubCommands::Server { .. } => false,
-        _ => true,
-    }
+    !matches!(subcommand, PoSSubCommands::Server { .. })
 }
 
 
@@ -326,14 +324,18 @@ async fn main() {
         PoSSubCommands::Delete { file, ip, port } => {
             tracing::info!("deleting file");
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
-            if file_metadata.is_none() {
-                tracing::error!("file not found in database");
-                return;
-            }
-            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+            let file_metadata = match get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await {
+                Some(metadata) => {
+                    tracing::debug!("found file metadata: {:?}", &metadata.clone());
+                    metadata
+                }
+                None => {
+                    tracing::error!("file not found in database");
+                    return;
+                }
+            };
             tracing::debug!("deleting file from server");
-            delete_file_command(file_metadata.unwrap(), ip, port).await;
+            delete_file_command(file_metadata, ip, port).await.unwrap();
         }
         PoSSubCommands::List => {
             list_files().await;
@@ -350,7 +352,7 @@ async fn main() {
     }
 }
 
-fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<(), Box<dyn std::error::Error>> {
+fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<()> {
     let max_level = match verbosity {
         0 => tracing::Level::ERROR,
         1 => tracing::Level::INFO,
@@ -390,7 +392,9 @@ async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAd
 async fn list_files() {
     let file_database_filename = "client_file_database".to_string();
     tracing::debug!("reading files from {}", file_database_filename);
-    let (hosts_database, file_metadata_database) = read_client_file_database_from_disk(&file_database_filename).await;
+    let (hosts_database, file_metadata_database) = read_client_file_database_from_disk(&file_database_filename)
+        .await
+        .unwrap();
     println!("files:");
     for file in file_metadata_database { println!("{}", file); }
     println!("\nhosts:");
@@ -450,7 +454,7 @@ async fn delete_file_command(
     file_metadata: ClientOwnedFileMetadata,
     ip: Option<IpAddr>,
     port: Option<u16>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
         file_metadata.stored_server.server_ip.clone()
     };
@@ -463,11 +467,6 @@ async fn delete_file_command(
 
 
     tracing::info!("File deleted: {}", &file_metadata.filename);
-
-    remove_client_metadata_from_database_by_filename(
-        "client_file_database".to_string(),
-        file_metadata.filename,
-    ).await;
 
     Ok(())
 }

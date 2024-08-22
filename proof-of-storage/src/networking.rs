@@ -5,3 +5,4 @@ pub mod server;
 pub mod shared;
 pub mod file_metadata_server;
 mod tests;
+mod lcpc_online;

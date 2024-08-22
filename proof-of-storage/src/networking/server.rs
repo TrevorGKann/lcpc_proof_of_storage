@@ -6,7 +6,6 @@ use blake3::{Hash, Hasher as Blake3};
 use blake3::traits::digest;
 use blake3::traits::digest::Output;
 use futures::{SinkExt, StreamExt, TryFutureExt};
-use pretty_assertions::assert_eq;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -22,9 +21,9 @@ use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
 use crate::lcpc_online::{form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation};
 use crate::networking::shared;
-use crate::networking::shared::*;
-use crate::networking::shared::ClientMessages::ClientKeepAlive;
-use crate::networking::shared::ServerMessages::*;
+use crate::networking::shared::ClientMessages;
+use crate::networking::shared::ServerMessages;
+use crate::networking::shared::wrap_stream;
 
 type InternalServerMessage = ServerMessages;
 
@@ -106,12 +105,16 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::RequestPolynomialEvaluation { file_metadata, evaluation_point } => {
                 handle_client_request_polynomial_evaluation(file_metadata, &evaluation_point).await
             }
-            ClientMessages::RequestFileReshape { .. } => { todo!() }
+            ClientMessages::RequestFileReshape { file_metadata, new_pre_encoded_columns, new_encoded_columns } => {
+                handle_client_request_file_reshape(file_metadata, new_pre_encoded_columns, new_encoded_columns).await
+            }
             ClientMessages::RequestReshapeEvaluation { .. } => { todo!() }
             ClientMessages::ReshapeApproved => { todo!() }
             ClientMessages::ReshapeRejected => { todo!() }
-            ClientMessages::DeleteFile { file_metadata } => { todo!() }
-            ClientKeepAlive => { ServerMessages::ServerKeepAlive }
+            ClientMessages::DeleteFile { file_metadata } => {
+                handle_client_delete_file(file_metadata).await
+            }
+            ClientMessages::ClientKeepAlive => { ServerMessages::ServerKeepAlive }
         };
 
 
@@ -149,7 +152,7 @@ async fn handle_client_user_login(username: String, password: String) -> Interna
     // check if the username and password are valid
     // if they are, send a message to the client that the login was successful
     // if they are not, send a message to the client that the login was unsuccessful
-    UserLoginResponse { success: true }
+    ServerMessages::UserLoginResponse { success: true }
     // todo: logic here
 }
 
@@ -163,14 +166,20 @@ async fn handle_client_upload_new_file(filename: String,
 {
     // parse the filename to remove all leading slashes
     use std::path::Path;
-    let filename = Path::new(&filename).file_name().unwrap().to_str().unwrap();
+    use crate::lcpc_online;
+    let filename = Path::new(&filename)
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
 
     if !(is_server_filename_unique(&"server_file_database".to_string(), filename.to_string()).await) {
-        return ServerMessages::BadResponse { error: "filename already exists".to_string() };
+        tracing::error!("Server: Client requested a filename that already exists: {}", filename);
+        return ServerMessages::BadResponse { error: "filename already exists on server, try again with a different one".to_string() };
     }
 
     // check if rows and columns are valid first
-    if (!dims_ok(pre_encoded_columns, file_data.len())) {
+    if (!lcpc_online::dims_ok(pre_encoded_columns, encoded_columns)) {
         return ServerMessages::BadResponse { error: "Invalid rows or columns".to_string() };
     }
 
@@ -181,7 +190,6 @@ async fn handle_client_upload_new_file(filename: String,
 
     let (root, commit, file_metadata) = convert_file_to_commit_internal(&filename, Some(pre_encoded_columns))
         .map_err(|e| {
-            tracing::error!("failed to convert file to commit: {:?}", e);
             return make_bad_response(format!("failed to convert file to commit: {:?}", e));
         })
         .expect("failed to convert file to commit");  //todo probably shouldn't be a panic here
@@ -196,7 +204,7 @@ async fn handle_client_upload_new_file(filename: String,
     //optimize: probably should have a tokio::spawn here in case of colliding writes.
     // in general this needs to be multi-thread safe.
 
-    CompactCommit { root, file_metadata }
+    ServerMessages::CompactCommit { root, file_metadata }
 }
 
 #[tracing::instrument]
@@ -256,7 +264,6 @@ async fn handle_client_edit_file_row(file_metadata: ClientOwnedFileMetadata, row
     { //scope for file opening
         let mut file = tokio::fs::File::open(&file_metadata.filename).await
             .map_err(|e| {
-                tracing::error!("failed to open file: {:?}", e);
                 return make_bad_response(format!("failed to open file:  {:?}", e));
             })
             .expect("failed to open file");
@@ -266,7 +273,6 @@ async fn handle_client_edit_file_row(file_metadata: ClientOwnedFileMetadata, row
 
         file.write_all(&new_file_data).await
             .map_err(|e| {
-                tracing::error!("failed to write to file: {:?}", e);
                 return make_bad_response(format!("failed to write to file: {:?}", e));
             })
             .expect("failed to write to file");
@@ -275,12 +281,11 @@ async fn handle_client_edit_file_row(file_metadata: ClientOwnedFileMetadata, row
     let (root, commit, updated_file_metadata) =
         convert_file_to_commit_internal(&file_metadata.filename, Some(file_metadata.num_columns))
             .map_err(|e| {
-                tracing::error!("failed to convert file to commit: {:?}", e);
                 return make_bad_response(format!("failed to convert file to commit: {:?}", e));
             })
             .expect("failed to convert file to commit");
 
-    CompactCommit { root, file_metadata: updated_file_metadata }
+    ServerMessages::CompactCommit { root, file_metadata: updated_file_metadata }
 }
 
 #[tracing::instrument]
@@ -296,14 +301,12 @@ async fn handle_client_append_to_file(file_metadata: ClientOwnedFileMetadata, fi
             .append(true)
             .open(&file_metadata.filename).await
             .map_err(|e| {
-                tracing::error!("failed to open file: {:?}", e);
                 return make_bad_response(format!("failed to open file:  {:?}", e));
             })
             .expect("failed to open file");
 
         file.write_all(&file_data).await
             .map_err(|e| {
-                tracing::error!("failed to write to file: {:?}", e);
                 return make_bad_response(format!("failed to write to file: {:?}", e));
             })
             .expect("failed to write to file");
@@ -312,12 +315,11 @@ async fn handle_client_append_to_file(file_metadata: ClientOwnedFileMetadata, fi
     let (root, commit, updated_file_metadata) =
         convert_file_to_commit_internal(&file_metadata.filename, Some(file_metadata.num_columns))
             .map_err(|e| {
-                tracing::error!("failed to convert file to commit: {:?}", e);
                 return make_bad_response(format!("failed to convert file to commit: {:?}", e));
             })
             .expect("failed to convert file to commit");
 
-    CompactCommit { root, file_metadata: updated_file_metadata }
+    ServerMessages::CompactCommit { root, file_metadata: updated_file_metadata }
 }
 
 #[tracing::instrument]
@@ -341,13 +343,10 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
         return make_bad_response("file metadata is invalid".to_string());
     }
 
-    let (_, commit) =
-        convert_file_metadata_to_commit(&file_metadata)
-            .map_err(|e| {
-                tracing::error!("failed to convert file to commit: {:?}", e);
-                return make_bad_response(format!("failed to convert file to commit: {:?}", e));
-            })
-            .expect("failed to convert file to commit");
+    let commit = match convert_file_metadata_to_commit(&file_metadata) {
+        Ok((_, commit)) => commit,
+        Err(e) => return make_bad_response(format!("failed to convert file to commit: {:?}", e)),
+    };
 
     let column_collection = server_retreive_columns(&commit, &requested_columns);
 
@@ -362,17 +361,15 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
 async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedFileMetadata, evaluation_point: &WriteableFt63) -> InternalServerMessage {
     // get the requested polynomial evaluation from the file
     // send the evaluation to the client
-    tracing::trace!("server: requested polynomial evaluation of {:?} at {:?}", &file_metadata.filename, evaluation_point);
+    tracing::info!("server: client requested polynomial evaluation of {:?} at {:?}", &file_metadata.filename, evaluation_point);
     if check_file_metadata(&file_metadata).is_err() {
         return make_bad_response("file metadata is invalid".to_string());
     }
 
-    let (_, commit) = convert_file_metadata_to_commit(&file_metadata)
-        .map_err(|e| {
-            tracing::error!("failed to convert file to commit: {:?}", e);
-            return make_bad_response(format!("failed to convert file to commit: {:?}", e));
-        })
-        .expect("failed to convert file to commit");
+    let commit = match convert_file_metadata_to_commit(&file_metadata) {
+        Ok((_, commit)) => commit,
+        Err(e) => return make_bad_response(format!("failed to convert file to commit: {:?}", e)),
+    };
 
     let (evaluation_left_vector, _)
         = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, commit.n_rows, commit.n_cols);
@@ -385,6 +382,54 @@ async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedF
 
     // unimplemented!("handle_client_request_polynomial_evaluation");
 }
+
+#[tracing::instrument]
+async fn handle_client_delete_file(
+    file_metadata: ClientOwnedFileMetadata,
+) -> ServerMessages {
+    tracing::info!("server: client requested to delete file: {}", file_metadata.filename);
+    let server_side_filename = get_file_handle_from_metadata(&file_metadata).unwrap();
+    let os_delete_result = std::fs::remove_file(server_side_filename);
+
+    let db_delete_result = remove_server_file_metadata_from_database_by_filename(
+        "server_file_database".to_string(),
+        file_metadata.filename.clone(),
+    ).await;
+
+    let mut returnString = "".to_string();
+
+    if os_delete_result.is_err() {
+        returnString.push_str(format!("error deleting file: {}; ", os_delete_result.unwrap_err()).as_str());
+    }
+    if !db_delete_result.is_some() {
+        returnString.push_str("error deleting file metadata from local database".to_string().as_str());
+    }
+
+    if returnString.len() > 0 {
+        return make_bad_response(returnString);
+    }
+
+    ServerMessages::FileDeleted {
+        filename: file_metadata.filename,
+    }
+}
+
+#[tracing::instrument]
+async fn handle_client_request_file_reshape(
+    file_metadata: ClientOwnedFileMetadata,
+    new_pre_encoded_columns: usize,
+    new_encoded_columns: usize,
+) -> ServerMessages {
+    let server_side_filename = get_file_handle_from_metadata(&file_metadata).unwrap();
+
+    let commit = match convert_file_metadata_to_commit(&file_metadata) {
+        Ok((_, commit)) => commit,
+        Err(e) => return make_bad_response(format!("failed to convert file to commit: {:?}", e)),
+    };
+
+    todo!()
+}
+
 
 #[tracing::instrument]
 pub fn get_aspect_ratio_default_from_field_len(field_len: usize) -> (usize, usize, usize) {
@@ -485,38 +530,9 @@ pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_col
     Ok((root, commit, file_metadata))
 }
 
-async fn handle_client_delete_file(
-    file_metadata: ClientOwnedFileMetadata,
-) -> ServerMessages {
-    let server_side_filename = get_file_handle_from_metadata(&file_metadata).unwrap();
-    let delete_result = std::fs::remove_file(server_side_filename);
-    if delete_result.is_err() {
-        return make_bad_response(format!("error deleting file: {}", delete_result.unwrap_err()));
-    }
-
-    let delete_result = remove_server_file_metadata_from_database_by_filename(
-        "server_file_database".to_string(),
-        file_metadata.filename.clone(),
-    ).await;
-    if !delete_result.is_some() {
-        return make_bad_response("error deleting file metadata from local database".to_string());
-    }
-
-    ServerMessages::FileDeleted {
-        filename: file_metadata.filename,
-    }
-}
-
 fn make_bad_response(message: String) -> InternalServerMessage {
-    BadResponse { error: message }
-}
-
-#[tracing::instrument]
-fn dims_ok(columns: usize, file_size: usize) -> bool {
-    // let total_size = rows * columns / 2 >= file_size;
-    let col_power_2 = columns.is_power_of_two();
-    //todo should be more checks
-    col_power_2
+    tracing::error!("{}", message);
+    ServerMessages::BadResponse { error: message }
 }
 
 fn check_file_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<()> {

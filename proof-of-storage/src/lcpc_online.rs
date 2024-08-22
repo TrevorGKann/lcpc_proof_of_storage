@@ -67,6 +67,15 @@ pub enum CommitOrLeavesResult<D: Digest, F: PrimeField> {
     ColumnsWithoutPath(Vec<Vec<F>>),
 }
 
+
+#[tracing::instrument]
+pub fn dims_ok(num_pre_encoded_columns: usize, num_encoded_columns: usize) -> bool {
+    let enc_col_power_2 = num_encoded_columns.is_power_of_two();
+    let big_enough = num_pre_encoded_columns >= 1 && num_encoded_columns >= 2;
+    let rho_greater_than_1 = num_encoded_columns >= 2 * num_pre_encoded_columns;
+    enc_col_power_2
+}
+
 //# refactor : one function to do all the file-to-commit conversions so it doesn't keep
 // erroring because of it
 #[tracing::instrument]
@@ -89,8 +98,8 @@ where
             num_pre_encoded_columns,
             num_encoded_columns,
         } => {
-            ensure!(num_pre_encoded_columns <= data_len,
-                "Number of pre-encoded columns must be less than or equal to the number of rows");
+            // ensure!(num_pre_encoded_columns <= data_len,
+            //     "Number of pre-encoded columns must be less than or equal to the number of rows");
             ensure!(num_pre_encoded_columns >= 1 && num_encoded_columns >= 2,
                 "Number of columns and encoded columns must be greater than 0");
             ensure!(num_encoded_columns.is_power_of_two(),
