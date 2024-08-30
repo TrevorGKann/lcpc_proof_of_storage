@@ -7,7 +7,6 @@ use fffft::FFTError;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde::de::Error;
-use serial_test::serial;
 use tokio::fs;
 
 use lcpc_2d::{LcCommit, LcEncoding};
@@ -226,12 +225,8 @@ pub struct ServerOwnedFileMetadata {
 
 
 #[tracing::instrument]
-pub async fn read_server_file_database_from_disk(file_path: &String) -> Vec<ServerOwnedFileMetadata> {
-    let file_data_result = fs::read(&file_path).await;
-    if file_data_result.is_err() {
-        return vec![]; //todo should probably handle error
-    }
-    let file_data = file_data_result.unwrap();
+pub async fn read_server_file_database_from_disk(file_path: &String) -> Result<Vec<ServerOwnedFileMetadata>> {
+    let file_data = fs::read(&file_path).await?;
 
     let json = serde_json::from_slice(&file_data).unwrap_or(serde_json::json!({}));
 
@@ -243,7 +238,7 @@ pub async fn read_server_file_database_from_disk(file_path: &String) -> Vec<Serv
         file_data_array = vec![];
     }
 
-    file_data_array
+    Ok(file_data_array)
 }
 
 #[tracing::instrument]
@@ -258,15 +253,15 @@ pub async fn write_server_file_database_to_disk(file_path: String, file_data_arr
 }
 
 #[tracing::instrument]
-pub async fn is_server_filename_unique(database_file_path: &String, filename: String) -> bool {
+pub async fn is_server_filename_unique(database_file_path: &String, filename: String) -> Result<bool> {
     let file_metadata_database
-        = read_server_file_database_from_disk(&database_file_path).await;
+        = read_server_file_database_from_disk(&database_file_path).await.expect("Failed to read file database");
     for metadata in file_metadata_database {
         if metadata.filename == filename {
-            return false;
+            return Ok(false);
         }
     }
-    true
+    Ok(true)
 }
 
 #[tracing::instrument]
@@ -280,7 +275,7 @@ pub fn is_server_metadata_unique(current_database: Vec<ServerOwnedFileMetadata>,
 }
 
 pub async fn get_server_metadata_from_database_by_filename(database_file_path: String, filename: String) -> Option<ServerOwnedFileMetadata> {
-    let file_metadata_database = read_server_file_database_from_disk(&database_file_path).await;
+    let file_metadata_database = read_server_file_database_from_disk(&database_file_path).await.expect("Failed to read file metadata database");
     for metadata in file_metadata_database {
         if metadata.filename == filename {
             return Some(metadata);
@@ -293,7 +288,7 @@ pub async fn get_server_metadata_from_database_by_filename(database_file_path: S
 pub async fn append_server_file_metadata_to_database(database_file_path: String, metadata_to_add: ServerOwnedFileMetadata)
                                                      -> Result<()>
 {
-    let mut file_metadata_database = read_server_file_database_from_disk(&"client_file_database".to_string()).await;
+    let mut file_metadata_database = read_server_file_database_from_disk(&"client_file_database".to_string()).await?;
 
     if is_server_metadata_unique(file_metadata_database.clone(), metadata_to_add.clone()) {
         file_metadata_database.push(metadata_to_add);
@@ -318,7 +313,7 @@ pub async fn remove_server_file_metadata_from_database_by_filename(
     database_file_path: String,
     filename_to_remove: String,
 ) -> Option<ServerOwnedFileMetadata> {
-    let mut file_metadata_database = read_server_file_database_from_disk(&database_file_path).await;
+    let mut file_metadata_database = read_server_file_database_from_disk(&database_file_path).await.expect("Failed to read file metadata database");
 
     let mut removed_metadata = None;
     for metadata in &file_metadata_database {
@@ -343,58 +338,86 @@ pub async fn remove_server_file_metadata_from_database_by_filename(
     removed_metadata
 }
 
+#[tracing::instrument]
+pub async fn update_server_file_metadata_in_database(database_file_path: String, metadata_to_update: ServerOwnedFileMetadata) -> Option<ServerOwnedFileMetadata> {
+    let mut file_metadata_database = read_server_file_database_from_disk(&database_file_path).await.expect("Failed to read file metadata database");
+    let mut updated_metadata = None;
+    for metadata in &mut file_metadata_database {
+        if metadata.filename == metadata_to_update.filename {
+            metadata.owner = metadata_to_update.owner.clone();
+            metadata.commitment = metadata_to_update.commitment.clone();
+            updated_metadata = Some(metadata.clone());
+            break;
+        }
+    }
+    updated_metadata
+}
+
 // TESTS //
-#[tokio::test]
-#[serial]
-async fn test_client_owned_file_metadata() {
-    let fake_filedata = fields::random_writeable_field_vec(20);
-    let data_min_width = (fake_filedata.len() as f32).sqrt().ceil() as usize;
-    let data_realized_width = data_min_width.next_power_of_two();
-    let matrix_colums = (data_realized_width + 1).next_power_of_two();
-    let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_colums);
-    let commit = LigeroCommit::<Blake3, _>::commit(&fake_filedata, &encoding).unwrap();
-    let root = commit.get_root();
+#[cfg(test)]
+mod tests {
+    use blake3::Hasher as Blake3;
+    use serial_test::serial;
+    use tokio::fs;
 
-    let server = ServerHost {
-        server_name: Some("test_server".to_string()),
-        server_ip: "0.0.0.0".to_string(),
-        server_port: 8080,
-    };
+    use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
-    let file = ClientOwnedFileMetadata {
-        filename: "test_file".to_string(),
-        num_rows: 100,
-        num_columns: 128,
-        num_encoded_columns: 256,
-        filesize_in_bytes: 12800,
-        stored_server: server.clone(),
-        root,
-    };
+    use crate::fields;
+    use crate::fields::writable_ft63::WriteableFt63;
+    use crate::file_metadata::{ClientOwnedFileMetadata, read_client_file_database_from_disk, ServerHost, write_client_file_database_to_disk};
 
-    write_client_file_database_to_disk(
-        &"test_file_db.json".to_string(),
-        vec![server.clone()],
-        vec![file.clone()],
-    )
-        .await
-        .unwrap();
+    #[tokio::test]
+    #[serial]
+    async fn test_client_owned_file_metadata() {
+        let fake_filedata = fields::random_writeable_field_vec(20);
+        let data_min_width = (fake_filedata.len() as f32).sqrt().ceil() as usize;
+        let data_realized_width = data_min_width.next_power_of_two();
+        let matrix_colums = (data_realized_width + 1).next_power_of_two();
+        let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_colums);
+        let commit = LigeroCommit::<Blake3, _>::commit(&fake_filedata, &encoding).unwrap();
+        let root = commit.get_root();
 
-    let (servers, files)
-        = read_client_file_database_from_disk(&"test_file_db.json".to_string())
-        .await
-        .unwrap();
+        let server = ServerHost {
+            server_name: Some("test_server".to_string()),
+            server_ip: "0.0.0.0".to_string(),
+            server_port: 8080,
+        };
 
-    assert_eq!(servers.len(), 1);
-    assert_eq!(files.len(), 1);
-    assert_eq!(files[0].filename, file.filename);
-    assert_eq!(files[0].num_rows, file.num_rows);
-    assert_eq!(files[0].num_encoded_columns, file.num_encoded_columns);
-    assert_eq!(files[0].num_columns, file.num_columns);
-    assert_eq!(files[0].filesize_in_bytes, file.filesize_in_bytes);
-    assert_eq!(files[0].root.root, file.root.root);
+        let file = ClientOwnedFileMetadata {
+            filename: "test_file".to_string(),
+            num_rows: 100,
+            num_columns: 128,
+            num_encoded_columns: 256,
+            filesize_in_bytes: 12800,
+            stored_server: server.clone(),
+            root,
+        };
 
-    assert_eq!(files[0].stored_server.server_name.as_ref().unwrap(), server.server_name.as_ref().unwrap());
-    assert_eq!(files[0].stored_server.server_ip, server.server_ip);
-    assert_eq!(files[0].stored_server.server_port, server.server_port);
-    fs::remove_file("test_file_db.json").await.unwrap();
+        write_client_file_database_to_disk(
+            &"test_file_db.json".to_string(),
+            vec![server.clone()],
+            vec![file.clone()],
+        )
+            .await
+            .unwrap();
+
+        let (servers, files)
+            = read_client_file_database_from_disk(&"test_file_db.json".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, file.filename);
+        assert_eq!(files[0].num_rows, file.num_rows);
+        assert_eq!(files[0].num_encoded_columns, file.num_encoded_columns);
+        assert_eq!(files[0].num_columns, file.num_columns);
+        assert_eq!(files[0].filesize_in_bytes, file.filesize_in_bytes);
+        assert_eq!(files[0].root.root, file.root.root);
+
+        assert_eq!(files[0].stored_server.server_name.as_ref().unwrap(), server.server_name.as_ref().unwrap());
+        assert_eq!(files[0].stored_server.server_ip, server.server_ip);
+        assert_eq!(files[0].stored_server.server_port, server.server_port);
+        fs::remove_file("test_file_db.json").await.unwrap();
+    }
 }

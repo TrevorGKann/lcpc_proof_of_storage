@@ -60,7 +60,7 @@ impl From<ServerOwnedFileMetadata> for CommitDimensions {
     }
 }
 
-pub enum CommitOrLeavesResult<D: Digest, F: PrimeField> {
+pub enum CommitOrLeavesOutput<D: Digest, F: PrimeField> {
     Commit(LcCommit<D, LigeroEncoding<F>>),
     Leaves(Vec<Output<D>>),
     ColumnsWithPath(Vec<LcColumn<D, LigeroEncoding<F>>>),
@@ -83,14 +83,13 @@ pub fn convert_file_data_to_commit<D, F>(
     field_data: &Vec<F>,
     what_to_extract: CommitRequestType,
     dimensions: CommitDimensions,
-) -> Result<CommitOrLeavesResult<D, F>>
+) -> Result<CommitOrLeavesOutput<D, F>>
 where
     F: PrimeField,
     D: Digest + FixedOutputReset,
 {
     let data_len = field_data.len();
     ensure!(data_len > 0, "Cannot convert empty file to commit");
-
 
     // first compute matrix dimensions
     let (num_pre_encoded_columns, num_encoded_columns) = match dimensions {
@@ -134,7 +133,7 @@ where
                 &field_data,
                 &encoding,
             )?;
-            Ok(CommitOrLeavesResult::Commit(commit))
+            Ok(CommitOrLeavesOutput::Commit(commit))
         }
         CommitRequestType::Leaves(requested_leaves) => {
             // todo: eventual optimization is not to compute the entire FFT but rather evaluate the FFT as a function at each of the requested points
@@ -179,7 +178,7 @@ where
                 hasher.finalize())
                 .collect();
 
-            Ok(CommitOrLeavesResult::Leaves(column_digest_results))
+            Ok(CommitOrLeavesOutput::Leaves(column_digest_results))
         }
         CommitRequestType::ColumnsWithoutPath(requested_columns) => {
             let mut coeffs_with_padding = vec![F::ZERO; num_matrix_rows * num_pre_encoded_columns];
@@ -213,7 +212,7 @@ where
                 }
             }
 
-            Ok(CommitOrLeavesResult::ColumnsWithoutPath(columns))
+            Ok(CommitOrLeavesOutput::ColumnsWithoutPath(columns))
         }
         CommitRequestType::ColumnsWithPath(requested_columns) => {
             let commit = LigeroCommit::<D, F>::commit(
@@ -226,7 +225,7 @@ where
                 .map(|&column_index| open_column::<D, LigeroEncoding<F>>(&commit, column_index).unwrap())
                 .collect::<Vec<LcColumn<D, LigeroEncoding<F>>>>();
 
-            Ok(CommitOrLeavesResult::ColumnsWithPath(columns))
+            Ok(CommitOrLeavesOutput::ColumnsWithPath(columns))
         }
     };
 }
@@ -500,6 +499,8 @@ where
     Ok(result)
 }
 
+/// Verifies the evaluation of a polynomial on a single evaluation point given a set of columns 
+/// and a result vector from the full matrix
 pub fn verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point<D>(
     evaluation_point: &WriteableFt63,
     received_result_vector: &[WriteableFt63],

@@ -112,8 +112,8 @@ type ErrT<E> = <E as LcEncoding>::Err;
 /// Err variant for prover operations
 #[derive(Debug, Error)]
 pub enum ProverError<ErrT>
-    where
-        ErrT: std::fmt::Debug + std::error::Error + 'static,
+where
+    ErrT: std::fmt::Debug + std::error::Error + 'static,
 {
     /// size too big
     #[error(display = "n_cols is too large for this encoding")]
@@ -138,8 +138,8 @@ pub type ProverResult<T, ErrT> = Result<T, ProverError<ErrT>>;
 /// Err variant for verifier operations
 #[derive(Debug, Error)]
 pub enum VerifierError<ErrT>
-    where
-        ErrT: std::fmt::Debug + std::error::Error + 'static,
+where
+    ErrT: std::fmt::Debug + std::error::Error + 'static,
 {
     /// wrong number of column openings in proof
     #[error(display = "wrong number of column openings in proof")]
@@ -173,9 +173,9 @@ pub type VerifierResult<T, ErrT> = Result<T, VerifierError<ErrT>>;
 /// a commitment
 #[derive(Debug, Clone)]
 pub struct LcCommit<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     /// The encoded values
     pub comm: Vec<FldT<E>>,
@@ -193,8 +193,8 @@ pub struct LcCommit<D, E>
 
 #[derive(Debug, Serialize, Deserialize)]
 struct WrappedLcCommit<F>
-    where
-        F: Serialize,
+where
+    F: Serialize,
 {
     comm: Vec<F>,
     coeffs: Vec<F>,
@@ -205,14 +205,14 @@ struct WrappedLcCommit<F>
 }
 
 impl<F> WrappedLcCommit<F>
-    where
-        F: Serialize,
+where
+    F: Serialize,
 {
     /// turn a WrappedLcCommit into an LcCommit
     fn unwrap<D, E>(self) -> LcCommit<D, E>
-        where
-            D: Digest,
-            E: LcEncoding<F=F>,
+    where
+        D: Digest,
+        E: LcEncoding<F=F>,
     {
         let hashes = self
             .hashes
@@ -232,10 +232,10 @@ impl<F> WrappedLcCommit<F>
 }
 
 impl<D, E> LcCommit<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize,
 {
     fn wrapped(&self) -> WrappedLcCommit<FldT<E>> {
         let hashes_wrapped = self
@@ -256,37 +256,37 @@ impl<D, E> LcCommit<D, E>
 }
 
 impl<D, E> Serialize for LcCommit<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         self.wrapped().serialize(serializer)
     }
 }
 
 impl<'de, D, E> Deserialize<'de> for LcCommit<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize + Deserialize<'de>,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize + Deserialize<'de>,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
-        where
-            De: Deserializer<'de>,
+    where
+        De: Deserializer<'de>,
     {
         Ok(WrappedLcCommit::<FldT<E>>::deserialize(deserializer)?.unwrap())
     }
 }
 
 impl<D, E> LcCommit<D, E>
-    where
-        D: Digest + FixedOutputReset,
-        E: LcEncoding,
+where
+    D: Digest + FixedOutputReset,
+    E: LcEncoding,
 {
     /// returns the Merkle root of this polynomial commitment (which is the commitment itself)
     pub fn get_root(&self) -> LcRoot<D, E> {
@@ -330,9 +330,9 @@ impl<D, E> LcCommit<D, E>
 /// A Merkle root corresponding to a committed polynomial
 #[derive(Debug, Clone)]
 pub struct LcRoot<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     /// The Merkle root
     pub root: Output<D>,
@@ -340,9 +340,9 @@ pub struct LcRoot<D, E>
 }
 
 impl<D, E> LcRoot<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     fn wrapped(&self) -> WrappedOutput {
         WrappedOutput {
@@ -357,9 +357,9 @@ impl<D, E> LcRoot<D, E>
 }
 
 impl<D, E> AsRef<Output<D>> for LcRoot<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     fn as_ref(&self) -> &Output<D> {
         &self.root
@@ -376,9 +376,9 @@ struct WrappedOutput {
 
 impl WrappedOutput {
     fn unwrap<D, E>(self) -> LcRoot<D, E>
-        where
-            D: Digest,
-            E: LcEncoding,
+    where
+        D: Digest,
+        E: LcEncoding,
     {
         LcRoot {
             root: self.bytes.into_iter().collect::<Output<D>>(),
@@ -388,26 +388,26 @@ impl WrappedOutput {
 }
 
 impl<D, E> Serialize for LcRoot<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         self.wrapped().serialize(serializer)
     }
 }
 
 impl<'de, D, E> Deserialize<'de> for LcRoot<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
-        where
-            De: Deserializer<'de>,
+    where
+        De: Deserializer<'de>,
     {
         Ok(WrappedOutput::deserialize(deserializer)?.unwrap())
     }
@@ -416,9 +416,9 @@ impl<'de, D, E> Deserialize<'de> for LcRoot<D, E>
 /// A column opening and the corresponding Merkle path.
 #[derive(Debug, Clone)]
 pub struct LcColumn<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     /// The values in the column
     pub col: Vec<FldT<E>>,
@@ -427,10 +427,10 @@ pub struct LcColumn<D, E>
 }
 
 impl<D, E> LcColumn<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize,
 {
     fn wrapped(&self) -> WrappedLcColumn<FldT<E>> {
         let path_wrapped = (0..self.path.len())
@@ -449,22 +449,22 @@ impl<D, E> LcColumn<D, E>
 // A column opening and the corresponding Merkle path.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct WrappedLcColumn<F>
-    where
-        F: Serialize,
+where
+    F: Serialize,
 {
     col: Vec<F>,
     path: Vec<WrappedOutput>,
 }
 
 impl<F> WrappedLcColumn<F>
-    where
-        F: Serialize,
+where
+    F: Serialize,
 {
     /// turn WrappedLcColumn into LcColumn
     fn unwrap<D, E>(self) -> LcColumn<D, E>
-        where
-            D: Digest,
-            E: LcEncoding<F=F>,
+    where
+        D: Digest,
+        E: LcEncoding<F=F>,
     {
         let col = self.col;
         let path = self
@@ -478,28 +478,28 @@ impl<F> WrappedLcColumn<F>
 }
 
 impl<D, E> Serialize for LcColumn<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         self.wrapped().serialize(serializer)
     }
 }
 
 impl<'de, D, E> Deserialize<'de> for LcColumn<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize + Deserialize<'de>,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize + Deserialize<'de>,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
-        where
-            De: Deserializer<'de>,
+    where
+        De: Deserializer<'de>,
     {
         Ok(WrappedLcColumn::<FldT<E>>::deserialize(deserializer)?.unwrap())
     }
@@ -508,9 +508,9 @@ impl<'de, D, E> Deserialize<'de> for LcColumn<D, E>
 /// An evaluation and proof of its correctness and of the low-degreeness of the commitment.
 #[derive(Debug, Clone)]
 pub struct LcEvalProof<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     /// Number of columns in this proof
     pub n_cols: usize,
@@ -523,9 +523,9 @@ pub struct LcEvalProof<D, E>
 }
 
 impl<D, E> LcEvalProof<D, E>
-    where
-        D: Digest + FixedOutputReset,
-        E: LcEncoding,
+where
+    D: Digest + FixedOutputReset,
+    E: LcEncoding,
 {
     /// Get the number of elements in an encoded vector
     pub fn get_n_cols(&self) -> usize {
@@ -551,10 +551,10 @@ impl<D, E> LcEvalProof<D, E>
 }
 
 impl<D, E> LcEvalProof<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize,
 {
     fn wrapped(&self) -> WrappedLcEvalProof<FldT<E>> {
         let columns_wrapped = (0..self.columns.len())
@@ -573,8 +573,8 @@ impl<D, E> LcEvalProof<D, E>
 /// An evaluation and proof of its correctness and of the low-degreeness of the commitment.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct WrappedLcEvalProof<F>
-    where
-        F: Serialize,
+where
+    F: Serialize,
 {
     n_cols: usize,
     p_eval: Vec<F>,
@@ -583,14 +583,14 @@ struct WrappedLcEvalProof<F>
 }
 
 impl<F> WrappedLcEvalProof<F>
-    where
-        F: Serialize,
+where
+    F: Serialize,
 {
     /// turn a WrappedLcEvalProof into an LcEvalProof
     fn unwrap<D, E>(self) -> LcEvalProof<D, E>
-        where
-            D: Digest,
-            E: LcEncoding<F=F>,
+    where
+        D: Digest,
+        E: LcEncoding<F=F>,
     {
         let columns = self.columns.into_iter().map(|c| c.unwrap()).collect();
 
@@ -604,28 +604,28 @@ impl<F> WrappedLcEvalProof<F>
 }
 
 impl<D, E> Serialize for LcEvalProof<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         self.wrapped().serialize(serializer)
     }
 }
 
 impl<'de, D, E> Deserialize<'de> for LcEvalProof<D, E>
-    where
-        D: Digest,
-        E: LcEncoding,
-        E::F: Serialize + Deserialize<'de>,
+where
+    D: Digest,
+    E: LcEncoding,
+    E::F: Serialize + Deserialize<'de>,
 {
     fn deserialize<De>(deserializer: De) -> Result<Self, De::Error>
-        where
-            De: Deserializer<'de>,
+    where
+        De: Deserializer<'de>,
     {
         Ok(WrappedLcEvalProof::<FldT<E>>::deserialize(deserializer)?.unwrap())
     }
@@ -643,9 +643,9 @@ const LOG_MIN_NCOLS: usize = 5;
 
 /// Commit to a univariate polynomial whose coefficients are `coeffs` using encoding `enc`
 fn commit<D, E>(coeffs_in: &[FldT<E>], enc: &E) -> ProverResult<LcCommit<D, E>, ErrT<E>>
-    where
-        D: Digest + FixedOutputReset,
-        E: LcEncoding,
+where
+    D: Digest + FixedOutputReset,
+    E: LcEncoding,
 {
     let (n_rows, n_per_row, n_cols) = enc.get_dims(coeffs_in.len());
 
@@ -695,9 +695,9 @@ fn commit<D, E>(coeffs_in: &[FldT<E>], enc: &E) -> ProverResult<LcCommit<D, E>, 
 
 /// Check that a commitment is well-formed
 pub fn check_comm<D, E>(comm: &LcCommit<D, E>, enc: &E) -> ProverResult<(), ErrT<E>>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     let comm_sz = comm.comm.len() != comm.n_rows * comm.n_cols;
     let coeff_sz = comm.coeffs.len() != comm.n_rows * comm.n_per_row;
@@ -712,9 +712,9 @@ pub fn check_comm<D, E>(comm: &LcCommit<D, E>, enc: &E) -> ProverResult<(), ErrT
 }
 
 fn merkleize<D, E>(comm: &mut LcCommit<D, E>)
-    where
-        D: Digest + FixedOutputReset,
-        E: LcEncoding,
+where
+    D: Digest + FixedOutputReset,
+    E: LcEncoding,
 {
     // step 1: hash each column of the commitment (we always reveal a full column)
     let hashes = &mut comm.hashes[..comm.n_cols];
@@ -769,8 +769,8 @@ fn hash_columns<D, E>(
 }
 
 fn merkle_tree<D>(ins: &[Output<D>], outs: &mut [Output<D>])
-    where
-        D: Digest + FixedOutputReset,
+where
+    D: Digest + FixedOutputReset,
 {
     // array should always be of length 2^k - 1
     assert_eq!(ins.len(), outs.len() + 1);
@@ -784,8 +784,8 @@ fn merkle_tree<D>(ins: &[Output<D>], outs: &mut [Output<D>])
 }
 
 fn merkle_layer<D>(ins: &[Output<D>], outs: &mut [Output<D>])
-    where
-        D: Digest + FixedOutputReset,
+where
+    D: Digest + FixedOutputReset,
 {
     assert_eq!(ins.len(), 2 * outs.len());
 
@@ -813,9 +813,9 @@ pub fn open_column<D, E>(
     comm: &LcCommit<D, E>,
     mut column: usize,
 ) -> ProverResult<LcColumn<D, E>, ErrT<E>>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     // make sure arguments are well formed
     if column >= comm.n_cols {
@@ -861,9 +861,9 @@ fn verify<D, E>(
     enc: &E,
     tr: &mut Transcript,
 ) -> VerifierResult<FldT<E>, ErrT<E>>
-    where
-        D: Digest + FixedOutputReset,
-        E: LcEncoding,
+where
+    D: Digest + FixedOutputReset,
+    E: LcEncoding,
 {
     // make sure arguments are well formed
     let n_col_opens = enc.get_n_col_opens();
@@ -981,9 +981,9 @@ pub fn verify_column_path<D, E>(
     col_num: usize,
     root: &Output<D>,
 ) -> bool
-    where
-        D: Digest + FixedOutputReset,
-        E: LcEncoding,
+where
+    D: Digest + FixedOutputReset,
+    E: LcEncoding,
 {
     let mut digest = D::new();
     Digest::update(&mut digest, <Output<D> as Default>::default());
@@ -1015,9 +1015,9 @@ pub fn verify_column_value<D, E>(
     tensor: &[FldT<E>],
     poly_eval: &FldT<E>,
 ) -> bool
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     let tensor_eval = tensor
         .iter()
@@ -1035,9 +1035,9 @@ fn prove<D, E>(
     enc: &E,
     tr: &mut Transcript,
 ) -> ProverResult<LcEvalProof<D, E>, ErrT<E>>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     // make sure arguments are well formed
     check_comm(comm, enc)?;
@@ -1155,9 +1155,9 @@ pub fn collapse_columns<E>(
 
 #[cfg(test)]
 fn merkleize_ser<D, E>(comm: &mut LcCommit<D, E>)
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     let hashes = &mut comm.hashes;
 
@@ -1195,9 +1195,9 @@ fn verify_column<D, E>(
     tensor: &[FldT<E>],
     poly_eval: &FldT<E>,
 ) -> bool
-    where
-        D: Digest + FixedOutputReset,
-        E: LcEncoding,
+where
+    D: Digest + FixedOutputReset,
+    E: LcEncoding,
 {
     verify_column_path(column, col_num, root) && verify_column_value(column, tensor, poly_eval)
 }
@@ -1208,9 +1208,9 @@ fn eval_outer<D, E>(
     comm: &LcCommit<D, E>,
     tensor: &[FldT<E>],
 ) -> ProverResult<Vec<FldT<E>>, ErrT<E>>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     if tensor.len() != comm.n_rows {
         return Err(ProverError::OuterTensor);
@@ -1235,9 +1235,9 @@ fn eval_outer_ser<D, E>(
     comm: &LcCommit<D, E>,
     tensor: &[FldT<E>],
 ) -> ProverResult<Vec<FldT<E>>, ErrT<E>>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     if tensor.len() != comm.n_rows {
         return Err(ProverError::OuterTensor);
@@ -1259,9 +1259,9 @@ fn eval_outer_fft<D, E>(
     comm: &LcCommit<D, E>,
     tensor: &[FldT<E>],
 ) -> ProverResult<Vec<FldT<E>>, ErrT<E>>
-    where
-        D: Digest,
-        E: LcEncoding,
+where
+    D: Digest,
+    E: LcEncoding,
 {
     if tensor.len() != comm.n_rows {
         return Err(ProverError::OuterTensor);

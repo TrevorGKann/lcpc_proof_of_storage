@@ -26,7 +26,7 @@ use crate::*;
 use crate::fields::{convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, writable_ft63};
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::file_metadata::*;
-use crate::lcpc_online::{client_verify_commitment, CommitDimensions, CommitOrLeavesResult, CommitRequestType, convert_file_data_to_commit, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
+use crate::lcpc_online::{client_verify_commitment, CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
 use crate::networking::server;
 use crate::networking::server::{get_aspect_ratio_default_from_field_len, get_aspect_ratio_default_from_file_len};
 use crate::networking::shared::*;
@@ -76,7 +76,7 @@ pub async fn upload_file(
 
     let cols_to_verify = get_columns_from_random_seed(1337, required_columns_to_test, num_encoded_columns);
     tracing::debug!("pre-computing expected column leaves...");
-    let CommitOrLeavesResult::Leaves(locally_derived_leaves) = convert_file_data_to_commit::<Blake3, WriteableFt63>(
+    let CommitOrLeavesOutput::Leaves(locally_derived_leaves) = convert_file_data_to_commit::<Blake3, WriteableFt63>(
         &field_file_data,
         CommitRequestType::Leaves(cols_to_verify.clone()),
         CommitDimensions::Specified {
@@ -245,10 +245,10 @@ pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
     //     = convert_read_file_to_commit_only_leaves::<Blake3>(&file_data, &columns_to_verify)
     //     .unwrap();
     //
-    let encoeded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
 
-    let CommitOrLeavesResult::Leaves(leaves_to_verify) = convert_file_data_to_commit::<Blake3, WriteableFt63>(
-        &encoeded_file_data,
+    let CommitOrLeavesOutput::Leaves(leaves_to_verify) = convert_file_data_to_commit::<Blake3, WriteableFt63>(
+        &encoded_file_data,
         CommitRequestType::Leaves(column_indices_to_verify.clone()),
         file_metadata.clone().into(),
     )? else { bail!("Unexpected result from file conversion to Leaves") };
@@ -262,7 +262,7 @@ pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
         get_PoS_soudness_n_cols(&file_metadata));
 
     if verification_result.is_err() {
-        tracing::error!("Failed to verify colums");
+        tracing::error!("Failed to verify columns");
         //todo return error type
         bail!("failed_to_verify_columns");
     }
@@ -351,7 +351,7 @@ pub async fn verify_compact_commit(
         get_PoS_soudness_n_cols(file_metadata));
 
     if verification_result.is_err() {
-        tracing::error!("Failed to verify colums");
+        tracing::error!("Failed to verify columns");
         //todo return error type
         return todo!();
     }
@@ -463,7 +463,8 @@ where
         &locally_derived_leaves,
         &cols_to_verify,
         &received_columns,
-        get_PoS_soudness_n_cols(file_metadata));
+        get_PoS_soudness_n_cols(file_metadata),
+    );
 
     if verification_result.is_err() {
         tracing::error!("Failed to verify columns");
@@ -544,6 +545,8 @@ where
     );
 
     sink.send(ClientMessages::RequestReshapeEvaluation {
+        old_file_metadata: file_metadata.clone(),
+        new_file_metadata: new_file_metadata.clone(),
         evaluation_point,
         columns_to_expand_original: requested_original_columns.clone(),
         columns_to_expand_new: requested_new_columns.clone(),
@@ -555,7 +558,6 @@ where
     };
 
     let ServerMessages::ReshapeEvaluation {
-        evaluation_result,
         original_result_vector,
         original_columns,
         new_result_vector,
@@ -595,12 +597,21 @@ where
         tracing::error!("Failed to verify polynomial evaluation");
         tracing::error!("Rejecting reshape");
 
-        sink.send(ClientMessages::ReshapeRejected).await.expect("Failed to send message to server");
+        sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata: new_file_metadata, accepted: false })
+            .await.expect("Failed to send message to server");
 
         bail!("failed_to_verify_polynomial_evaluation")
     }
 
-    sink.send(ClientMessages::ReshapeApproved).await.expect("Failed to send message to server");
+    if old_results.unwrap() != new_results.unwrap() {
+        tracing::error!("Polynomial evaluations mismatched between versions. Rejecting reshape");
+        sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata: new_file_metadata, accepted: false })
+            .await.expect("Failed to send message to server");
+        bail!("polynomial evaluations mismatched between versions.")
+    }
+
+    sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata: new_file_metadata, accepted: false })
+        .await.expect("Failed to send message to server");
 
     Ok(())
 }

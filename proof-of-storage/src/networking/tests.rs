@@ -16,7 +16,7 @@ pub mod network_tests {
     use crate::fields::convert_byte_vec_to_field_elements_vec;
     use crate::fields::writable_ft63::WriteableFt63;
     use crate::file_metadata::{ClientOwnedFileMetadata, ServerHost};
-    use crate::lcpc_online::{CommitOrLeavesResult, CommitRequestType, convert_file_data_to_commit, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
+    use crate::lcpc_online::{CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
     use crate::networking::client;
     use crate::networking::client::get_processed_column_leaves_from_file;
     use crate::networking::server::handle_client_loop;
@@ -44,7 +44,7 @@ pub mod network_tests {
 
     fn start_tracing_for_tests() -> Result<()> {
         let subscriber = tracing_subscriber::fmt()
-            // .pretty()
+            .pretty()
             .compact()
             .with_file(true)
             .with_line_number(true)
@@ -199,7 +199,7 @@ pub mod network_tests {
 
         let mut file_data = fs::read(test_file).await.unwrap();
         let mut encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
-        let CommitOrLeavesResult::Leaves(streamed_file_leaves)
+        let CommitOrLeavesOutput::Leaves(streamed_file_leaves)
             = convert_file_data_to_commit::<Blake3, _>(&encoded_file_data,
                                                        CommitRequestType::Leaves(cols_to_verify.clone()),
                                                        file_metadata.into()).unwrap()
