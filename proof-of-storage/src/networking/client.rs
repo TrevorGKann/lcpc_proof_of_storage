@@ -13,6 +13,8 @@ use rand_chacha::ChaCha8Rng;
 use rand_core::SeedableRng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use surrealdb::engine::local::RocksDb;
+use surrealdb::Surreal;
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -23,9 +25,9 @@ use lcpc_2d::{FieldHash, LcCommit, LcEncoding, LcRoot, open_column, ProverError}
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::*;
+use crate::databases::*;
 use crate::fields::{convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, writable_ft63};
 use crate::fields::writable_ft63::WriteableFt63;
-use crate::file_metadata::*;
 use crate::lcpc_online::{client_verify_commitment, CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
 use crate::networking::server;
 use crate::networking::server::{get_aspect_ratio_default_from_field_len, get_aspect_ratio_default_from_file_len};
@@ -38,7 +40,7 @@ pub async fn upload_file(
     num_pre_encoded_columns: Option<usize>,
     num_encoded_columns: Option<usize>,
     server_ip: String,
-) -> Result<(ClientOwnedFileMetadata, PoSRoot)> {
+) -> Result<FileMetadata> {
     use std::path::Path;
     tracing::debug!("reading file {} from disk", file_name);
     let file_path = Path::new(&file_name);
@@ -106,7 +108,7 @@ pub async fn upload_file(
     };
     tracing::debug!("Client received: {:?}", transmission);
 
-    let ServerMessages::CompactCommit { root, mut file_metadata } = transmission else {
+    let ServerMessages::CompactCommit { mut file_metadata } = transmission else {
         match transmission {
             ServerMessages::BadResponse { error } => {
                 tracing::error!("File upload failed: {}", error);
@@ -148,9 +150,6 @@ pub async fn upload_file(
         }
     };
 
-    let locally_derived_leaves_test = get_processed_column_leaves_from_file(&file_metadata, cols_to_verify.clone()).await;
-    assert_eq!(locally_derived_leaves, locally_derived_leaves_test);
-
     let verification_result = client_verify_commitment(
         &file_metadata.root,
         &locally_derived_leaves,
@@ -163,16 +162,18 @@ pub async fn upload_file(
         bail!("Failed to verify columns: {}", err);
         // todo: need to send bad response to server to tell it to delete file
     }
+    tracing::info!("File download successful");
 
-    append_client_file_metadata_to_database(
-        "client_file_database".to_string(),
-        file_metadata.clone())
-        .await?;
+    tracing::debug!("adding file metadata to database");
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
+    db.create::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id.to_string()))
+        .content(file_metadata.clone()).await?;
 
-    Ok((file_metadata, root))
+    Ok((file_metadata))
 }
 
-pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
+pub async fn download_file(file_metadata: FileMetadata,
                            server_ip: String,
                            security_bits: u8,
 ) -> Result<()>
@@ -279,7 +280,7 @@ pub async fn download_file(file_metadata: ClientOwnedFileMetadata,
 
 /// this is a thin wrapper for verify_compact_commit function
 pub async fn request_proof(
-    file_metadata: ClientOwnedFileMetadata,
+    file_metadata: FileMetadata,
     server_ip: String,
     security_bits: u8,
 ) -> Result<()> {
@@ -305,7 +306,7 @@ pub fn get_columns_from_random_seed(
 
 #[tracing::instrument]
 pub async fn verify_compact_commit(
-    file_metadata: &ClientOwnedFileMetadata,
+    file_metadata: &FileMetadata,
     stream: &mut SerStream<ServerMessages>,
     sink: &mut DeSink<ClientMessages>,
 ) -> Result<()> {
@@ -342,7 +343,20 @@ pub async fn verify_compact_commit(
             }
         }
     };
-    let locally_derived_leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
+
+    // todo: optimization: the client should extract this upon the first reading of the file as it streams
+    //  it out to the server and save it locally; this would prevent having to read the file twice.
+    let file_data = tokio::fs::read(&file_metadata.filename).await?;
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+    let CommitOrLeavesOutput::Leaves::<Blake3, WriteableFt63>(locally_derived_leaves) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::Leaves(cols_to_verify.clone()),
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: file_metadata.num_columns,
+            num_encoded_columns: file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to extract leaves from local file.") };
+
     let verification_result = client_verify_commitment(
         &file_metadata.root,
         &locally_derived_leaves,
@@ -359,35 +373,35 @@ pub async fn verify_compact_commit(
     Ok(())
 }
 
-pub async fn get_processed_column_leaves_from_file(
-    file_metadata: &ClientOwnedFileMetadata,
-    cols_to_verify: Vec<usize>,
-) -> Vec<Output<Blake3>> {
-    let (root, commit) = server::convert_file_metadata_to_commit(&file_metadata)
-        .map_err(|e| {
-            tracing::error!("failed to convert file to commit: {:?}", e);
-        })
-        .expect("failed to convert file to commit");
-
-
-    // let mut leaves = Vec::with_capacity(cols_to_verify.len());
-    // for col in cols_to_verify {
-    //     leaves.push(commit.hashes[col]);
-    // }
-    // leaves
-
-    let extracted_columns = server_retreive_columns(&commit, &cols_to_verify);
-
-    let extracted_leaves: Vec<Output<Blake3>> = extracted_columns
-        .iter()
-        .map(hash_column_to_digest::<Blake3>)
-        .collect();
-
-    extracted_leaves
-}
+// pub async fn get_processed_column_leaves_from_file(
+//     file_metadata: &FileMetadata,
+//     cols_to_verify: Vec<usize>,
+// ) -> Vec<Output<Blake3>> {
+//     let (root, commit) = server::convert_file_metadata_to_commit(&file_metadata)
+//         .map_err(|e| {
+//             tracing::error!("failed to convert file to commit: {:?}", e);
+//         })
+//         .expect("failed to convert file to commit");
+//
+//
+//     // let mut leaves = Vec::with_capacity(cols_to_verify.len());
+//     // for col in cols_to_verify {
+//     //     leaves.push(commit.hashes[col]);
+//     // }
+//     // leaves
+//
+//     let extracted_columns = server_retreive_columns(&commit, &cols_to_verify);
+//
+//     let extracted_leaves: Vec<Output<Blake3>> = extracted_columns
+//         .iter()
+//         .map(hash_column_to_digest::<Blake3>)
+//         .collect();
+//
+//     extracted_leaves
+// }
 
 pub async fn client_request_and_verify_polynomial<D>(
-    file_metadata: &ClientOwnedFileMetadata,
+    file_metadata: &FileMetadata,
     server_ip: String,
 ) -> Result<()>
 where
@@ -457,13 +471,18 @@ where
             }
         }
     };
-    let locally_derived_leaves = get_processed_column_leaves_from_file(file_metadata, cols_to_verify.clone()).await;
-    let verification_result = client_verify_commitment(
+
+    // let verification_result = client_verify_commitment(
+    //     &file_metadata.root,
+    //     &locally_derived_leaves,
+    //     &cols_to_verify,
+    //     &received_columns,
+    //     get_PoS_soudness_n_cols(file_metadata),
+    // );
+    let verification_result = lcpc_online::client_online_verify_column_paths(
         &file_metadata.root,
-        &locally_derived_leaves,
         &cols_to_verify,
         &received_columns,
-        get_PoS_soudness_n_cols(file_metadata),
     );
 
     if verification_result.is_err() {
@@ -490,7 +509,7 @@ where
 }
 
 pub async fn reshape_file<D>(
-    file_metadata: &ClientOwnedFileMetadata,
+    file_metadata: &FileMetadata,
     server_ip: String,
     security_bits: u8,
     new_pre_encoded_columns: usize,
@@ -515,7 +534,6 @@ where
     tracing::debug!("Client received: {:?}", transmission);
 
     let ServerMessages::CompactCommit {
-        root: new_root,
         file_metadata: new_file_metadata
     } = transmission else {
         return match transmission {
@@ -617,7 +635,7 @@ where
 }
 
 pub async fn delete_file(
-    file_metadata: ClientOwnedFileMetadata,
+    file_metadata: FileMetadata,
     server_ip: String,
 ) -> Result<()> {
     tracing::info!("requesting deletion of file from server");
@@ -651,10 +669,25 @@ pub async fn delete_file(
 
     tracing::info!("File {} deleted from server", filename);
 
-    let _ = remove_client_metadata_from_database_by_filename(
-        "client_file_database".to_string(),
-        file_metadata.filename,
-    ).await;
+
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
+    db.delete::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id.to_string()))
+        .await?;
 
     Ok(())
+}
+
+pub async fn get_client_metadata_from_database_by_filename(filename: &String) -> Result<Option<FileMetadata>> {
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
+    let mut result: Vec<FileMetadata> = db.query("SELECT * FROM $table WHERE filename = $filename LIMIT 1")
+        .bind(("table", constants::CLIENT_METADATA_TABLE))
+        .bind(("file", filename))
+        .await?.take(0)?;
+    if result.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(result.swap_remove(0)))
+    }
 }

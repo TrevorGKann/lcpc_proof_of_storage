@@ -1,7 +1,9 @@
 use std::cmp::min;
+use std::env;
 use std::io::SeekFrom;
+use std::path::{Path, PathBuf};
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, Context, ensure, Result};
 use blake3::{Hash, Hasher as Blake3};
 use blake3::traits::digest;
 use blake3::traits::digest::Output;
@@ -15,15 +17,16 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_serde::{Deserializer, formats::Json, Serializer};
+use ulid::Ulid;
 
 use lcpc_2d::{LcCommit, LcEncoding, LcRoot};
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::{fields, PoSColumn, PoSCommit};
-use crate::fields::{evaluate_field_polynomial_at_point, is_power_of_two, read_file_to_field_elements_vec};
+use crate::databases::{constants, FileMetadata, ServerHost, User};
+use crate::fields::{convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, is_power_of_two, read_file_to_field_elements_vec};
 use crate::fields::writable_ft63::WriteableFt63;
-use crate::file_metadata::*;
-use crate::lcpc_online::{form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation};
+use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation};
 use crate::networking::shared;
 use crate::networking::shared::ClientMessages;
 use crate::networking::shared::ServerMessages;
@@ -90,6 +93,9 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
     while let Some(Ok(transmission)) = stream.next().await {
         tracing::info!("Server received: {:?}", transmission);
         let request_result = match transmission {
+            ClientMessages::NewUser { username, password } => {
+                handle_client_new_user(username, password).await
+            }
             ClientMessages::UserLogin { username, password } => {
                 handle_client_user_login(username, password).await
             }
@@ -108,6 +114,7 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::AppendToFile { file_metadata, file } => {
                 handle_client_append_to_file(file_metadata, file).await
             }
+            shared::ClientMessages::EditOrAppendResponse { .. } => { todo!() }
             ClientMessages::RequestEncodedColumn { file_metadata, row } => {
                 handle_client_request_encoded_column(file_metadata, row).await
             }
@@ -148,33 +155,44 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
     }
 }
 
-/* Copilot should ignore this section:
-    old server loop code:
-    while let Some(Ok(transmission)) = stream.next().await {
-        tracing::info!("Server received: {:?}", transmission);
-        match transmission {
-            ClientMessages::UserLogin { username, password } => {
-                sink.send(ServerMessages::UserLoginResponse { success: true })
-                    .await
-                    .expect("Failed to send message to client");
-            }
-            ClientMessages::RequestEncodedColumn {filename, row} => {
-                sink.send(ServerMessages::EncodedColumn {row: vec![WriteableFt63::from_u64_array([1u64]).expect("AAA")]})
-                    .await
-                    .expect("Failed to send message to client");
-            }
-            _ => {}
-        }
-    }
- */
+#[tracing::instrument]
+async fn handle_client_new_user(username: String, password: String) -> Result<InternalServerMessage> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(password.as_bytes());
+    let hashed_password = hasher.finalize();
+
+    let new_user = User {
+        id: username.clone(),
+        hashed_password: hashed_password.to_string(),
+    };
+
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+
+    // check if the username is already taken
+    let None: Option<User> = db.select((constants::SERVER_USER_TABLE, username.clone())).await?
+    else { bail!("Username already taken"); };
+
+    // insert the new user into the database
+    let created: Option<User> = db.create(("user", username)).content(new_user).await?;
+    Ok(ServerMessages::UserLoginResponse { success: true })
+}
 
 #[tracing::instrument]
 async fn handle_client_user_login(username: String, password: String) -> Result<InternalServerMessage> {
-    // check if the username and password are valid
-    // if they are, send a message to the client that the login was successful
-    // if they are not, send a message to the client that the login was unsuccessful
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(password.as_bytes());
+    let hashed_password = hasher.finalize();
+
+    let Some(user): Option<User> = db.select((constants::SERVER_USER_TABLE, username)).await?
+    else { bail!("user not found") };
+    ensure!(user.hashed_password == hashed_password.to_string(), "Incorrect password");
+
     Ok(ServerMessages::UserLoginResponse { success: true })
-    // todo: logic here
+    // todo: logic here to handle the user login for the rest of this thread
 }
 
 /// save the file to the server
@@ -182,130 +200,205 @@ async fn handle_client_user_login(username: String, password: String) -> Result<
 async fn handle_client_upload_new_file(filename: String,
                                        file_data: Vec<u8>,
                                        pre_encoded_columns: usize,
-                                       encoded_columns: usize) //todo: need to use both pre and post encoded columns
+                                       encoded_columns: usize)
                                        -> Result<InternalServerMessage>
 {
-    // parse the filename to remove all leading slashes
-    use std::path::Path;
-    use crate::lcpc_online;
-    let filename = Path::new(&filename)
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap();
-
-    if !(is_server_filename_unique(&"server_file_database".to_string(), filename.to_string()).await.expect("Failed to check if filename is unique")) {
-        tracing::error!("Server: Client requested a filename that already exists: {}", filename);
-        bail!("filename already exists on server, try again with a different one".to_string());
-    }
-
     // check if rows and columns are valid first
     ensure!(lcpc_online::dims_ok(pre_encoded_columns, encoded_columns), "Invalid rows or columns");
 
-    tokio::fs::write(&filename, file_data).await
-        .map_err(|e| tracing::error!("failed to write file: {:?}", e))
-        .expect("failed to write file"); //todo probably shouldn't be a panic here
+    // parse the filename to remove all leading slashes
+    use std::path::Path;
+    use crate::databases::FileMetadata;
+    use crate::lcpc_online;
+    // let commit_filename = Path::new(&filename)
+    //     .file_name()
+    //     .unwrap()
+    //     .to_str()?;
 
+    // { //database lock scope
+    //     //todo: may not need this if I'm using .ids to store files now
+    //     let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    //     db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+    //     let result: Vec<FileMetadata> = db.query("SELECT * FROM $table WHERE filename = $filename LIMIT 1")
+    //         .bind(("table", constants::SERVER_METADATA_TABLE))
+    //         .bind(("filename", commit_filename))
+    //         .await?.take(0)?;
+    //     ensure!(result.is_empty(), "File already exists");
+    // }
 
-    let (root, commit, file_metadata)
-        = convert_file_to_commit_internal(filename, Some(pre_encoded_columns))?;
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+    let CommitOrLeavesOutput::Commit(commit) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: pre_encoded_columns,
+            num_encoded_columns: encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
+
+    let new_upload_id = Ulid::new();
+    let local_file_location = get_file_location_from_id(&new_upload_id);
+    tokio::fs::write(&local_file_location, &file_data).await
+        .context("failed while writing file from client")?;
 
     tracing::info!("server: appending file metadata to database");
-    let server_metadata = ServerOwnedFileMetadata {
-        filename: filename.to_string(),
-        owner: "".to_string(), //todo add users
-        commitment: commit.clone(),
+    let file_metadata = FileMetadata {
+        id: Ulid::new(),
+        filename: filename,
+        // filename: Path::new(&filename).file_name().unwrap().to_str().unwrap().to_string(),
+        num_rows: commit.n_rows,
+        num_columns: pre_encoded_columns,
+        num_encoded_columns: encoded_columns,
+        filesize_in_bytes: file_data.len(),
+        stored_server: ServerHost {
+            server_name: None,
+            server_ip: "".to_string(),
+            server_port: 0,
+        },
+        root: commit.get_root(),
     };
-    append_server_file_metadata_to_database("server_file_database".to_string(), server_metadata).await;
-    //optimize: probably should have a tokio::spawn here in case of colliding writes.
-    // in general this needs to be multi-thread safe.
 
-    Ok(ServerMessages::CompactCommit { root, file_metadata })
+    { // database lock scope
+        let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+        db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+        db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, file_metadata.id.to_string()))
+            .content(&file_metadata).await?;
+    }
+
+    Ok(ServerMessages::CompactCommit { file_metadata })
 }
 
 #[tracing::instrument]
-async fn handle_client_request_file(file_metadata: ClientOwnedFileMetadata) -> Result<InternalServerMessage> {
+async fn handle_client_request_file(file_metadata: FileMetadata) -> Result<InternalServerMessage> {
     // get the requested file from the server
     // send the file to the client
 
     check_file_metadata(&file_metadata)?;
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata)?;
+    let file_handle = get_file_handle_from_metadata(&file_metadata);
 
-    let file = tokio::fs::read(&file_handle.as_str()).await?;
+    let file = tokio::fs::read(&file_handle).await?;
 
     Ok(ServerMessages::File { file })
 }
 
 #[tracing::instrument]
-async fn handle_client_request_file_row(file_metadata: ClientOwnedFileMetadata, row: usize) -> Result<InternalServerMessage> {
+async fn handle_client_request_file_row(file_metadata: FileMetadata, row: usize) -> Result<InternalServerMessage> {
     // get the requested row from the file
     // send the row to the client
 
-    if check_file_metadata(&file_metadata).is_err() {
-        bail!("file metadata is invalid".to_string());
-    }
+    check_file_metadata(&file_metadata)?;
 
-    let mut file = tokio::fs::File::open(&file_metadata.filename).await?;
+    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let mut file = tokio::fs::File::open(&file_handle).await?;
 
-    let seek_pointer = file_metadata.num_encoded_columns * row;
+    let seek_pointer = file_metadata.num_columns * row;
     file.seek(SeekFrom::Start(seek_pointer as u64));
 
-    let mut file_data = Vec::<u8>::with_capacity(file_metadata.num_encoded_columns);
-    file.take(file_metadata.num_encoded_columns as u64).read_to_end(&mut file_data);
+    let mut file_data = Vec::<u8>::with_capacity(file_metadata.num_columns);
+    file.take(file_metadata.num_columns as u64).read_to_end(&mut file_data);
 
     Ok(ServerMessages::FileRow { row: file_data })
 }
 
 #[tracing::instrument]
-async fn handle_client_edit_file_row(file_metadata: ClientOwnedFileMetadata, row: usize, new_file_data: Vec<u8>) -> Result<InternalServerMessage> {
+async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, new_file_data: Vec<u8>) -> Result<InternalServerMessage> {
     // edit the requested row in the file
 
     check_file_metadata(&file_metadata)?;
 
-    if (new_file_data.len() != file_metadata.num_encoded_columns) {
-        bail!("new file data is not the correct length".to_string());
+    ensure!(new_file_data.len() == file_metadata.num_columns, "new file data is not the correct length".to_string());
+
+    let old_file_handle = get_file_handle_from_metadata(&file_metadata);
+    let new_id = Ulid::new();
+    let new_file_handle = get_file_location_from_id(&new_id);
+
+    { //scope for file editing
+        tokio::fs::copy(&old_file_handle, &new_file_handle).await?;
+        let mut new_file = tokio::fs::File::open(&new_file_handle).await?;
+
+        let seek_pointer = file_metadata.num_columns * row;
+        new_file.seek(SeekFrom::Start(seek_pointer as u64));
+
+        new_file.write_all(&new_file_data).await?;
     }
+    // optimization: stream the file in only once and live update the edit, since I have to convert it anyways
 
-    //todo need to keep previous file and commit for clientside checking that edit was successful
+    let new_file_data = tokio::fs::read(&new_file_handle).await?;
 
-    { //scope for file opening
-        let mut file = tokio::fs::File::open(&file_metadata.filename).await?;
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&new_file_data);
+    let CommitOrLeavesOutput::Commit(updated_commit) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: file_metadata.num_columns,
+            num_encoded_columns: file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
 
-        let seek_pointer = file_metadata.num_encoded_columns * row;
-        file.seek(SeekFrom::Start(seek_pointer as u64));
+    let updated_file_metadata = FileMetadata {
+        id: new_id,
+        root: updated_commit.get_root(),
+        filesize_in_bytes: new_file_data.len(),
+        ..file_metadata
+    };
 
-        file.write_all(&new_file_data).await?;
-    }
+    // update the database to include the new entry;
+    // one of the entries will be deleted after the client responds
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+    db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, updated_file_metadata.id.to_string()))
+        .content(&updated_file_metadata).await?;
 
-    let (root, commit, updated_file_metadata) =
-        convert_file_to_commit_internal(&file_metadata.filename, Some(file_metadata.num_columns))?;
-
-    Ok(ServerMessages::CompactCommit { root, file_metadata: updated_file_metadata })
+    Ok(ServerMessages::CompactCommit { file_metadata: updated_file_metadata })
 }
 
 #[tracing::instrument]
-async fn handle_client_append_to_file(file_metadata: ClientOwnedFileMetadata, file_data: Vec<u8>) -> Result<InternalServerMessage> {
+async fn handle_client_append_to_file(file_metadata: FileMetadata, mut file_data_to_append: Vec<u8>) -> Result<InternalServerMessage> {
     // append the file to the requested file
 
     check_file_metadata(&file_metadata)?;
 
-    { //scope for file opening
-        let mut file = tokio::fs::OpenOptions::new()
-            .append(true)
-            .open(&file_metadata.filename).await?;
+    let old_file_handle = get_file_handle_from_metadata(&file_metadata);
+    let new_id = Ulid::new();
+    let new_file_handle = get_file_location_from_id(&new_id);
 
-        file.write_all(&file_data).await?;
-    }
+    tokio::fs::copy(&old_file_handle, &new_file_handle).await?;
 
-    let (root, commit, updated_file_metadata) =
-        convert_file_to_commit_internal(&file_metadata.filename, Some(file_metadata.num_columns))?;
+    let mut new_file_data = tokio::fs::read(&new_file_handle).await?;
+    new_file_data.append(&mut file_data_to_append);
 
-    Ok(ServerMessages::CompactCommit { root, file_metadata: updated_file_metadata })
+
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data_to_append);
+    let CommitOrLeavesOutput::Commit(updated_commit) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: file_metadata.num_columns,
+            num_encoded_columns: file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
+
+    let updated_file_metadata = FileMetadata {
+        id: new_id,
+        root: updated_commit.get_root(),
+        num_rows: updated_commit.n_rows,
+        filesize_in_bytes: new_file_data.len(),
+        ..file_metadata
+    };
+
+    // update the database to include the new entry;
+    // one of the entries will be deleted after the client responds
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+    db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, updated_file_metadata.id.to_string()))
+        .content(&updated_file_metadata).await?;
+
+    Ok(ServerMessages::CompactCommit { file_metadata: updated_file_metadata })
 }
 
 #[tracing::instrument]
-async fn handle_client_request_encoded_column(file_metadata: ClientOwnedFileMetadata, row: usize) -> Result<InternalServerMessage> {
+async fn handle_client_request_encoded_column(file_metadata: FileMetadata, row: usize) -> Result<InternalServerMessage> {
     // get the requested column from the file
     // send the column to the client
 
@@ -315,16 +408,26 @@ async fn handle_client_request_encoded_column(file_metadata: ClientOwnedFileMeta
 }
 
 #[tracing::instrument]
-async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, requested_columns: Vec<usize>) -> Result<InternalServerMessage> {
+async fn handle_client_request_proof(file_metadata: FileMetadata, requested_columns: Vec<usize>) -> Result<InternalServerMessage> {
     // get the requested proof from the file
     // send the proof to the client
 
     tracing::trace!("server: requested columns for client proof: {:?}", requested_columns);
     check_file_metadata(&file_metadata)?;
 
-    let (_, commit) = convert_file_metadata_to_commit(&file_metadata)?;
+    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_data = tokio::fs::read(&file_handle).await?;
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+    let CommitOrLeavesOutput::ColumnsWithPath(column_collection) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::ColumnsWithPath(requested_columns),
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: file_metadata.num_columns,
+            num_encoded_columns: file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to columns") };
 
-    let column_collection = server_retreive_columns(&commit, &requested_columns);
+    // let column_collection = server_retreive_columns(&commit, &requested_columns);
 
     for column in column_collection.iter().take(5) {
         tracing::trace!("server: sending leaf to client: {:x}", column.path[0]);
@@ -334,13 +437,23 @@ async fn handle_client_request_proof(file_metadata: ClientOwnedFileMetadata, req
 }
 
 #[tracing::instrument]
-async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedFileMetadata, evaluation_point: &WriteableFt63) -> Result<InternalServerMessage> {
+async fn handle_client_request_polynomial_evaluation(file_metadata: FileMetadata, evaluation_point: &WriteableFt63) -> Result<InternalServerMessage> {
     // get the requested polynomial evaluation from the file
     // send the evaluation to the client
     tracing::info!("server: client requested polynomial evaluation of {:?} at {:?}", &file_metadata.filename, evaluation_point);
     check_file_metadata(&file_metadata)?;
 
-    let (_, commit) = convert_file_metadata_to_commit(&file_metadata)?;
+    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_data = tokio::fs::read(&file_handle).await?;
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+    let CommitOrLeavesOutput::Commit(commit) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: file_metadata.num_columns,
+            num_encoded_columns: file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
 
     let (evaluation_left_vector, _)
         = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, commit.n_rows, commit.n_cols);
@@ -356,29 +469,31 @@ async fn handle_client_request_polynomial_evaluation(file_metadata: ClientOwnedF
 
 #[tracing::instrument]
 async fn handle_client_delete_file(
-    file_metadata: ClientOwnedFileMetadata,
+    file_metadata: FileMetadata,
 ) -> Result<ServerMessages> {
     tracing::info!("server: client requested to delete file: {}", file_metadata.filename);
-    let server_side_filename = get_file_handle_from_metadata(&file_metadata).unwrap();
-    let os_delete_result = std::fs::remove_file(server_side_filename);
+    check_file_metadata(&file_metadata)?;
 
-    let db_delete_result = remove_server_file_metadata_from_database_by_filename(
-        "server_file_database".to_string(),
-        file_metadata.filename.clone(),
-    ).await;
+    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let db_delete_result: Option<FileMetadata> = { //database scope
+        let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+        db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+        db.delete((constants::SERVER_METADATA_TABLE, file_metadata.id.to_string())).await?
+    };
+
+    let os_delete_result = tokio::fs::remove_file(file_handle).await;
 
     let mut return_string = "".to_string();
 
     if os_delete_result.is_err() {
         return_string.push_str(format!("error deleting file: {}; ", os_delete_result.unwrap_err()).as_str());
     }
-    if !db_delete_result.is_some() {
+    if db_delete_result.is_none() {
+        if return_string.len() != 0 { return_string.push_str("; ") }
         return_string.push_str("error deleting file metadata from local database".to_string().as_str());
     }
 
-    if return_string.len() > 0 {
-        bail!(return_string);
-    }
+    ensure!(return_string.len() == 0, return_string);
 
     Ok(ServerMessages::FileDeleted {
         filename: file_metadata.filename,
@@ -387,33 +502,74 @@ async fn handle_client_delete_file(
 
 #[tracing::instrument]
 async fn handle_client_request_file_reshape(
-    file_metadata: ClientOwnedFileMetadata,
+    file_metadata: FileMetadata,
     new_pre_encoded_columns: usize,
     new_encoded_columns: usize,
 ) -> Result<ServerMessages> {
-    let mut updated_file_metadata = file_metadata.clone();
-    updated_file_metadata.num_columns = new_pre_encoded_columns;
-    updated_file_metadata.num_encoded_columns = new_encoded_columns;
+    check_file_metadata(&file_metadata)?;
 
-    let (_, updated_commit) = convert_file_metadata_to_commit(&updated_file_metadata)?;
-    updated_file_metadata.root = updated_commit.get_root();
+    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_data = tokio::fs::read(&file_handle).await?;
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+    let CommitOrLeavesOutput::Commit(updated_commit) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: new_pre_encoded_columns,
+            num_encoded_columns: new_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
 
-    Ok(ServerMessages::CompactCommit {
+    // todo: ensure on the reshape accepted, I change the old filename to the new ID when I delete the old record in the database
+    let updated_file_metadata = FileMetadata {
+        id: Ulid::new(),
+        num_rows: updated_commit.n_rows,
+        num_columns: new_pre_encoded_columns,
+        num_encoded_columns: new_encoded_columns,
         root: updated_commit.get_root(),
-        file_metadata: updated_file_metadata,
-    })
+        ..file_metadata
+    };
+
+    Ok(ServerMessages::CompactCommit { file_metadata: updated_file_metadata })
 }
 
 #[tracing::instrument]
 async fn handle_client_request_reshape_evaluation(
-    old_file_metadata: &ClientOwnedFileMetadata,
-    new_file_metadata: &ClientOwnedFileMetadata,
+    old_file_metadata: &FileMetadata,
+    new_file_metadata: &FileMetadata,
     evaluation_point: &WriteableFt63,
     columns_to_expand_original: &Vec<usize>,
     columns_to_expand_new: &Vec<usize>,
 ) -> Result<ServerMessages> {
-    let (_, old_commit) = convert_file_metadata_to_commit(&old_file_metadata)?;
-    let (_, new_commit) = convert_file_metadata_to_commit(&new_file_metadata)?;
+    check_file_metadata(&old_file_metadata)?;
+    check_file_metadata(&new_file_metadata)?;
+
+    // Both files have the same stored data at the id of the old metadata, we only need to read it once
+    let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
+    let file_data = tokio::fs::read(&old_file_handle).await?;
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+
+    let CommitOrLeavesOutput::Commit(old_commit) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: old_file_metadata.num_columns,
+            num_encoded_columns: old_file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
+
+
+    let CommitOrLeavesOutput::Commit(new_commit) = convert_file_data_to_commit(
+        &encoded_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: new_file_metadata.num_columns,
+            num_encoded_columns: new_file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
+
+    // let (_, old_commit) = convert_file_metadata_to_commit(&old_file_metadata)?;
+    // let (_, new_commit) = convert_file_metadata_to_commit(&new_file_metadata)?;
 
 
     let (evaluation_left_vector_for_old_commit, _)
@@ -440,14 +596,39 @@ async fn handle_client_request_reshape_evaluation(
 
 #[tracing::instrument]
 async fn handle_client_reshape_response(
-    old_file_metadata: &ClientOwnedFileMetadata,
-    new_file_metadata: &ClientOwnedFileMetadata,
+    old_file_metadata: &FileMetadata,
+    new_file_metadata: &FileMetadata,
     accepted: bool,
 ) -> Result<ServerMessages> {
-    if accepted { todo!() } else {
-        // I don't think I have to do anything if it's rejected
-        todo!()
-    }
+    tracing::info!("Client responded to a reshape request: {:?} to {:?} was accepted? {}",
+        &old_file_metadata, &new_file_metadata, accepted);
+    check_file_metadata(&old_file_metadata)?;
+    check_file_metadata(&new_file_metadata)?;
+
+    let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle = get_file_handle_from_metadata(&new_file_metadata);
+
+    // we now have two database entries for the same file, the new one has a bad ID, so we'll have to
+    // change the filename and delete the old entry if it's accepted and only have to delete the new
+    // entry if it's rejected.
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+
+    let resulting_file_metadata: &FileMetadata =
+        if accepted {
+            tokio::fs::rename(&old_file_handle, &new_file_handle).await?;
+            let db_delete_result: Option<FileMetadata>
+                = db.delete((constants::SERVER_METADATA_TABLE, &old_file_metadata.id.to_string())).await?;
+
+            new_file_metadata
+        } else {
+            let db_delete_result: Option<FileMetadata>
+                = db.delete((constants::SERVER_METADATA_TABLE, &old_file_metadata.id.to_string())).await?;
+
+            old_file_metadata
+        };
+
+    Ok(ServerMessages::CompactCommit { file_metadata: resulting_file_metadata.to_owned() })
 }
 
 
@@ -489,80 +670,25 @@ pub fn get_aspect_ratio_default_from_file_len<Field: ff::PrimeField>(file_len: u
     get_aspect_ratio_default_from_field_len(field_len)
 }
 
-
-#[tracing::instrument]
-/// a thin wrapper for convert_file_to_commit_internal that should be used with ClientOwnedFileMetadata
-pub fn convert_file_metadata_to_commit(file_metadata: &ClientOwnedFileMetadata)
-                                       -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit)>
-{
-    let server_side_filename = get_file_handle_from_metadata(&file_metadata)?;
-    let (result_root, result_commit, _)
-        = convert_file_to_commit_internal(server_side_filename.as_str(), Some(file_metadata.num_columns))?;
-    Ok((result_root, result_commit))
-}
-
-#[tracing::instrument]
-pub fn convert_file_to_commit_internal(filename: &str, requested_pre_encoded_columns: Option<usize>)
-                                       -> Result<(LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, PoSCommit, ClientOwnedFileMetadata)>
-{
-    // read entire file (we can't get around this)
-    // todo: use mem maps so this can be streamed
-    tracing::info!("reading file {}", filename);
-    let mut file = std::fs::File::open(filename).unwrap();
-    let (size_in_bytes, field_vector) = read_file_to_field_elements_vec(&mut file);
-    tracing::info!("field_vector: {:?}", field_vector.len());
-
-    ensure!(field_vector.len() > 0, "file is empty");
-
-    let (pre_encoded_columns, encoded_columns, soundness) =
-        if requested_pre_encoded_columns.is_none() {
-            get_aspect_ratio_default_from_field_len(field_vector.len())
-        } else {
-            let requested_columns = requested_pre_encoded_columns.unwrap();
-            let pre_encoded_columns = requested_columns;
-            // encoded columns should be at least 2x pre_encoded columns and needs to be a square
-            let encoded_columns = if is_power_of_two(pre_encoded_columns) {
-                (pre_encoded_columns + 1).next_power_of_two()
-            } else {
-                (pre_encoded_columns * 2).next_power_of_two()
-            };
-            let soundness = get_soundness_from_matrix_dims(pre_encoded_columns, encoded_columns);
-            (pre_encoded_columns, encoded_columns, soundness)
-        };
-
-    let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(pre_encoded_columns, encoded_columns);
-    let commit = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
-    let root = commit.get_root();
-
-    let file_metadata = ClientOwnedFileMetadata {
-        stored_server: ServerHost {
-            //the client will change this, so this doesn't matter
-            server_name: None,
-            server_ip: "".to_string(),
-            server_port: 0,
-        },
-        filename: filename.to_string(),
-        num_rows: usize::div_ceil(field_vector.len(), pre_encoded_columns),
-        num_columns: pre_encoded_columns,
-        num_encoded_columns: encoded_columns,
-        filesize_in_bytes: size_in_bytes,
-        root: root.clone(),
-    };
-
-    Ok((root, commit, file_metadata))
-}
-
 fn make_bad_response(message: String) -> InternalServerMessage {
     tracing::error!("{}", message);
     ServerMessages::BadResponse { error: message }
 }
 
-fn check_file_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<()> {
+fn check_file_metadata(file_metadata: &FileMetadata) -> Result<()> {
     // todo!()
     Ok(())
 }
 
-fn get_file_handle_from_metadata(file_metadata: &ClientOwnedFileMetadata) -> Result<String> {
-    // todo need additional logic to search database once database is implemented.
-    Ok(file_metadata.filename.clone())
+fn get_file_handle_from_metadata(file_metadata: &FileMetadata) -> PathBuf {
+    // format!("PoS_server_files/{}", file_metadata.id)
+    get_file_location_from_id(&file_metadata.id)
+}
+
+fn get_file_location_from_id(id: &Ulid) -> PathBuf {
+    let mut path = env::current_dir().unwrap();
+    path.push("PoS_server_files");
+    path.push(id.to_string());
+    path.push(".PoSFile");
+    path
 }

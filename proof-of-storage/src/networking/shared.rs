@@ -11,8 +11,8 @@ use lcpc_2d::LcRoot;
 use lcpc_ligero_pc::LigeroEncoding;
 
 use crate::{PoSColumn, PoSField};
+use crate::databases::FileMetadata;
 use crate::fields::writable_ft63::WriteableFt63;
-use crate::file_metadata::ClientOwnedFileMetadata;
 
 type WrappedStream = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type WrappedSink = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
@@ -38,33 +38,39 @@ type TestField = PoSField;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessages {
+    NewUser { username: String, password: String },
     UserLogin { username: String, password: String },
     UploadNewFile { filename: String, file: Vec<u8>, columns: usize, encoded_columns: usize },
-    RequestFile { file_metadata: ClientOwnedFileMetadata },
-    RequestFileRow { file_metadata: ClientOwnedFileMetadata, row: usize },
-    EditFileRow { file_metadata: ClientOwnedFileMetadata, row: usize, file: Vec<u8> },
-    AppendToFile { file_metadata: ClientOwnedFileMetadata, file: Vec<u8> },
-    RequestEncodedColumn { file_metadata: ClientOwnedFileMetadata, row: usize },
-    RequestProof { file_metadata: ClientOwnedFileMetadata, columns_to_verify: Vec<usize> },
-    RequestPolynomialEvaluation { file_metadata: ClientOwnedFileMetadata, evaluation_point: TestField },
+    RequestFile { file_metadata: FileMetadata },
+    RequestFileRow { file_metadata: FileMetadata, row: usize },
+    EditFileRow { file_metadata: FileMetadata, row: usize, file: Vec<u8> },
+    AppendToFile { file_metadata: FileMetadata, file: Vec<u8> },
+    RequestEncodedColumn { file_metadata: FileMetadata, row: usize },
+    RequestProof { file_metadata: FileMetadata, columns_to_verify: Vec<usize> },
+    RequestPolynomialEvaluation { file_metadata: FileMetadata, evaluation_point: TestField },
     RequestFileReshape {
-        file_metadata: ClientOwnedFileMetadata,
+        file_metadata: FileMetadata,
         new_pre_encoded_columns: usize,
         new_encoded_columns: usize,
     },
     RequestReshapeEvaluation {
-        old_file_metadata: ClientOwnedFileMetadata,
-        new_file_metadata: ClientOwnedFileMetadata,
+        old_file_metadata: FileMetadata,
+        new_file_metadata: FileMetadata,
         evaluation_point: TestField,
         columns_to_expand_original: Vec<usize>,
         columns_to_expand_new: Vec<usize>,
     },
     ReshapeResponse {
-        new_file_metadata: ClientOwnedFileMetadata,
-        old_file_metadata: ClientOwnedFileMetadata,
+        new_file_metadata: FileMetadata,
+        old_file_metadata: FileMetadata,
         accepted: bool,
     },
-    DeleteFile { file_metadata: ClientOwnedFileMetadata },
+    EditOrAppendResponse {
+        new_file_metadata: FileMetadata,
+        old_file_metadata: FileMetadata,
+        accepted: bool,
+    },
+    DeleteFile { file_metadata: FileMetadata },
     ClientKeepAlive,
 }
 
@@ -72,7 +78,7 @@ pub enum ClientMessages {
 pub enum ServerMessages
 {
     UserLoginResponse { success: bool },
-    CompactCommit { root: LcRoot<Blake3, LigeroEncoding<WriteableFt63>>, file_metadata: ClientOwnedFileMetadata },
+    CompactCommit { file_metadata: FileMetadata },
     Columns { columns: Vec<PoSColumn> },
     File { file: Vec<u8> },
     FileRow { row: Vec<u8> },

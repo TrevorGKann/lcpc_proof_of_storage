@@ -1,11 +1,13 @@
-use std::io::BufRead;
+use std::collections::VecDeque;
 use std::net::IpAddr;
 
 use anyhow::{bail, ensure, Result};
 use blake3::{Hash, Hasher as Blake3};
 use clap::{Parser, Subcommand};
+use surrealdb::engine::local::RocksDb;
+use surrealdb::Surreal;
 
-use proof_of_storage::file_metadata::*;
+use proof_of_storage::databases::{constants, FileMetadata, ServerHost};
 use proof_of_storage::networking::client::*;
 use proof_of_storage::networking::server::server_main;
 
@@ -218,7 +220,7 @@ fn is_client_command(subcommand: &PoSSubCommands) -> bool {
 
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let args = PosServerOpts::parse();
     let subcommand = args.subcommand.unwrap();
     let verbosity = args.verbose;
@@ -231,71 +233,67 @@ async fn main() {
     match subcommand {
         PoSSubCommands::Upload { file, ip, port, pre_encoded_columns: columns, encoded_columns, security_bits } => {
             tracing::debug!("uploading file");
-            upload_file_command(file, ip, port, columns, encoded_columns).await;
+            upload_file_command(file, ip, port, columns, encoded_columns).await?;
         }
         PoSSubCommands::Download { file, ip, port, security_bits } => {
             tracing::debug!("downloading file");
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
-
-            if file_metadata.is_none() {
+            let Some(file_metadata) = get_client_metadata_from_database_by_filename(&file).await?
+            else {
                 tracing::error!("file not found in database");
-                return;
-            }
+                bail!("file not found in database");
+            };
 
-            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+            tracing::debug!("found file metadata: {:?}", &file_metadata);
 
             tracing::debug!("requesting file from server");
-            download_file_command(file_metadata.unwrap(), ip, port, security_bits).await;
+            download_file_command(file_metadata, ip, port, security_bits).await?;
         }
         PoSSubCommands::Proof { file, ip, port, security_bits } => {
             tracing::info!("requesting proof of storage");
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
-
-            if file_metadata.is_none() {
+            let Some(file_metadata) = get_client_metadata_from_database_by_filename(&file).await?
+            else {
                 tracing::error!("file not found in database");
-                return;
-            }
+                bail!("file not found in database");
+            };
 
-            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+            tracing::debug!("found file metadata: {:?}", &file_metadata);
 
             tracing::debug!("requesting proof from server");
-            request_proof_command(file_metadata.unwrap(), ip, port, security_bits).await;
+            request_proof_command(file_metadata, ip, port, security_bits).await?;
         }
         PoSSubCommands::Reshape { file, ip, port, security_bits, columns, encoded_columns } => {
             tracing::info!("reshaping file");
 
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
-
-            if file_metadata.is_none() {
+            let Some(file_metadata) = get_client_metadata_from_database_by_filename(&file).await?
+            else {
                 tracing::error!("file not found in database");
-                return;
-            }
+                bail!("file not found in database");
+            };
 
-            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+            tracing::debug!("found file metadata: {:?}", &file_metadata);
 
             tracing::debug!("reshaping file on server");
-            reshape_command(file_metadata.unwrap(), ip, port, security_bits, columns, encoded_columns).await;
+            reshape_command(file_metadata, ip, port, security_bits, columns, encoded_columns).await?;
         }
         PoSSubCommands::Append { file, ip, port, security_bits, data, file_path } => {
             tracing::info!("appending to file");
 
             if data.is_none() && file_path.is_none() {
                 tracing::error!("no data provided to append; At least one of --data or --file-path must be provided.");
-                return;
+                bail!("no data provided to append; at least one of --data or --file-path must be provided.");
             }
 
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
-
-            if file_metadata.is_none() {
+            let Some(file_metadata) = get_client_metadata_from_database_by_filename(&file).await?
+            else {
                 tracing::error!("file not found in database");
-                return;
-            }
+                bail!("file not found in database");
+            };
 
-            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+            tracing::debug!("found file metadata: {:?}", &file_metadata);
 
             tracing::debug!("appending to file on server");
             todo!();
@@ -305,18 +303,17 @@ async fn main() {
 
             if data.is_none() && file_path.is_none() {
                 tracing::error!("no data provided to append; At least one of --data or --file-path must be provided.");
-                return;
+                bail!("no data provided to append; at least one of --data or --file-path must be provided.");
             }
 
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await;
-
-            if file_metadata.is_none() {
+            let Some(file_metadata) = get_client_metadata_from_database_by_filename(&file).await?
+            else {
                 tracing::error!("file not found in database");
-                return;
-            }
+                bail!("file not found in database");
+            };
 
-            tracing::debug!("found file metadata: {:?}", &file_metadata.clone().unwrap());
+            tracing::debug!("found file metadata: {:?}", &file_metadata);
 
             tracing::debug!("editing file on server");
             todo!();
@@ -324,21 +321,17 @@ async fn main() {
         PoSSubCommands::Delete { file, ip, port } => {
             tracing::info!("deleting file");
             tracing::debug!("fetching file metadata from database");
-            let file_metadata = match get_client_metadata_from_database_by_filename("client_file_database".to_string(), file).await {
-                Some(metadata) => {
-                    tracing::debug!("found file metadata: {:?}", &metadata.clone());
-                    metadata
-                }
-                None => {
-                    tracing::error!("file not found in database");
-                    return;
-                }
+            let Some(file_metadata) = get_client_metadata_from_database_by_filename(&file).await?
+            else {
+                tracing::error!("file not found in database");
+                bail!("file not found in database");
             };
+
             tracing::debug!("deleting file from server");
             delete_file_command(file_metadata, ip, port).await.unwrap();
         }
         PoSSubCommands::List => {
-            list_files().await;
+            list_files().await?;
         }
         PoSSubCommands::Server {
             port, ..
@@ -350,6 +343,8 @@ async fn main() {
             tracing::info!("server terminated");
         }
     }
+
+    Ok(())
 }
 
 fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<()> {
@@ -373,35 +368,48 @@ fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<()> {
 }
 
 
-async fn upload_file_command(file: std::path::PathBuf, ip: Option<std::net::IpAddr>, port: Option<u16>, columns: Option<usize>, encoded_columns: Option<usize>) {
+async fn upload_file_command(
+    file: std::path::PathBuf,
+    ip: Option<std::net::IpAddr>,
+    port: Option<u16>,
+    columns: Option<usize>,
+    encoded_columns: Option<usize>,
+) -> Result<()> {
     let file_name = file.to_str().unwrap().to_string();
     let server_port = port.unwrap();
     let server_ip = ip.unwrap().to_string() + ":" + &server_port.to_string();
-    let (file_metadata, root) = proof_of_storage::networking::client::upload_file(file_name, columns, encoded_columns, server_ip).await.unwrap();
+    let file_metadata = proof_of_storage::networking::client::upload_file(file_name, columns, encoded_columns, server_ip).await?;
     tracing::info!("File upload successful");
-    tracing::debug!("File Metadata: {:?}", file_metadata);
-    tracing::debug!("Root: {:?}", root);
-
-    //todo: need to request proof from server
-
-    // add file to file database for the `list` command
-    append_client_file_metadata_to_database("client_file_database".to_string(), file_metadata.clone()).await.expect("failed to append file metadata to database");
-    tracing::info!("appended {} to filedatabase", file_metadata.filename);
+    tracing::debug!("File Metadata: {:?}", &file_metadata);
+    tracing::debug!("Root: {:?}", &file_metadata.root);
+    Ok(())
 }
 
-async fn list_files() {
+async fn list_files() -> Result<()> {
     let file_database_filename = "client_file_database".to_string();
-    tracing::debug!("reading files from {}", file_database_filename);
-    let (hosts_database, file_metadata_database) = read_client_file_database_from_disk(&file_database_filename)
-        .await
-        .unwrap();
+    tracing::debug!("reading files from database");
+
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
+    let file_metadatas: Vec<FileMetadata> = db.select(constants::CLIENT_METADATA_TABLE).await?;
+
     println!("files:");
-    for file in file_metadata_database { println!("{}", file); }
+    for metadata in file_metadatas { println!("{}", metadata); }
+
+
+    let server_hosts: Vec<ServerHost> = db.select(constants::CLIENT_HOSTS_TABLE).await?;
     println!("\nhosts:");
-    for host in hosts_database { println!("{}", host); }
+    for host in server_hosts { println!("{}", host); }
+
+    Ok(())
 }
 
-async fn request_proof_command(file_metadata: ClientOwnedFileMetadata, ip: Option<IpAddr>, port: Option<u16>, security_bits: Option<u8>) {
+async fn request_proof_command(
+    file_metadata: FileMetadata,
+    ip: Option<IpAddr>,
+    port: Option<u16>,
+    security_bits: Option<u8>,
+) -> Result<()> {
     let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
         file_metadata.stored_server.server_ip.clone()
     };
@@ -411,11 +419,17 @@ async fn request_proof_command(file_metadata: ClientOwnedFileMetadata, ip: Optio
     let server_ip = server_ip + ":" + &server_port.to_string();
     let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
 
-    let proof = proof_of_storage::networking::client::request_proof(file_metadata, server_ip, security_bits).await.unwrap();
+    let proof = proof_of_storage::networking::client::request_proof(file_metadata, server_ip, security_bits).await?;
     tracing::info!("Proof received: {:?}", proof);
+    Ok(())
 }
 
-async fn download_file_command(file_metadata: ClientOwnedFileMetadata, ip: Option<IpAddr>, port: Option<u16>, security_bits: Option<u8>) {
+async fn download_file_command(
+    file_metadata: FileMetadata,
+    ip: Option<IpAddr>,
+    port: Option<u16>,
+    security_bits: Option<u8>,
+) -> Result<()> {
     let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
         file_metadata.stored_server.server_ip.clone()
     };
@@ -425,18 +439,19 @@ async fn download_file_command(file_metadata: ClientOwnedFileMetadata, ip: Optio
     let server_ip = server_ip + ":" + &server_port.to_string();
     let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
 
-    let file = proof_of_storage::networking::client::download_file(file_metadata, server_ip, security_bits).await.unwrap();
+    let file = proof_of_storage::networking::client::download_file(file_metadata, server_ip, security_bits).await?;
     tracing::info!("File received: {:?}", file);
+    Ok(())
 }
 
 async fn reshape_command(
-    file_metadata: ClientOwnedFileMetadata,
+    file_metadata: FileMetadata,
     ip: Option<IpAddr>,
     port: Option<u16>,
     security_bits: Option<u8>,
     columns: usize,
     encoded_columns: usize,
-) {
+) -> Result<()> {
     let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
         file_metadata.stored_server.server_ip.clone()
     };
@@ -446,12 +461,13 @@ async fn reshape_command(
     let server_ip = server_ip + ":" + &server_port.to_string();
     let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
 
-    let file = proof_of_storage::networking::client::reshape_file::<Blake3>(&file_metadata, server_ip, security_bits, columns, encoded_columns).await.unwrap();
+    let file = proof_of_storage::networking::client::reshape_file::<Blake3>(&file_metadata, server_ip, security_bits, columns, encoded_columns).await?;
     tracing::info!("File reshaped: {:?}", file);
+    Ok(())
 }
 
 async fn delete_file_command(
-    file_metadata: ClientOwnedFileMetadata,
+    file_metadata: FileMetadata,
     ip: Option<IpAddr>,
     port: Option<u16>,
 ) -> Result<()> {

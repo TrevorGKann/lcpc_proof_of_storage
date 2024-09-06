@@ -2,6 +2,7 @@
 #[cfg(test)]
 #[allow(unused)]
 pub mod tests {
+    use blake3::Hasher as Blake3;
     use ff::{Field, PrimeField};
     use pretty_assertions::assert_eq;
     use rand::Rng;
@@ -11,7 +12,7 @@ pub mod tests {
 
     use crate::fields::*;
     use crate::fields;
-    use crate::networking::server::convert_file_to_commit_internal;
+    use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit};
 
     const CLEANUP_VALUES: bool = true;
 
@@ -37,7 +38,7 @@ pub mod tests {
 
     #[test]
     fn file_to_field_to_file() {
-        let known_file = "test_file.txt";
+        let known_file = "test_files/test.txt";
         let temp_file = "temp_file__file_to_field_to_file__test.txt";
 
         let cleanup = Cleanup { files: vec![temp_file.to_string()] };
@@ -83,6 +84,7 @@ pub mod tests {
     fn end_to_end_with_set_dimensions() {
         use itertools::iterate;
         use merlin::Transcript;
+        use blake3::Hasher as Blake3;
         // let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("test_file.txt");
         // let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
         // let data_realized_width = data_min_width.next_power_of_two();
@@ -91,15 +93,25 @@ pub mod tests {
         // let commit = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
         // let root = commit.get_root();
 
-        let filename = "test_file.txt";
+        let filename = "test_files/test.txt";
 
-        let (root, commit, metadata)
-            = convert_file_to_commit_internal(filename, None).unwrap();
+        // let (root, commit, metadata)
+        //     = convert_file_to_commit_internal(filename, None).unwrap();
+
+        let file_data = std::fs::read(filename).unwrap();
+        let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+        let CommitOrLeavesOutput::Commit::<Blake3, _>(commit) = convert_file_data_to_commit(
+            &encoded_file_data,
+            CommitRequestType::Commit,
+            CommitDimensions::Square,
+        ).unwrap() else { panic!("Unexpected failure to convert file to commitment") };
 
         let encoding
-            = LigeroEncoding::<TestField>::new_from_dims(metadata.num_columns, metadata.num_encoded_columns);
+            = LigeroEncoding::<TestField>::new_from_dims(commit.n_per_row, commit.n_cols);
         let mut file = std::fs::File::open(filename).unwrap();
         let (size_in_bytes, field_vector) = read_file_to_field_elements_vec(&mut file);
+
+        assert_eq!(encoded_file_data, field_vector);
 
         // let _ = LigeroCommit::<Blake3, _>::commit(&field_vector, &encoding).unwrap();
 
@@ -121,14 +133,14 @@ pub mod tests {
         };
 
         let mut transcript = Transcript::new(b"test");
-        transcript.append_message(b"polycommit", root.as_ref());
+        transcript.append_message(b"polycommit", commit.get_root().as_ref());
         transcript.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
 
         let mut proof_transcript = transcript.clone();
         let mut verification_transcript = transcript.clone();
 
         let proof = commit.prove(&outer_tensor, &encoding, &mut proof_transcript).unwrap();
-        let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut verification_transcript).unwrap();
+        let verification = proof.verify(commit.get_root().as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut verification_transcript).unwrap();
     }
 
 
@@ -211,7 +223,7 @@ pub mod tests {
         // type TestField = proof_of_storage::fields::ft253_192::Ft253_192;
 
         // commit to a random polynomial at a random rate
-        let coeffs: Vec<TestField> = read_file_path_to_field_elements_vec("test_file.txt");
+        let coeffs: Vec<TestField> = read_file_path_to_field_elements_vec("test_files/test.txt");
         let enc = LigeroEncoding::new(coeffs.len());
         let comm = LigeroCommit::<Blake3, _>::commit(&coeffs, &enc).unwrap();
         // this is the polynomial commitment
@@ -265,7 +277,7 @@ pub mod tests {
         // type TestField = proof_of_storage::fields::ft253_192::Ft253_192;
 
         // commit to a random polynomial at a random rate
-        let data: Vec<TestField> = read_file_path_to_field_elements_vec("test_file.txt");
+        let data: Vec<TestField> = read_file_path_to_field_elements_vec("test_files/test.txt");
 
         let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
         let data_realized_width = data_min_width.next_power_of_two();

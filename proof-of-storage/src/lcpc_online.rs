@@ -16,9 +16,9 @@ use lcpc_2d::{FieldHash, LcColumn, LcCommit, LcEncoding, open_column, VerifierEr
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
+use crate::databases::FileMetadata;
 use crate::fields::{is_power_of_two, random_writeable_field_vec, vector_multiply};
 use crate::fields::writable_ft63::WriteableFt63;
-use crate::file_metadata::{ClientOwnedFileMetadata, ServerOwnedFileMetadata};
 use crate::networking::client::get_columns_from_random_seed;
 use crate::networking::server::get_aspect_ratio_default_from_field_len;
 
@@ -42,20 +42,11 @@ pub enum CommitDimensions {
     Square,
 }
 
-impl From<ClientOwnedFileMetadata> for CommitDimensions {
-    fn from(metadata: ClientOwnedFileMetadata) -> Self {
+impl From<FileMetadata> for CommitDimensions {
+    fn from(metadata: FileMetadata) -> Self {
         CommitDimensions::Specified {
             num_pre_encoded_columns: metadata.num_columns,
             num_encoded_columns: metadata.num_encoded_columns,
-        }
-    }
-}
-
-impl From<ServerOwnedFileMetadata> for CommitDimensions {
-    fn from(metadata: ServerOwnedFileMetadata) -> Self {
-        CommitDimensions::Specified {
-            num_pre_encoded_columns: metadata.commitment.n_per_row,
-            num_encoded_columns: metadata.commitment.n_cols,
         }
     }
 }
@@ -336,7 +327,7 @@ pub fn client_online_verify_column_leaves(
 }
 
 pub fn get_PoS_soudness_n_cols(
-    file_metadata: &ClientOwnedFileMetadata,
+    file_metadata: &FileMetadata,
 ) -> usize {
     let denominator: f64 = ((1f64 + (file_metadata.num_columns as f64 / file_metadata.num_encoded_columns as f64)) / 2f64).log2();
     let theoretical_min = (-128f64 / denominator).ceil() as usize;
