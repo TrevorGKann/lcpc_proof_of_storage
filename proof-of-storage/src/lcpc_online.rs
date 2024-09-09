@@ -1,13 +1,10 @@
 use std::cmp::min;
-use std::hash::Hash;
 
-use anyhow::{ensure, Error, Result};
+use anyhow::{ensure, Result};
 use blake3::Hasher as Blake3;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use clap::Parser;
 use ff::{Field, PrimeField};
 use fffft::FieldFFT;
-use futures::io::WriteAll;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -17,9 +14,8 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 use crate::databases::FileMetadata;
-use crate::fields::{is_power_of_two, random_writeable_field_vec, vector_multiply};
+use crate::fields::{is_power_of_two, vector_multiply};
 use crate::fields::writable_ft63::WriteableFt63;
-use crate::networking::client::get_columns_from_random_seed;
 use crate::networking::server::get_aspect_ratio_default_from_field_len;
 
 pub type FldT<E> = <E as LcEncoding>::F;
@@ -64,7 +60,7 @@ pub fn dims_ok(num_pre_encoded_columns: usize, num_encoded_columns: usize) -> bo
     let enc_col_power_2 = num_encoded_columns.is_power_of_two();
     let big_enough = num_pre_encoded_columns >= 1 && num_encoded_columns >= 2;
     let rho_greater_than_1 = num_encoded_columns >= 2 * num_pre_encoded_columns;
-    enc_col_power_2
+    enc_col_power_2 && big_enough && rho_greater_than_1
 }
 
 //# refactor : one function to do all the file-to-commit conversions so it doesn't keep
@@ -158,7 +154,7 @@ where
 
             // for each row, update the digests from the requested columns
             for row in 0..num_matrix_rows {
-                for (column_index, mut hasher) in requested_leaves.iter()
+                for (column_index, hasher) in requested_leaves.iter()
                     .zip(digests.iter_mut()) {
                     encoded_coefs[row * num_encoded_columns + column_index].digest_update(hasher);
                 }
@@ -193,7 +189,7 @@ where
 
             // now extract the columns
             let mut columns = Vec::with_capacity(requested_columns.len());
-            for column_index in requested_columns.iter() {
+            for _ in requested_columns.iter() {
                 columns.push(Vec::with_capacity(num_matrix_rows));
             }
 
@@ -326,6 +322,7 @@ pub fn client_online_verify_column_leaves(
     Ok(())
 }
 
+#[allow(non_snake_case)]
 pub fn get_PoS_soudness_n_cols(
     file_metadata: &FileMetadata,
 ) -> usize {
@@ -539,7 +536,7 @@ pub fn decode_row(
 #[test]
 fn encode_then_decode_row() {
     // random row of coefficients
-    let mut row = fields::random_writeable_field_vec(4);
+    let row = fields::random_writeable_field_vec(4);
     // size the encoding it s.t. the encoding is a single row matrix
     let encoding = PoSEncoding::new_from_dims(1 << 4, 1 << 8);
     // encode and commit to the random vector
@@ -580,19 +577,19 @@ fn verify_polynomial_eval() {
     let coefs = fields::random_writeable_field_vec(10);
 
     //todo: ought to make customizable sizes for this
-    let (data_realized_width, matrix_colums, soundness) = get_aspect_ratio_default_from_field_len(coefs.len());
+    let (data_realized_width, matrix_colums, _) = get_aspect_ratio_default_from_field_len(coefs.len());
 
 
     let encoding = LigeroEncoding::<WriteableFt63>::new_from_dims(data_realized_width, matrix_colums);
     let commit = LigeroCommit::<Blake3, _>::commit(&coefs, &encoding).unwrap();
-    let root = commit.get_root();
+    // let root = commit.get_root();
 
 
     let rng = rand::thread_rng();
     let eval_point = WriteableFt63::random(rng);
-    let mut left_eval_column: Vec<WriteableFt63> = Vec::with_capacity(commit.n_rows);
-    let mut right_eval_column: Vec<WriteableFt63> = Vec::with_capacity(commit.n_cols);
-    let mut right_accumulator = WriteableFt63::one();
+    // let mut left_eval_column: Vec<WriteableFt63> = Vec::with_capacity(commit.n_rows);
+    // let mut right_eval_column: Vec<WriteableFt63> = Vec::with_capacity(commit.n_cols);
+    // let mut right_accumulator = WriteableFt63::one();
 
     let (left_eval_column, right_eval_column)
         = form_side_vectors_for_polynomial_evaluation_from_point(&eval_point, commit.n_rows, commit.n_cols);

@@ -167,7 +167,7 @@ pub async fn upload_file(
     tracing::debug!("adding file metadata to database");
     let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
     db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
-    db.create::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id.to_string()))
+    db.create::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id_ulid.to_string()))
         .content(file_metadata.clone()).await?;
 
     Ok((file_metadata))
@@ -269,7 +269,7 @@ pub async fn download_file(file_metadata: FileMetadata,
     }
 
     tracing::debug!("client: file verification successful!");
-    tracing::debug!("client: writing file to disk");
+    tracing::debug!("client: writing file to disk at {}", &file_metadata.filename);
 
     let mut file_handle = File::create(&file_metadata.filename).await?;
     file_handle.write_all(&file_data).await?;
@@ -672,8 +672,9 @@ pub async fn delete_file(
 
     let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
     db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
-    db.delete::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id.to_string()))
-        .await?;
+    let delete_result = db.delete::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id_ulid.to_string()))
+        .await?.unwrap();
+    tracing::debug!("Deleted file metadata from database: {}", delete_result);
 
     Ok(())
 }

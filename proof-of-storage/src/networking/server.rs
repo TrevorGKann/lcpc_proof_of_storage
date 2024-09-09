@@ -10,7 +10,7 @@ use blake3::traits::digest::Output;
 use futures::{SinkExt, StreamExt, TryFutureExt};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use surrealdb::engine::local::Mem;
+use surrealdb::engine::local::{Db, Mem};
 use surrealdb::engine::local::RocksDb;
 use surrealdb::Surreal;
 use tokio::fs::File;
@@ -34,15 +34,16 @@ use crate::networking::shared::wrap_stream;
 
 type InternalServerMessage = ServerMessages;
 
-// static DB: Lazy<Surreal<Client>> = Lazy::new(Surreal::init);
+// static DB: Lazy<Surreal<Db>> = Lazy::new(Surreal::init);
 
 #[tracing::instrument]
 pub async fn server_main(port: u16, verbosity: u8) -> Result<()> {
     tracing::info!("Server starting, verbosity level: {:?}", verbosity);
 
+    // failed attempt at lazy init
     // tracing::debug!("Connecting to local database");
-    // DB.connect::<RocksDb>("server_database").await?;
-    // DB.use_ns("Server").use_db("Server").await?;
+    // DB.connect::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    // DB.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
 
 
     tracing::debug!("Binding to port {:?}", port);
@@ -57,31 +58,7 @@ pub async fn server_main(port: u16, verbosity: u8) -> Result<()> {
     while let Ok((stream, _)) = listener.accept().await {
         tokio::spawn(async move { handle_client_loop(stream).await });
     }
-    //
-    //
-    // // client logic
-    // let stream = TcpStream::connect("0.0.0.0:8080").await?;
-    // let (mut stream, mut sink) = wrap_stream::<ClientMessages,ServerMessages<String>>(stream);
-    //
-    // sink.send(ClientMessages::UserLogin {username: "trevor".to_owned(), password: "password".to_owned()})
-    //     .await.expect("Failed to send message to server");
-    //
-    // let Some(Ok(transmission)) = stream.next().await else {
-    //     tracing::error!("Failed to receive message from server");
-    //     return core::result::Result::Err(Box::from("Failed to receive message from server"));
-    // };
-    // tracing::info!("Client received: {:?}", transmission);
-    //
-    //
-    // sink.send(ClientMessages::RequestEncodedColumn {filename: "test".to_owned(), row: 0})
-    //     .await.expect("Failed to send message to server");
-    //
-    // let Some(Ok(transmission)) = stream.next().await else {
-    //     tracing::error!("Failed to receive message from server");
-    //     return core::result::Result::Err(Box::from("Failed to receive message from server"));
-    // };
-    // tracing::info!("Client received: {:?}", transmission);
-    //
+
     Ok(())
 }
 
@@ -143,7 +120,7 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::ClientKeepAlive => { Ok(ServerMessages::ServerKeepAlive) }
         };
 
-        let response = request_result.unwrap_or_else(|error| make_bad_response(format!("failed to convert file to commit: {:?}", error)));
+        let response = request_result.unwrap_or_else(|error| make_bad_response(format!("Server failed to fulfil operation: {:?}", error)));
 
 
         //todo: remove this and implement another way to send the responses of the internal
@@ -162,7 +139,7 @@ async fn handle_client_new_user(username: String, password: String) -> Result<In
     let hashed_password = hasher.finalize();
 
     let new_user = User {
-        id: username.clone(),
+        id_string: username.clone(),
         hashed_password: hashed_password.to_string(),
     };
 
@@ -238,12 +215,13 @@ async fn handle_client_upload_new_file(filename: String,
 
     let new_upload_id = Ulid::new();
     let local_file_location = get_file_location_from_id(&new_upload_id);
+    tracing::debug!("Writing new file to {}",local_file_location.display());
     tokio::fs::write(&local_file_location, &file_data).await
         .context("failed while writing file from client")?;
 
     tracing::info!("server: appending file metadata to database");
     let file_metadata = FileMetadata {
-        id: Ulid::new(),
+        id_ulid: new_upload_id,
         filename: filename,
         // filename: Path::new(&filename).file_name().unwrap().to_str().unwrap().to_string(),
         num_rows: commit.n_rows,
@@ -261,7 +239,9 @@ async fn handle_client_upload_new_file(filename: String,
     { // database lock scope
         let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
         db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
-        db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, file_metadata.id.to_string()))
+        // db.create::<Vec<FileMetadata>>(constants::SERVER_METADATA_TABLE)
+        //     .content(&file_metadata).await?;
+        db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, file_metadata.id_ulid.to_string()))
             .content(&file_metadata).await?;
     }
 
@@ -337,7 +317,7 @@ async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, ne
     )? else { bail!("Unexpected failure to convert file to commitment") };
 
     let updated_file_metadata = FileMetadata {
-        id: new_id,
+        id_ulid: new_id,
         root: updated_commit.get_root(),
         filesize_in_bytes: new_file_data.len(),
         ..file_metadata
@@ -347,7 +327,7 @@ async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, ne
     // one of the entries will be deleted after the client responds
     let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
     db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
-    db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, updated_file_metadata.id.to_string()))
+    db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, updated_file_metadata.id_ulid.to_string()))
         .content(&updated_file_metadata).await?;
 
     Ok(ServerMessages::CompactCommit { file_metadata: updated_file_metadata })
@@ -380,7 +360,7 @@ async fn handle_client_append_to_file(file_metadata: FileMetadata, mut file_data
     )? else { bail!("Unexpected failure to convert file to commitment") };
 
     let updated_file_metadata = FileMetadata {
-        id: new_id,
+        id_ulid: new_id,
         root: updated_commit.get_root(),
         num_rows: updated_commit.n_rows,
         filesize_in_bytes: new_file_data.len(),
@@ -391,7 +371,7 @@ async fn handle_client_append_to_file(file_metadata: FileMetadata, mut file_data
     // one of the entries will be deleted after the client responds
     let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
     db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
-    db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, updated_file_metadata.id.to_string()))
+    db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, updated_file_metadata.id_ulid.to_string()))
         .content(&updated_file_metadata).await?;
 
     Ok(ServerMessages::CompactCommit { file_metadata: updated_file_metadata })
@@ -416,6 +396,7 @@ async fn handle_client_request_proof(file_metadata: FileMetadata, requested_colu
     check_file_metadata(&file_metadata)?;
 
     let file_handle = get_file_handle_from_metadata(&file_metadata);
+    tracing::trace!("reading file for proof at {}", file_handle.to_str().unwrap());
     let file_data = tokio::fs::read(&file_handle).await?;
     let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
     let CommitOrLeavesOutput::ColumnsWithPath(column_collection) = convert_file_data_to_commit(
@@ -476,11 +457,13 @@ async fn handle_client_delete_file(
 
     let file_handle = get_file_handle_from_metadata(&file_metadata);
     let db_delete_result: Option<FileMetadata> = { //database scope
+        tracing::debug!("deleting file from database: {}; with ID: {}", file_metadata.filename, file_metadata.id_ulid.to_string());
         let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
         db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
-        db.delete((constants::SERVER_METADATA_TABLE, file_metadata.id.to_string())).await?
+        db.delete::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, file_metadata.id_ulid.to_string())).await?
     };
 
+    tracing::debug!("deleting file from disk: {}", file_handle.to_str().unwrap());
     let os_delete_result = tokio::fs::remove_file(file_handle).await;
 
     let mut return_string = "".to_string();
@@ -520,9 +503,10 @@ async fn handle_client_request_file_reshape(
         },
     )? else { bail!("Unexpected failure to convert file to commitment") };
 
-    // todo: ensure on the reshape accepted, I change the old filename to the new ID when I delete the old record in the database
+    // I ensure on the reshape accepted to change the old filename to the new ID when I delete the
+    // old record in the database
     let updated_file_metadata = FileMetadata {
-        id: Ulid::new(),
+        id_ulid: Ulid::new(),
         num_rows: updated_commit.n_rows,
         num_columns: new_pre_encoded_columns,
         num_encoded_columns: new_encoded_columns,
@@ -618,12 +602,12 @@ async fn handle_client_reshape_response(
         if accepted {
             tokio::fs::rename(&old_file_handle, &new_file_handle).await?;
             let db_delete_result: Option<FileMetadata>
-                = db.delete((constants::SERVER_METADATA_TABLE, &old_file_metadata.id.to_string())).await?;
+                = db.delete((constants::SERVER_METADATA_TABLE, &old_file_metadata.id_ulid.to_string())).await?;
 
             new_file_metadata
         } else {
             let db_delete_result: Option<FileMetadata>
-                = db.delete((constants::SERVER_METADATA_TABLE, &old_file_metadata.id.to_string())).await?;
+                = db.delete((constants::SERVER_METADATA_TABLE, &old_file_metadata.id_ulid.to_string())).await?;
 
             old_file_metadata
         };
@@ -682,13 +666,18 @@ fn check_file_metadata(file_metadata: &FileMetadata) -> Result<()> {
 
 fn get_file_handle_from_metadata(file_metadata: &FileMetadata) -> PathBuf {
     // format!("PoS_server_files/{}", file_metadata.id)
-    get_file_location_from_id(&file_metadata.id)
+    get_file_location_from_id(&file_metadata.id_ulid)
 }
 
 fn get_file_location_from_id(id: &Ulid) -> PathBuf {
     let mut path = env::current_dir().unwrap();
     path.push("PoS_server_files");
-    path.push(id.to_string());
-    path.push(".PoSFile");
+
+    //check that directory folder exists
+    if !path.exists() {
+        std::fs::create_dir(&path).unwrap();
+    }
+
+    path.push(format!("{}.PoSFile", id.to_string()));
     path
 }

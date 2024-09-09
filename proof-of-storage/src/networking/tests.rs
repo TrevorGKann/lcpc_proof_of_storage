@@ -7,16 +7,19 @@ pub mod network_tests {
     use blake3::traits::digest::Output;
     use ff::PrimeField;
     use serial_test::serial;
+    use surrealdb::engine::local::RocksDb;
+    use surrealdb::Surreal;
     // use pretty_assertions::assert_eq;
     use tokio::fs;
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
     use tokio::time::sleep;
+    use ulid::Ulid;
 
     use crate::databases::*;
-    use crate::fields::convert_byte_vec_to_field_elements_vec;
+    use crate::fields::{convert_byte_vec_to_field_elements_vec, random_writeable_field_vec};
     use crate::fields::writable_ft63::WriteableFt63;
-    use crate::lcpc_online::{CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
+    use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
     use crate::networking::client;
     use crate::networking::server::handle_client_loop;
     use crate::tests::tests::Cleanup;
@@ -47,7 +50,7 @@ pub mod network_tests {
             .compact()
             .with_file(true)
             .with_line_number(true)
-            .with_max_level(tracing::Level::TRACE)
+            .with_max_level(tracing::Level::DEBUG)
             .finish();
 
         // use that subscriber to process traces emitted after this point
@@ -75,22 +78,6 @@ pub mod network_tests {
 
         let port = start_test_with_server_on_random_port_and_get_port("upload_file_test".to_string()).await;
 
-        // try to delete the file first, in case it's already uploaded
-        let to_delete_metadata = crate::networking::client::get_client_metadata_from_database_by_filename(
-            &"test.txt".to_string(),
-        ).await;
-
-        if let Ok(Some(metadata)) = to_delete_metadata {
-            tracing::debug!("client requesting file deletion");
-            let delete_result = client::delete_file(
-                metadata,
-                format!("localhost:{}", port),
-            ).await;
-            tracing::debug!("client received: {:?}", delete_result);
-        } else {
-            tracing::debug!("client did not request file deletion, no file found on database");
-        }
-
         // upload the file
         let response = client::upload_file(
             source_file.to_owned(),
@@ -103,24 +90,15 @@ pub mod network_tests {
 
         let metadata = response.unwrap();
 
-        assert_eq!(metadata.filename, "test.txt");
-        // assert_eq!(metadata.num_columns, 4); //todo uncomment once implemented
-        assert_eq!(tokio::fs::read(dest_temp_file).await.unwrap(), tokio::fs::read(source_file).await.unwrap());
+        assert_eq!(metadata.filename, source_file);
+        assert_eq!(metadata.num_columns, 4); //todo uncomment once implemented
+        assert_eq!(metadata.num_encoded_columns, 8);
 
-
-        // Cleanup the server afterwards
-        let to_delete_metadata = crate::networking::client::get_client_metadata_from_database_by_filename(
-            &"test.txt".to_string(),
-        ).await;
-
-        if let Ok(Some(metadata)) = to_delete_metadata {
-            tracing::debug!("client requesting file deletion");
-            let delete_result = client::delete_file(
-                metadata,
-                format!("localhost:{}", port),
-            ).await;
-            tracing::debug!("client received: {:?}", delete_result);
-        }
+        tracing::debug!("client requesting file deletion");
+        client::delete_file(
+            metadata,
+            format!("localhost:{}", port),
+        ).await.unwrap();
     }
 
     #[tokio::test]
@@ -264,6 +242,9 @@ pub mod network_tests {
 
         let metadata = upload_response.unwrap();
 
+        // copy original file to temp location for comparison later
+        tokio::fs::copy(source_file, dest_temp_file).await.unwrap();
+
         tracing::info!("requesting download");
         client::download_file(metadata, format!("localhost:{}", port), 0)
             .await
@@ -273,6 +254,7 @@ pub mod network_tests {
 
         tracing::info!("downloaded file: {:?}", downloaded_data.iter().take(10).collect::<Vec<&u8>>());
         assert_eq!(file_data, downloaded_data);
+        tokio::fs::remove_file(dest_temp_file).await.unwrap();
     }
 
     #[tokio::test]
@@ -322,5 +304,45 @@ pub mod network_tests {
         ).await;
 
         let evaluation_result = response.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_database_creation() {
+        let encoded_file_data = random_writeable_field_vec(4);
+        let CommitOrLeavesOutput::Commit(commit) = convert_file_data_to_commit(
+            &encoded_file_data,
+            CommitRequestType::Commit,
+            CommitDimensions::Square,
+        ).unwrap()
+        else { panic!("Unexpected failure to convert file to commitment") };
+
+        let file_metadata = FileMetadata {
+            id_ulid: Ulid::new(),
+            filename: "a_nonexistent_file".to_string(),
+            num_rows: commit.n_rows,
+            num_columns: commit.n_per_row,
+            num_encoded_columns: commit.n_cols,
+            filesize_in_bytes: commit.coeffs.len(),
+            stored_server: ServerHost {
+                server_name: Some("nonexistent_host".to_string()),
+                server_ip: "0.0.0.0".to_string(),
+                server_port: 0,
+            },
+            root: commit.get_root(),
+        };
+
+        let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await.unwrap();
+        db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await.unwrap();
+
+        db.create::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, file_metadata.id_ulid.to_string()))
+            // db.create::<Option<FileMetadata>>(constants::SERVER_METADATA_TABLE)
+            // db.create::<Option<FileMetadata>>("FileMetadata")
+            .content(&file_metadata).await.unwrap();
+        tracing::debug!("File metadata appended to database: {:?}", &file_metadata);
+
+        let retrieve_result: Option<FileMetadata> = db.select::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, file_metadata.id_ulid.to_string())).await.unwrap();
+
+        // assert_eq!(file_metadata, retrieve_result.unwrap())
     }
 }

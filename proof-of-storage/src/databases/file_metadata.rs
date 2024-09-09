@@ -8,7 +8,7 @@ use crate::PoSRoot;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileMetadata {
-    pub id: Ulid,
+    pub id_ulid: Ulid,
     pub filename: String,
     pub num_rows: usize,
     pub num_columns: usize,
