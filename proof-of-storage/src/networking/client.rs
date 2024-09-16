@@ -62,8 +62,8 @@ pub async fn upload_file(
         (Some(cols), None) => {
             ensure!(cols >= 1, "Number of columns must be greater than 0");
 
-            let rounded_cols = if cols.is_power_of_two() { cols } else { cols.next_power_of_two() };
-            let enc_cols = rounded_cols.next_power_of_two();
+            let rounded_cols = cols.next_power_of_two();
+            let enc_cols = (rounded_cols + 1).next_power_of_two();
             (cols, enc_cols, crate::networking::server::get_soundness_from_matrix_dims(cols, enc_cols))
         }
         (None, Some(enc_cols)) => {
@@ -264,7 +264,7 @@ pub async fn download_file(file_metadata: FileMetadata,
 
     if verification_result.is_err() {
         tracing::error!("Failed to verify columns");
-        //todo return error type
+        //todo send error type to the server (also requires figuring out what to make the server do)
         bail!("failed_to_verify_columns");
     }
 
@@ -366,39 +366,12 @@ pub async fn verify_compact_commit(
 
     if verification_result.is_err() {
         tracing::error!("Failed to verify columns");
-        //todo return error type
+        //todo send error to server
         return todo!();
     }
     tracing::debug!("client: file verification successful!");
     Ok(())
 }
-
-// pub async fn get_processed_column_leaves_from_file(
-//     file_metadata: &FileMetadata,
-//     cols_to_verify: Vec<usize>,
-// ) -> Vec<Output<Blake3>> {
-//     let (root, commit) = server::convert_file_metadata_to_commit(&file_metadata)
-//         .map_err(|e| {
-//             tracing::error!("failed to convert file to commit: {:?}", e);
-//         })
-//         .expect("failed to convert file to commit");
-//
-//
-//     // let mut leaves = Vec::with_capacity(cols_to_verify.len());
-//     // for col in cols_to_verify {
-//     //     leaves.push(commit.hashes[col]);
-//     // }
-//     // leaves
-//
-//     let extracted_columns = server_retreive_columns(&commit, &cols_to_verify);
-//
-//     let extracted_leaves: Vec<Output<Blake3>> = extracted_columns
-//         .iter()
-//         .map(hash_column_to_digest::<Blake3>)
-//         .collect();
-//
-//     extracted_leaves
-// }
 
 pub async fn client_request_and_verify_polynomial<D>(
     file_metadata: &FileMetadata,
@@ -472,13 +445,6 @@ where
         }
     };
 
-    // let verification_result = client_verify_commitment(
-    //     &file_metadata.root,
-    //     &locally_derived_leaves,
-    //     &cols_to_verify,
-    //     &received_columns,
-    //     get_PoS_soudness_n_cols(file_metadata),
-    // );
     let verification_result = lcpc_online::client_online_verify_column_paths(
         &file_metadata.root,
         &cols_to_verify,

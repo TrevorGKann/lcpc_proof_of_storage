@@ -214,6 +214,7 @@ enum PoSSubCommands {
     },
 }
 
+#[allow(dead_code)]
 fn is_client_command(subcommand: &PoSSubCommands) -> bool {
     !matches!(subcommand, PoSSubCommands::Server { .. })
 }
@@ -347,7 +348,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn start_tracing(verbosity: &u8, subcommand: &PoSSubCommands) -> Result<()> {
+fn start_tracing(verbosity: &u8, _subcommand: &PoSSubCommands) -> Result<()> {
     let max_level = match verbosity {
         0 => tracing::Level::ERROR,
         1 => tracing::Level::INFO,
