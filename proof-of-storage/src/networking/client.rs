@@ -3,7 +3,7 @@ use bitvec::macros::internal::funty::Unsigned;
 use bitvec::view::BitViewSized;
 use blake3::traits::digest;
 use digest::{Digest, FixedOutputReset, Output};
-use ff::Field;
+use ff::{Field, PrimeField};
 use futures::{SinkExt, StreamExt};
 use itertools::Itertools;
 use num_traits::{One, ToPrimitive, Zero};
@@ -26,7 +26,7 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::*;
 use crate::databases::*;
-use crate::fields::{convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, writable_ft63};
+use crate::fields::{convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, evaluate_field_polynomial_at_point_with_elevated_degree, writable_ft63};
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::lcpc_online::{client_verify_commitment, CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
 use crate::networking::server;
@@ -457,7 +457,7 @@ where
     }
 
     let local_evaluation_check =
-        lcpc_online::verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+        lcpc_online::verify_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
             &evaluation_point,
             &evaluation_result,
             file_metadata.num_rows,
@@ -480,7 +480,7 @@ pub async fn reshape_file<D>(
     security_bits: u8,
     new_pre_encoded_columns: usize,
     new_encoded_columns: usize,
-) -> Result<()>
+) -> Result<FileMetadata>
 where
     D: Digest,
 {
@@ -514,6 +514,14 @@ where
         }
     };
 
+    if (new_file_metadata.num_encoded_columns as usize != new_encoded_columns)
+        || (new_file_metadata.num_columns != new_pre_encoded_columns) {
+        tracing::error!("Failed to reshape file: requested dimensions not met");
+        sink.send(ClientMessages::ReshapeResponse { new_file_metadata, old_file_metadata: file_metadata.clone(), accepted: false })
+            .await.expect("Failed to send message to server");
+        bail!("Failed to reshape file: requested dimensions not met");
+    }
+
     let mut random_seed = ChaCha8Rng::seed_from_u64(1337);
     let evaluation_point = WriteableFt63::random(&mut random_seed);
 
@@ -542,6 +550,7 @@ where
     };
 
     let ServerMessages::ReshapeEvaluation {
+        expected_result,
         original_result_vector,
         original_columns,
         new_result_vector,
@@ -559,7 +568,7 @@ where
         }
     };
 
-    let old_results = lcpc_online::verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+    let old_results = lcpc_online::verify_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
         &evaluation_point,
         &original_result_vector,
         file_metadata.num_rows,
@@ -568,7 +577,7 @@ where
         &original_columns,
     );
 
-    let new_results = lcpc_online::verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+    let new_results = lcpc_online::verify_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
         &evaluation_point,
         &new_result_vector,
         new_file_metadata.num_rows,
@@ -578,27 +587,49 @@ where
     );
 
     if old_results.is_err() || new_results.is_err() {
-        tracing::error!("Failed to verify polynomial evaluation");
+        tracing::error!("Failed to verify polynomial evaluation for reshape");
         tracing::error!("Rejecting reshape");
 
-        sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata: new_file_metadata, accepted: false })
+        sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata, accepted: false })
             .await.expect("Failed to send message to server");
 
         bail!("failed_to_verify_polynomial_evaluation")
     }
 
-    if old_results.unwrap() != new_results.unwrap() {
+    let old_results = old_results.unwrap();
+    let new_results = new_results.unwrap();
+
+    tracing::debug!("Expected result: {:?}", expected_result.clone());
+    tracing::debug!("Old evaluation result: {:?}", old_results.clone());
+    tracing::debug!("New evaluation result: {:?}", new_results.clone());
+
+    if old_results.to_u64_array() != new_results.to_u64_array() {
         tracing::error!("Polynomial evaluations mismatched between versions. Rejecting reshape");
-        sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata: new_file_metadata, accepted: false })
+        sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata, accepted: false })
             .await.expect("Failed to send message to server");
         bail!("polynomial evaluations mismatched between versions.")
     }
 
-    sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata: new_file_metadata, accepted: false })
+    sink.send(ClientMessages::ReshapeResponse { old_file_metadata: file_metadata.clone(), new_file_metadata: new_file_metadata.clone(), accepted: true })
         .await.expect("Failed to send message to server");
 
-    Ok(())
+    { //database scope
+        let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+        db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
+        let create_result = db.create::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, new_file_metadata.id_ulid.to_string()))
+            .content(new_file_metadata.clone())
+            .await?;
+        tracing::debug!("added new file metadata in database: {}", new_file_metadata);
+
+        let delete_result = db.delete::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id_ulid.to_string()))
+            .await?.unwrap();
+        tracing::debug!("Deleted file metadata from database: {}", file_metadata);
+    }
+
+    tracing::info!("successfully reshaped file");
+    Ok(new_file_metadata)
 }
+
 
 pub async fn delete_file(
     file_metadata: FileMetadata,
@@ -645,16 +676,186 @@ pub async fn delete_file(
     Ok(())
 }
 
+pub async fn append_to_file(
+    file_metadata: FileMetadata,
+    server_ip: String,
+    security_bits: u8,
+    data_to_append: Vec<u8>,
+) -> Result<()> {
+    let original_polynomial_degree = file_metadata.filesize_in_bytes / (WriteableFt63::CAPACITY / 8) as usize;
+    let byte_offset = file_metadata.filesize_in_bytes % (WriteableFt63::CAPACITY / 8) as usize;
+    let column_expected_to_change = if byte_offset == 0 {
+        None
+    } else {
+        Some(original_polynomial_degree / file_metadata.num_columns)
+    };
+
+
+    tracing::info!("requesting append to file from server");
+    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
+
+    sink.send(ClientMessages::AppendToFile { file_metadata: file_metadata.clone(), append_data: data_to_append.clone() })
+        .await.expect("Failed to send message to server");
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        bail!("Failed to receive message from server");
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+    let ServerMessages::CompactCommit { file_metadata: appended_file_metadata } = transmission
+    else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File append failed: {}", error);
+                bail!("File append failed on server end: {}", error)
+            }
+            _ => {
+                tracing::error!("Unknown server response: {:?}", transmission);
+                bail!("Unknown server response: {:?}", transmission)
+            }
+        }
+    };
+
+    if (file_metadata.num_columns != appended_file_metadata.num_columns)
+        || (file_metadata.num_encoded_columns != appended_file_metadata.num_columns)
+        || (appended_file_metadata.filesize_in_bytes == file_metadata.filesize_in_bytes + data_to_append.len())
+    {
+        tracing::error!("File append failed: number of columns mismatch");
+        sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
+            .await.expect("Failed to send message to server");
+        bail!("File append failed: number of columns mismatch");
+    }
+
+    let mut random_seed = ChaCha8Rng::seed_from_u64(1337);
+    let evaluation_point = WriteableFt63::random(&mut random_seed);
+
+    let mut requested_columns = get_columns_from_random_seed(
+        1337,
+        get_PoS_soudness_n_cols(&file_metadata),
+        file_metadata.num_encoded_columns,
+    );
+
+    if column_expected_to_change.is_some() && !requested_columns.contains(&column_expected_to_change.unwrap()) {
+        requested_columns.push(column_expected_to_change.unwrap());
+    }
+
+    sink.send(ClientMessages::RequestEditOrAppendEvaluation {
+        old_file_metadata: file_metadata.clone(),
+        new_file_metadata: appended_file_metadata.clone(),
+        evaluation_point: evaluation_point.clone(),
+        columns_to_expand: requested_columns.clone(),
+    }).await.expect("Failed to send message to server");
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        bail!("Failed to receive message from server");
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+    let ServerMessages::EditOrAppendEvaluation {
+        expected_result,
+        original_result_vector,
+        original_columns,
+        new_result_vector,
+        new_columns
+    } = transmission
+    else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File append failed: {}", error);
+                bail!("File append failed on server end: {}", error)
+            }
+            _ => {
+                tracing::error!("Unknown server response: {:?}", transmission);
+                bail!("Unknown server response: {:?}", transmission)
+            }
+        }
+    };
+
+    // Check that the coefficient at the write_head is correctly updated.
+    // This is probably redundant since checking the polynomial will determine if this is incorrectly done anyways,
+    //      but might as well debug it like this
+    if column_expected_to_change.is_some() {
+        let column_expected_to_change_index = requested_columns.iter().position(|&x| x == column_expected_to_change.unwrap()).unwrap();
+        let actual_column_expected_to_change_original = original_columns[column_expected_to_change_index].clone();
+        let actual_column_expected_to_change_new = new_columns[column_expected_to_change_index].clone();
+
+        let coefficient_expected_to_change_original: Vec<u8> = actual_column_expected_to_change_original.col[actual_column_expected_to_change_original.col.len() - 1].to_repr().as_ref().to_owned();
+        let coefficient_expected_to_change_new: Vec<u8> = actual_column_expected_to_change_new.col[actual_column_expected_to_change_original.col.len() - 1].to_repr().as_ref().to_owned();
+        // must use original column.len because it's possible the append data created a new row at the end of the matrix;
+        //  we need to keep the original coefficient.
+
+        let mut passed_check = true;
+        for i in 0..original_polynomial_degree {
+            passed_check &= coefficient_expected_to_change_original[i] == coefficient_expected_to_change_new[i];
+        }
+        for i in original_polynomial_degree..(WriteableFt63::CAPACITY as usize) {
+            passed_check &= coefficient_expected_to_change_new[i] == data_to_append[i];
+        }
+        if !passed_check {
+            tracing::error!("File append failed: column {} did not change as expected", column_expected_to_change.unwrap());
+            sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
+                .await.expect("Failed to send message to server");
+            bail!("File append failed: column {} did not change as expected", column_expected_to_change.unwrap());
+        }
+    }
+
+
+    let old_results = lcpc_online::verify_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+        &evaluation_point,
+        &original_result_vector,
+        file_metadata.num_rows,
+        file_metadata.num_columns,
+        &requested_columns,
+        &original_columns,
+    );
+
+    let new_results = lcpc_online::verify_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
+        &evaluation_point,
+        &new_result_vector,
+        appended_file_metadata.num_rows,
+        appended_file_metadata.num_columns,
+        &requested_columns,
+        &new_columns,
+    );
+
+    let mut data_pointer = 0;
+    let expected_difference_between_evaluations = {
+        let mut expected_diff = WriteableFt63::ZERO;
+        if column_expected_to_change.is_some() {
+            let column_expected_to_change_index = requested_columns.iter().position(|&x| x == column_expected_to_change.unwrap()).unwrap();
+            let actual_column_expected_to_change_original = &original_columns[column_expected_to_change_index];
+            expected_diff -= actual_column_expected_to_change_original.col[actual_column_expected_to_change_original.col.len() - 1] * (WriteableFt63::ONE.pow([original_polynomial_degree as u64]));
+            //todo: intention here is to subtract the original coefficient from the new coefficient. Right now I've only subtracted the original.
+            // I have to construct the new coefficient and offset the data_pointer.
+            // the easy way to do this would be just using the new column but eventually I want to only send over the old column, but for sake of getting it done it might be worth it for now
+        }
+
+        let remainder_of_coefficients = convert_byte_vec_to_field_elements_vec(&data_to_append[data_pointer..]);
+        data_pointer += remainder_of_coefficients.len();
+        expected_diff += evaluate_field_polynomial_at_point_with_elevated_degree(remainder_of_coefficients, evaluation_point, original_polynomial_degree);
+        // todo test if this should be `original_polynomial_degree` or `original_polynomial_degree + 1`
+        expected_diff
+    };
+
+    todo!()
+}
+
 pub async fn get_client_metadata_from_database_by_filename(filename: &String) -> Result<Option<FileMetadata>> {
     let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
     db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
-    let mut result: Vec<FileMetadata> = db.query("SELECT * FROM $table WHERE filename = $filename LIMIT 1")
+    let mut result: Vec<FileMetadata> = db.query("SELECT * FROM $table WHERE filename = $filename LIMIT 2")
         .bind(("table", constants::CLIENT_METADATA_TABLE))
         .bind(("file", filename))
         .await?.take(0)?;
     if result.is_empty() {
         Ok(None)
     } else {
+        if result.len() > 1 {
+            tracing::warn!("Multiple files with the same filename found in database, taking first found instance");
+        }
         Ok(Some(result.swap_remove(0)))
     }
 }

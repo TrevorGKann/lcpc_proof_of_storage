@@ -87,7 +87,7 @@ pub fn read_file_to_field_elements_vec(file: &mut File) -> (usize, Vec<Writeable
 }
 
 #[tracing::instrument]
-pub fn convert_byte_vec_to_field_elements_vec(byte_vec: &Vec<u8>) -> Vec<WriteableFt63> {
+pub fn convert_byte_vec_to_field_elements_vec(byte_vec: &[u8]) -> Vec<WriteableFt63> {
     let read_in_bytes = (WriteableFt63::CAPACITY / 8) as usize;
 
 
@@ -214,6 +214,19 @@ pub fn evaluate_field_polynomial_at_point(field_elements: &Vec<WriteableFt63>, p
     let mut result = WriteableFt63::zero();
     let mut current_power = WriteableFt63::one();
     for field_element in field_elements {
+        result += *field_element * current_power;
+        current_power *= point;
+    }
+    result
+}
+
+// evaluates a polynomial collection as if it started at the nth degree. E.g. ([1,2,3],x,3) would be evaluated 
+//      as 1x^3 + 2x^4 + 3x^5
+pub fn evaluate_field_polynomial_at_point_with_elevated_degree(field_elements: &[WriteableFt63], point: &WriteableFt63, degree_offset: u64) -> WriteableFt63
+{
+    let mut result = WriteableFt63::zero();
+    let mut current_power = WriteableFt63::one().pow([degree_offset]);
+    for field_element in field_elements.iter() {
         result += *field_element * current_power;
         current_power *= point;
     }

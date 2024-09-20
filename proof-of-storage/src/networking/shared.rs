@@ -44,7 +44,7 @@ pub enum ClientMessages {
     RequestFile { file_metadata: FileMetadata },
     RequestFileRow { file_metadata: FileMetadata, row: usize },
     EditFileRow { file_metadata: FileMetadata, row: usize, file: Vec<u8> },
-    AppendToFile { file_metadata: FileMetadata, file: Vec<u8> },
+    AppendToFile { file_metadata: FileMetadata, append_data: Vec<u8> },
     RequestEncodedColumn { file_metadata: FileMetadata, row: usize },
     RequestProof { file_metadata: FileMetadata, columns_to_verify: Vec<usize> },
     RequestPolynomialEvaluation { file_metadata: FileMetadata, evaluation_point: TestField },
@@ -59,6 +59,13 @@ pub enum ClientMessages {
         evaluation_point: TestField,
         columns_to_expand_original: Vec<usize>,
         columns_to_expand_new: Vec<usize>,
+    },
+    RequestEditOrAppendEvaluation {
+        old_file_metadata: FileMetadata,
+        new_file_metadata: FileMetadata,
+        evaluation_point: TestField,
+        columns_to_expand: Vec<usize>,
+        // functionally equivalent of ReshapeEvaluation but with the omission of differing columns to expand
     },
     ReshapeResponse {
         new_file_metadata: FileMetadata,
@@ -84,7 +91,8 @@ pub enum ServerMessages
     FileRow { row: Vec<u8> },
     EncodedColumn { col: Vec<TestField> },
     PolynomialEvaluation { evaluation_result: Vec<TestField> },
-    ReshapeEvaluation { original_result_vector: Vec<TestField>, original_columns: Vec<PoSColumn>, new_result_vector: Vec<TestField>, new_columns: Vec<PoSColumn> },
+    ReshapeEvaluation { expected_result: TestField, original_result_vector: Vec<TestField>, original_columns: Vec<PoSColumn>, new_result_vector: Vec<TestField>, new_columns: Vec<PoSColumn> },
+    EditOrAppendEvaluation { expected_result: TestField, original_result_vector: Vec<TestField>, original_columns: Vec<PoSColumn>, new_result_vector: Vec<TestField>, new_columns: Vec<PoSColumn> },
     ServerKeepAlive,
     FileDeleted { filename: String },
     BadResponse { error: String },

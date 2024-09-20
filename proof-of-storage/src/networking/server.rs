@@ -88,8 +88,11 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::EditFileRow { file_metadata, row, file } => {
                 handle_client_edit_file_row(file_metadata, row, file).await
             }
-            ClientMessages::AppendToFile { file_metadata, file } => {
-                handle_client_append_to_file(file_metadata, file).await
+            ClientMessages::AppendToFile { file_metadata, append_data } => {
+                handle_client_append_to_file(file_metadata, append_data).await
+            }
+            ClientMessages::RequestEditOrAppendEvaluation { old_file_metadata, new_file_metadata, evaluation_point, columns_to_expand } => {
+                todo!()
             }
             shared::ClientMessages::EditOrAppendResponse { .. } => { todo!() }
             ClientMessages::RequestEncodedColumn { file_metadata, row } => {
@@ -557,20 +560,21 @@ async fn handle_client_request_reshape_evaluation(
 
 
     let (evaluation_left_vector_for_old_commit, _)
-        = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, old_commit.n_rows, old_commit.n_cols);
+        = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, old_commit.n_rows, old_commit.n_per_row);
     let result_vector_for_old_commit = verifiable_polynomial_evaluation(&old_commit, &evaluation_left_vector_for_old_commit);
-    let old_result = verifiable_polynomial_evaluation(&old_commit, &result_vector_for_old_commit);
     let columns_for_old_commit = server_retreive_columns(&old_commit, &columns_to_expand_original);
 
 
     let (evaluation_left_vector_for_new_commit, _)
-        = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, new_commit.n_rows, new_commit.n_cols);
+        = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, new_commit.n_rows, new_commit.n_per_row);
     let result_vector_for_new_commit = verifiable_polynomial_evaluation(&new_commit, &evaluation_left_vector_for_new_commit);
     let columns_for_new_commit = server_retreive_columns(&new_commit, &columns_to_expand_new);
-    let new_result = verifiable_polynomial_evaluation(&new_commit, &result_vector_for_new_commit);
+
+    let expected_eval = fields::evaluate_field_polynomial_at_point(&encoded_file_data, &evaluation_point);
 
 
     Ok(ServerMessages::ReshapeEvaluation {
+        expected_result: expected_eval,
         original_result_vector: result_vector_for_old_commit,
         original_columns: columns_for_old_commit,
         new_result_vector: result_vector_for_new_commit,

@@ -1,8 +1,7 @@
-use std::collections::VecDeque;
 use std::net::IpAddr;
 
-use anyhow::{bail, ensure, Result};
-use blake3::{Hash, Hasher as Blake3};
+use anyhow::{bail, Result};
+use blake3::Hasher as Blake3;
 use clap::{Parser, Subcommand};
 use surrealdb::engine::local::RocksDb;
 use surrealdb::Surreal;
@@ -462,8 +461,8 @@ async fn reshape_command(
     let server_ip = server_ip + ":" + &server_port.to_string();
     let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
 
-    let file = proof_of_storage::networking::client::reshape_file::<Blake3>(&file_metadata, server_ip, security_bits, columns, encoded_columns).await?;
-    tracing::info!("File reshaped: {:?}", file);
+    let reshape_result = proof_of_storage::networking::client::reshape_file::<Blake3>(&file_metadata, server_ip, security_bits, columns, encoded_columns).await?;
+    tracing::info!("File reshaped: {:?}", &reshape_result.filename);
     Ok(())
 }
 
@@ -480,10 +479,33 @@ async fn delete_file_command(
     };
     let server_ip = server_ip + ":" + &server_port.to_string();
 
-    let result = proof_of_storage::networking::client::delete_file(file_metadata.clone(), server_ip).await?;
+    proof_of_storage::networking::client::delete_file(file_metadata.clone(), server_ip).await?;
 
 
     tracing::info!("File deleted: {}", &file_metadata.filename);
+
+    Ok(())
+}
+
+async fn append_to_file_command(
+    file_metadata: FileMetadata,
+    ip: Option<IpAddr>,
+    port: Option<u16>,
+    security_bits: Option<u8>,
+    data: Vec<u8>,
+) -> Result<()> {
+    let server_ip = if ip.is_some() { ip.unwrap().to_string() } else {
+        file_metadata.stored_server.server_ip.clone()
+    };
+    let server_port = if port.is_some() { port.unwrap() } else {
+        file_metadata.stored_server.server_port.clone()
+    };
+    let server_ip = server_ip + ":" + &server_port.to_string();
+    let security_bits = security_bits.unwrap_or(DEFAULT_SECURITY_BITS);
+
+
+    proof_of_storage::networking::client::append_to_file(file_metadata.clone(), server_ip, security_bits, data).await?;
+    tracing::info!("File appended: {}", &file_metadata.filename);
 
     Ok(())
 }

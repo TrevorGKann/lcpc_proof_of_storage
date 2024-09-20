@@ -324,7 +324,4 @@ pub mod tests {
         )
             .unwrap();
     }
-
-    #[test]
-    fn reshape_and_verification() {}
 }

@@ -6,6 +6,8 @@ pub mod network_tests {
     use blake3::Hasher as Blake3;
     use blake3::traits::digest::Output;
     use ff::PrimeField;
+    use rand_chacha::ChaCha8Rng;
+    use rand_core::SeedableRng;
     use serial_test::serial;
     use surrealdb::engine::local::RocksDb;
     use surrealdb::Surreal;
@@ -17,9 +19,10 @@ pub mod network_tests {
     use ulid::Ulid;
 
     use crate::databases::*;
+    use crate::fields;
     use crate::fields::{convert_byte_vec_to_field_elements_vec, random_writeable_field_vec};
     use crate::fields::writable_ft63::WriteableFt63;
-    use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
+    use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, decode_row, form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns, verifiable_polynomial_evaluation, verify_full_polynomial_evaluation_wrapper_with_single_eval_point};
     use crate::networking::client;
     use crate::networking::server::handle_client_loop;
     use crate::tests::tests::Cleanup;
@@ -144,67 +147,6 @@ pub mod network_tests {
 
         proof_response.unwrap();
     }
-
-    // #[tokio::test]
-    // #[serial]
-    // async fn test_different_column_hashing_methods_agree() {
-    //     start_tracing_for_tests();
-    //     tracing::info!("starting test_different_column_hashing_methods_agree");
-    //
-    //     let test_file = "test_files/test.txt";
-    //
-    //     let (root, commit, file_metadata)
-    //         = crate::networking::server::convert_file_to_commit_internal(test_file, None).unwrap();
-    //
-    //
-    //     let cols_to_verify = crate::networking::client::get_columns_from_random_seed(
-    //         1337,
-    //         // get_PoS_soudness_n_cols(&file_metadata),
-    //         2,
-    //         file_metadata.num_encoded_columns);
-    //
-    //     let leaves_from_file = get_processed_column_leaves_from_file(&file_metadata, cols_to_verify.clone()).await;
-    //
-    //     let server_columns = server_retreive_columns(&commit, &cols_to_verify);
-    //     let server_leaves: Vec<Output<Blake3>> = server_columns
-    //         .iter()
-    //         .map(hash_column_to_digest::<Blake3>)
-    //         .collect();
-    //
-    //     let mut file_data = fs::read(test_file).await.unwrap();
-    //     let mut encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
-    //     let CommitOrLeavesOutput::Leaves(streamed_file_leaves)
-    //         = convert_file_data_to_commit::<Blake3, _>(&encoded_file_data,
-    //                                                    CommitRequestType::Leaves(cols_to_verify.clone()),
-    //                                                    file_metadata.into()).unwrap()
-    //     else {
-    //         panic!("Non-leaf result from file conversion when leaves were expected")
-    //     };
-    //
-    //     tracing::debug!("commit's hashes:");
-    //     for i in 0..(commit.hashes.len() / 2) {
-    //         tracing::debug!("col {}: {:x}", i, commit.hashes[i]);
-    //     }
-    //
-    //     // debug print all the leaves
-    //     tracing::debug!("server leaves:");
-    //     for hash in server_leaves.iter() {
-    //         tracing::debug!("{:x}", hash);
-    //     }
-    //
-    //     tracing::debug!("leaves from file:");
-    //     for hash in leaves_from_file.iter() {
-    //         tracing::debug!("{:x}", hash);
-    //     }
-    //
-    //     tracing::debug!("streamed file leaves:");
-    //     for (hash, col_idx) in streamed_file_leaves.iter().zip(cols_to_verify.iter()) {
-    //         tracing::debug!("expected col {}, hash: {:x}", col_idx, hash);
-    //     }
-    //
-    //     assert_eq!(leaves_from_file, server_leaves);
-    //     assert_eq!(leaves_from_file, streamed_file_leaves);
-    // }
 
     #[tokio::test]
     #[serial]
@@ -344,5 +286,117 @@ pub mod network_tests {
         let retrieve_result: Option<FileMetadata> = db.select::<Option<FileMetadata>>((constants::SERVER_METADATA_TABLE, file_metadata.id_ulid.to_string())).await.unwrap();
 
         // assert_eq!(file_metadata, retrieve_result.unwrap())
+    }
+
+
+    #[tokio::test]
+    async fn test_polynomial_evaluations_with_different_methods() {
+        use PrimeField;
+        use ff::Field;
+        start_tracing_for_tests();
+        tracing::info!("Starting test_polynomial_evaluations_with_different_methods");
+
+        let mut random_seed = ChaCha8Rng::seed_from_u64(1337);
+        let source_polynomial = fields::random_writeable_field_vec(5);
+        let evaluation_point = WriteableFt63::random(&mut random_seed);
+
+        let expected_result = fields::evaluate_field_polynomial_at_point(&source_polynomial, &evaluation_point);
+
+        let CommitOrLeavesOutput::Commit::<Blake3, _>(tall_commitment) = convert_file_data_to_commit(
+            &source_polynomial,
+            CommitRequestType::Commit,
+            CommitDimensions::Specified {
+                num_pre_encoded_columns: 4,
+                num_encoded_columns: 8,
+            },
+        ).unwrap() else { panic!() };
+
+        let (tall_evaluation_left_vector, tall_evaluation_right_vector)
+            = form_side_vectors_for_polynomial_evaluation_from_point(&evaluation_point, tall_commitment.n_rows, tall_commitment.n_per_row);
+        let tall_result_vector = verifiable_polynomial_evaluation(&tall_commitment, &tall_evaluation_left_vector);
+        let decoded_tall_result_vector = decode_row(tall_result_vector.to_vec()).unwrap();
+        tracing::debug!("Evaluation point: {:?}", &evaluation_point);
+        tracing::debug!("tall_result_vector: {:?}", &decoded_tall_result_vector);
+        tracing::debug!("tall_evaluation_right_vector: {:?}", &tall_evaluation_right_vector);
+        tracing::debug!("tall_evaluation_left_vector: {:?}", &tall_evaluation_left_vector);
+        let tall_result = fields::vector_multiply(&decoded_tall_result_vector, &tall_evaluation_right_vector);
+
+        let CommitOrLeavesOutput::Commit::<Blake3, _>(wide_commitment) = convert_file_data_to_commit(
+            &source_polynomial,
+            CommitRequestType::Commit,
+            CommitDimensions::Specified {
+                num_pre_encoded_columns: 8,
+                num_encoded_columns: 16,
+            },
+        ).unwrap() else { panic!() };
+
+
+        let (wide_evaluation_left_vector, wide_evaluation_right_vector)
+            = form_side_vectors_for_polynomial_evaluation_from_point(&evaluation_point, wide_commitment.n_rows, wide_commitment.n_per_row);
+        let wide_result_vector = verifiable_polynomial_evaluation(&wide_commitment, &wide_evaluation_left_vector);
+        let decoded_wide_result_vector = decode_row(wide_result_vector.to_vec()).unwrap();
+        tracing::debug!("wide_result_vector: {:?}", &decoded_wide_result_vector);
+        tracing::debug!("wide_evaluation_right_vector: {:?}", &wide_evaluation_right_vector);
+        tracing::debug!("wide_evaluation_left_vector: {:?}", &wide_evaluation_left_vector);
+        let wide_result = fields::vector_multiply(&decoded_wide_result_vector, &wide_evaluation_right_vector);
+
+        tracing::debug!("expected_result: {:?}", expected_result);
+        tracing::debug!("tall_result: {:?}", tall_result);
+        tracing::debug!("wide_result: {:?}", wide_result);
+
+        assert_eq!(expected_result, tall_result);
+        assert_eq!(expected_result, wide_result);
+    }
+
+
+    #[tokio::test]
+    #[serial]
+    async fn test_metadata_reshape() {
+        let source_file = "test_files/test.txt";
+        let dest_temp_file = "test.txt";
+        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+
+        let port = start_test_with_server_on_random_port_and_get_port("test_metadata_reshape".to_string()).await;
+
+        // try to delete the file first, in case it's already uploaded
+        let to_delete_metadata = crate::networking::client::get_client_metadata_from_database_by_filename(
+            &"test.txt".to_string(),
+        ).await;
+
+        if let Ok(Some(metadata)) = to_delete_metadata {
+            tracing::debug!("client requesting file deletion");
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+            tracing::debug!("client received: {:?}", delete_result);
+        } else {
+            tracing::debug!("client did not request file deletion, no file found on database");
+        }
+
+        let file_data = fs::read(source_file).await.unwrap();
+
+        let upload_response = client::upload_file(
+            source_file.to_owned(),
+            Some(4),
+            Some(8),
+            format!("localhost:{}", port),
+        ).await;
+
+        tracing::debug!("client received: {:?}", upload_response);
+
+        let metadata = upload_response.unwrap();
+
+        let reshaped_metadata = client::reshape_file::<Blake3>(
+            &metadata,
+            format!("localhost:{}", port),
+            128,
+            8,
+            16,
+        ).await.unwrap();
+
+        assert_eq!(reshaped_metadata.num_columns, 8);
+        assert_eq!(reshaped_metadata.num_encoded_columns, 16);
+        assert_eq!(reshaped_metadata.filename, metadata.filename);
     }
 }

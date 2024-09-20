@@ -3,7 +3,7 @@ use std::cmp::min;
 use anyhow::{ensure, Result};
 use blake3::Hasher as Blake3;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use ff::{Field, PrimeField};
+use ff::PrimeField;
 use fffft::FieldFFT;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
@@ -16,7 +16,6 @@ use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 use crate::databases::FileMetadata;
 use crate::fields::{is_power_of_two, vector_multiply};
 use crate::fields::writable_ft63::WriteableFt63;
-use crate::networking::server::get_aspect_ratio_default_from_field_len;
 
 pub type FldT<E> = <E as LcEncoding>::F;
 pub type ErrT<E> = <E as LcEncoding>::Err;
@@ -455,16 +454,6 @@ where
         }
     }
 
-
-    // for (i, result_entry) in evaluation_result_vector
-    //     .iter()
-    //     .enumerate()
-    //     .filter(|(i, _)| requested_columns_indices.contains(i)) {
-    //     let expected_result = fields::vector_multiply(left_evaluation_column, &received_columns[i].col[..]);
-    //     if expected_result != *result_entry {
-    //         return Err(VerifierError::ColumnEval);
-    //     }
-    // }
     Ok(())
 }
 
@@ -489,7 +478,7 @@ where
 
 /// Verifies the evaluation of a polynomial on a single evaluation point given a set of columns 
 /// and a result vector from the full matrix
-pub fn verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point<D>(
+pub fn verify_full_polynomial_evaluation_wrapper_with_single_eval_point<D>(
     evaluation_point: &WriteableFt63,
     received_result_vector: &[WriteableFt63],
     n_rows: usize,
@@ -500,23 +489,8 @@ pub fn verifiable_full_polynomial_evaluation_wrapper_with_single_eval_point<D>(
 where
     D: Digest,
 {
-    let mut left_eval_column: Vec<WriteableFt63> = Vec::with_capacity(n_rows);
-    let mut right_eval_column: Vec<WriteableFt63> = Vec::with_capacity(n_cols);
-    let mut right_accumulator = WriteableFt63::one();
-
-    // right column should be [1, x, x^2, ..., x^n-1]
-    for _ in 0..n_rows {
-        right_eval_column.push(right_accumulator);
-        right_accumulator *= evaluation_point;
-    }
-    // right_accumulator will end up at x^n
-
-    // left column, then, should be [1, x^n, x^2n, ...]
-    let mut left_accumulator = WriteableFt63::one();
-    for _ in 0..n_rows {
-        left_eval_column.push(left_accumulator);
-        left_accumulator *= right_accumulator;
-    }
+    let (left_eval_column, right_eval_column)
+        = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, n_rows, n_cols);
 
     verifiable_full_polynomial_evaluation::<D>(
         &left_eval_column, &right_eval_column,
@@ -556,7 +530,7 @@ pub fn form_side_vectors_for_polynomial_evaluation_from_point(
     let mut right_accumulator = WriteableFt63::one();
 
     // right column should be [1, x, x^2, ..., x^n-1]
-    for _ in 0..n_rows {
+    for _ in 0..n_cols {
         right_eval_column.push(right_accumulator);
         right_accumulator *= evaluation_point;
     }
