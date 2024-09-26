@@ -1,3 +1,5 @@
+use crate::networking::client;
+
 #[cfg(test)]
 pub mod network_tests {
     use std::time::Duration;
@@ -399,4 +401,63 @@ pub mod network_tests {
         assert_eq!(reshaped_metadata.num_encoded_columns, 16);
         assert_eq!(reshaped_metadata.filename, metadata.filename);
     }
+
+
+    #[tokio::test]
+    #[serial]
+    async fn test_file_append() {
+        let source_file = "test_files/test.txt";
+        let dest_temp_file = "test.txt";
+        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+
+        let port = start_test_with_server_on_random_port_and_get_port("test_file_append".to_string()).await;
+
+        // try to delete the file first, in case it's already uploaded
+        let to_delete_metadata = crate::networking::client::get_client_metadata_from_database_by_filename(
+            &"test.txt".to_string(),
+        ).await;
+
+        if let Ok(Some(metadata)) = to_delete_metadata {
+            tracing::debug!("client requesting file deletion");
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+            tracing::debug!("client received: {:?}", delete_result);
+        } else {
+            tracing::debug!("client did not request file deletion, no file found on database");
+        }
+
+        let file_data = fs::read(source_file).await.unwrap();
+
+        let upload_response = client::upload_file(
+            source_file.to_owned(),
+            Some(4),
+            Some(8),
+            format!("localhost:{}", port),
+        ).await;
+
+        tracing::debug!("client received: {:?}", upload_response);
+
+        let metadata = upload_response.unwrap();
+
+        let data_to_append = fs::read(source_file).await.unwrap();
+
+        let appended_response = client::append_to_file(
+            metadata.clone(),
+            format!("localhost:{}", port),
+            8,
+            data_to_append,
+        ).await;
+
+        tracing::debug!("client received: {:?}", appended_response);
+
+        let appended_metadata = appended_response.unwrap();
+
+        assert_eq!(appended_metadata.num_columns, 8);
+        assert_eq!(appended_metadata.num_encoded_columns, 16);
+        assert_eq!(appended_metadata.filename, metadata.filename);
+        assert!(appended_metadata.num_rows >= metadata.num_rows);
+    }
 }
+

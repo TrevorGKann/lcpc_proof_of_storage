@@ -7,6 +7,7 @@ use anyhow::{bail, Context, ensure, Result};
 use blake3::{Hash, Hasher as Blake3};
 use blake3::traits::digest;
 use blake3::traits::digest::Output;
+use ff::{Field, PrimeField};
 use futures::{SinkExt, StreamExt, TryFutureExt};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -92,9 +93,11 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
                 handle_client_append_to_file(file_metadata, append_data).await
             }
             ClientMessages::RequestEditOrAppendEvaluation { old_file_metadata, new_file_metadata, evaluation_point, columns_to_expand } => {
-                todo!()
+                handle_client_append_or_edit_eval_request(&old_file_metadata, &new_file_metadata, &evaluation_point, &columns_to_expand).await
             }
-            shared::ClientMessages::EditOrAppendResponse { .. } => { todo!() }
+            shared::ClientMessages::EditOrAppendResponse { new_file_metadata, old_file_metadata, accepted } => {
+                handle_client_append_or_edit_response(&old_file_metadata, &new_file_metadata, accepted).await
+            }
             ClientMessages::RequestEncodedColumn { file_metadata, row } => {
                 handle_client_request_encoded_column(file_metadata, row).await
             }
@@ -346,13 +349,20 @@ async fn handle_client_append_to_file(file_metadata: FileMetadata, mut file_data
     let new_id = Ulid::new();
     let new_file_handle = get_file_location_from_id(&new_id);
 
+    tracing::debug!("server: appending new data to file: {:?} bytes -> {:?}", file_data_to_append.len(), old_file_handle);
     tokio::fs::copy(&old_file_handle, &new_file_handle).await?;
 
     let mut new_file_data = tokio::fs::read(&new_file_handle).await?;
     new_file_data.append(&mut file_data_to_append);
 
+    let mut new_file = tokio::fs::File::open(&new_file_handle).await?;
+    // error: need to actually append to this file. Right now it ought to be tripple writing but instead it's
+    //  not writing anything at all. Need to fix.
+    new_file.write_all(&new_file_data).await?;
+    tracing::debug!("server: appended file now exists at {:?} with length {}", new_file_handle, new_file_data.len());
 
-    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data_to_append);
+
+    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&new_file_data);
     let CommitOrLeavesOutput::Commit(updated_commit) = convert_file_data_to_commit(
         &encoded_file_data,
         CommitRequestType::Commit,
@@ -534,10 +544,10 @@ async fn handle_client_request_reshape_evaluation(
     // Both files have the same stored data at the id of the old metadata, we only need to read it once
     let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
     let file_data = tokio::fs::read(&old_file_handle).await?;
-    let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
+    let fielded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
 
     let CommitOrLeavesOutput::Commit(old_commit) = convert_file_data_to_commit(
-        &encoded_file_data,
+        &fielded_file_data,
         CommitRequestType::Commit,
         CommitDimensions::Specified {
             num_pre_encoded_columns: old_file_metadata.num_columns,
@@ -547,7 +557,7 @@ async fn handle_client_request_reshape_evaluation(
 
 
     let CommitOrLeavesOutput::Commit(new_commit) = convert_file_data_to_commit(
-        &encoded_file_data,
+        &fielded_file_data,
         CommitRequestType::Commit,
         CommitDimensions::Specified {
             num_pre_encoded_columns: new_file_metadata.num_columns,
@@ -570,7 +580,7 @@ async fn handle_client_request_reshape_evaluation(
     let result_vector_for_new_commit = verifiable_polynomial_evaluation(&new_commit, &evaluation_left_vector_for_new_commit);
     let columns_for_new_commit = server_retreive_columns(&new_commit, &columns_to_expand_new);
 
-    let expected_eval = fields::evaluate_field_polynomial_at_point(&encoded_file_data, &evaluation_point);
+    let expected_eval = fields::evaluate_field_polynomial_at_point(&fielded_file_data, &evaluation_point);
 
 
     Ok(ServerMessages::ReshapeEvaluation {
@@ -619,6 +629,116 @@ async fn handle_client_reshape_response(
     Ok(ServerMessages::CompactCommit { file_metadata: resulting_file_metadata.to_owned() })
 }
 
+#[tracing::instrument]
+async fn handle_client_append_or_edit_eval_request(
+    old_file_metadata: &FileMetadata,
+    new_file_metadata: &FileMetadata,
+    evaluation_point: &WriteableFt63,
+    columns_to_expand: &Vec<usize>,
+) -> Result<ServerMessages> {
+    check_file_metadata(&old_file_metadata)?;
+    check_file_metadata(&new_file_metadata)?;
+
+    let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle = get_file_handle_from_metadata(&new_file_metadata);
+
+    tracing::debug!("reading old file from {:?}", &old_file_handle);
+    let old_file_data = tokio::fs::read(&old_file_handle).await?;
+    tracing::debug!("reading new file from {:?}", &new_file_handle);
+    let new_file_data = tokio::fs::read(&new_file_handle).await?;
+
+    let fielded_old_file_data = convert_byte_vec_to_field_elements_vec(&old_file_data);
+    let fielded_new_file_data = convert_byte_vec_to_field_elements_vec(&new_file_data);
+
+    let CommitOrLeavesOutput::Commit(old_commit) = convert_file_data_to_commit(
+        &fielded_old_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: old_file_metadata.num_columns,
+            num_encoded_columns: old_file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
+
+    let CommitOrLeavesOutput::Commit(new_commit) = convert_file_data_to_commit(
+        &fielded_new_file_data,
+        CommitRequestType::Commit,
+        CommitDimensions::Specified {
+            num_pre_encoded_columns: new_file_metadata.num_columns,
+            num_encoded_columns: new_file_metadata.num_encoded_columns,
+        },
+    )? else { bail!("Unexpected failure to convert file to commitment") };
+
+    let (evaluation_left_vector_for_old_commit, _)
+        = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, old_commit.n_rows, old_commit.n_per_row);
+    let result_vector_for_old_commit = verifiable_polynomial_evaluation(&old_commit, &evaluation_left_vector_for_old_commit);
+    let columns_for_old_commit = server_retreive_columns(&old_commit, columns_to_expand);
+
+
+    let (evaluation_left_vector_for_new_commit, _)
+        = form_side_vectors_for_polynomial_evaluation_from_point(evaluation_point, new_commit.n_rows, new_commit.n_per_row);
+    let result_vector_for_new_commit = verifiable_polynomial_evaluation(&new_commit, &evaluation_left_vector_for_new_commit);
+    let columns_for_new_commit = server_retreive_columns(&new_commit, columns_to_expand);
+
+    let start_of_edited_row = (old_file_metadata.num_rows - 1) * old_file_metadata.num_columns;
+    let end_of_edited_row = if (old_file_metadata.num_rows < new_file_metadata.num_rows) {
+        (old_file_metadata.num_rows * old_file_metadata.num_columns) - 1 //debug: this might be an off-by-one error
+    } else {
+        new_file_metadata.filesize_in_bytes.div_ceil(WriteableFt63::CAPACITY as usize)
+    };
+
+    let edited_unencoded_row = fielded_new_file_data[start_of_edited_row..=end_of_edited_row].to_vec();
+
+    Ok(ServerMessages::EditOrAppendEvaluation {
+        original_result_vector: result_vector_for_old_commit,
+        original_columns: columns_for_old_commit,
+        new_result_vector: result_vector_for_new_commit,
+        new_columns: columns_for_new_commit,
+        edited_unencoded_row,
+    })
+}
+
+
+#[tracing::instrument]
+async fn handle_client_append_or_edit_response(
+    old_file_metadata: &FileMetadata,
+    new_file_metadata: &FileMetadata,
+    accepted: bool,
+) -> Result<ServerMessages> {
+    tracing::info!("Client responded to an edit/append request: {:?} to {:?} was accepted? {}",
+        &old_file_metadata, &new_file_metadata, accepted);
+    check_file_metadata(&old_file_metadata)?;
+    check_file_metadata(&new_file_metadata)?;
+
+    let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle = get_file_handle_from_metadata(&new_file_metadata);
+
+    // we now have two database entries for the same file, the new one has a bad ID, so we'll have to
+    // change the filename and delete the old entry if it's accepted and only have to delete the new
+    // entry if it's rejected.
+    let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
+
+    // this is slightly different from the reshape request since we also have to delete the unaccepted file
+    let resulting_file_metadata: &FileMetadata =
+        if accepted {
+            tokio::fs::rename(&old_file_handle, &new_file_handle).await?;
+            let db_delete_result: Option<FileMetadata>
+                = db.delete((constants::SERVER_METADATA_TABLE, &old_file_metadata.id_ulid.to_string())).await?;
+
+            tokio::fs::remove_file(&old_file_handle).await?;
+
+            new_file_metadata
+        } else {
+            let db_delete_result: Option<FileMetadata>
+                = db.delete((constants::SERVER_METADATA_TABLE, &old_file_metadata.id_ulid.to_string())).await?;
+
+            tokio::fs::remove_file(&new_file_handle).await?;
+
+            old_file_metadata
+        };
+
+    Ok(ServerMessages::CompactCommit { file_metadata: resulting_file_metadata.to_owned() })
+}
 
 #[tracing::instrument]
 pub fn get_aspect_ratio_default_from_field_len(field_len: usize) -> (usize, usize, usize) {
@@ -648,7 +768,7 @@ pub(crate) fn get_soundness_from_matrix_dims(pre_encoded_cols: usize, encoded_co
 }
 
 #[tracing::instrument]
-pub fn get_aspect_ratio_default_from_file_len<Field: ff::PrimeField>(file_len: usize) -> (usize, usize, usize) {
+pub fn get_aspect_ratio_default_from_file_len<Field: PrimeField>(file_len: usize) -> (usize, usize, usize) {
     tracing::debug!("file_len: {}", file_len);
     let write_out_byte_width = (Field::CAPACITY / 8) as usize;
     let field_len = usize::div_ceil(file_len, write_out_byte_width);

@@ -681,14 +681,10 @@ pub async fn append_to_file(
     server_ip: String,
     security_bits: u8,
     data_to_append: Vec<u8>,
-) -> Result<()> {
-    let original_polynomial_degree = file_metadata.filesize_in_bytes / (WriteableFt63::CAPACITY / 8) as usize;
+) -> Result<FileMetadata> {
+    let original_polynomial_degree = file_metadata.filesize_in_bytes / (WriteableFt63::CAPACITY as usize / 8);
     let byte_offset = file_metadata.filesize_in_bytes % (WriteableFt63::CAPACITY / 8) as usize;
-    let column_expected_to_change = if byte_offset == 0 {
-        None
-    } else {
-        Some(original_polynomial_degree / file_metadata.num_columns)
-    };
+    let did_coefficient_change = byte_offset != 0;
 
 
     tracing::info!("requesting append to file from server");
@@ -719,13 +715,18 @@ pub async fn append_to_file(
     };
 
     if (file_metadata.num_columns != appended_file_metadata.num_columns)
-        || (file_metadata.num_encoded_columns != appended_file_metadata.num_columns)
-        || (appended_file_metadata.filesize_in_bytes == file_metadata.filesize_in_bytes + data_to_append.len())
+        || (file_metadata.num_encoded_columns != appended_file_metadata.num_encoded_columns)
     {
-        tracing::error!("File append failed: number of columns mismatch");
+        tracing::error!("File append failed: Size of new commit is invalid");
         sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
             .await.expect("Failed to send message to server");
-        bail!("File append failed: number of columns mismatch");
+        bail!("File append failed: Size of new commit is invalid");
+    }
+    if (appended_file_metadata.filesize_in_bytes != file_metadata.filesize_in_bytes + data_to_append.len()) {
+        tracing::error!("File append failed: Insufficient bytes on new commit");
+        sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
+            .await.expect("Failed to send message to server");
+        bail!("File append failed: Insufficient bytes on new commit");
     }
 
     let mut random_seed = ChaCha8Rng::seed_from_u64(1337);
@@ -736,10 +737,6 @@ pub async fn append_to_file(
         get_PoS_soudness_n_cols(&file_metadata),
         file_metadata.num_encoded_columns,
     );
-
-    if column_expected_to_change.is_some() && !requested_columns.contains(&column_expected_to_change.unwrap()) {
-        requested_columns.push(column_expected_to_change.unwrap());
-    }
 
     sink.send(ClientMessages::RequestEditOrAppendEvaluation {
         old_file_metadata: file_metadata.clone(),
@@ -755,11 +752,11 @@ pub async fn append_to_file(
     tracing::debug!("Client received: {:?}", transmission);
 
     let ServerMessages::EditOrAppendEvaluation {
-        expected_result,
         original_result_vector,
         original_columns,
         new_result_vector,
-        new_columns
+        new_columns,
+        edited_unencoded_row,
     } = transmission
     else {
         return match transmission {
@@ -773,34 +770,6 @@ pub async fn append_to_file(
             }
         }
     };
-
-    // Check that the coefficient at the write_head is correctly updated.
-    // This is probably redundant since checking the polynomial will determine if this is incorrectly done anyways,
-    //      but might as well debug it like this
-    if column_expected_to_change.is_some() {
-        let column_expected_to_change_index = requested_columns.iter().position(|&x| x == column_expected_to_change.unwrap()).unwrap();
-        let actual_column_expected_to_change_original = original_columns[column_expected_to_change_index].clone();
-        let actual_column_expected_to_change_new = new_columns[column_expected_to_change_index].clone();
-
-        let coefficient_expected_to_change_original: Vec<u8> = actual_column_expected_to_change_original.col[actual_column_expected_to_change_original.col.len() - 1].to_repr().as_ref().to_owned();
-        let coefficient_expected_to_change_new: Vec<u8> = actual_column_expected_to_change_new.col[actual_column_expected_to_change_original.col.len() - 1].to_repr().as_ref().to_owned();
-        // must use original column.len because it's possible the append data created a new row at the end of the matrix;
-        //  we need to keep the original coefficient.
-
-        let mut passed_check = true;
-        for i in 0..original_polynomial_degree {
-            passed_check &= coefficient_expected_to_change_original[i] == coefficient_expected_to_change_new[i];
-        }
-        for i in original_polynomial_degree..(WriteableFt63::CAPACITY as usize) {
-            passed_check &= coefficient_expected_to_change_new[i] == data_to_append[i];
-        }
-        if !passed_check {
-            tracing::error!("File append failed: column {} did not change as expected", column_expected_to_change.unwrap());
-            sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
-                .await.expect("Failed to send message to server");
-            bail!("File append failed: column {} did not change as expected", column_expected_to_change.unwrap());
-        }
-    }
 
 
     let old_results = lcpc_online::verify_full_polynomial_evaluation_wrapper_with_single_eval_point::<Blake3>(
@@ -821,26 +790,54 @@ pub async fn append_to_file(
         &new_columns,
     );
 
-    let mut data_pointer = 0;
-    let expected_difference_between_evaluations = {
-        let mut expected_diff = WriteableFt63::ZERO;
-        if column_expected_to_change.is_some() {
-            let column_expected_to_change_index = requested_columns.iter().position(|&x| x == column_expected_to_change.unwrap()).unwrap();
-            let actual_column_expected_to_change_original = &original_columns[column_expected_to_change_index];
-            expected_diff -= actual_column_expected_to_change_original.col[actual_column_expected_to_change_original.col.len() - 1] * (WriteableFt63::ONE.pow([original_polynomial_degree as u64]));
-            //todo: intention here is to subtract the original coefficient from the new coefficient. Right now I've only subtracted the original.
-            // I have to construct the new coefficient and offset the data_pointer.
-            // the easy way to do this would be just using the new column but eventually I want to only send over the old column, but for sake of getting it done it might be worth it for now
-        }
+    if old_results.is_err() || new_results.is_err() {
+        tracing::error!("File append failed: verification failed");
+        sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
+            .await.expect("Failed to send message to server");
+        bail!("File append failed: verification failed");
+    }
+    let old_results = old_results.unwrap();
+    let new_results = new_results.unwrap();
 
-        let remainder_of_coefficients = convert_byte_vec_to_field_elements_vec(&data_to_append[data_pointer..]);
-        data_pointer += remainder_of_coefficients.len();
-        expected_diff += evaluate_field_polynomial_at_point_with_elevated_degree(remainder_of_coefficients, evaluation_point, original_polynomial_degree);
-        // todo test if this should be `original_polynomial_degree` or `original_polynomial_degree + 1`
-        expected_diff
-    };
+    let mut expected_difference_between_evaluations = WriteableFt63::zero();
+    let mut byte_difference_between_evaluations = Vec::with_capacity(data_to_append.len() + WriteableFt63::CAPACITY as usize);
+    if did_coefficient_change {
+        let mut changed_coefficient: WriteableFt63 = edited_unencoded_row[original_polynomial_degree % file_metadata.num_columns].clone();
+        // let changed_bytes: Vec<u8> = changed_coefficient.as_ref::<[u8]>()[..byte_offset].to_vec();
+        byte_difference_between_evaluations.extend_from_slice(&changed_coefficient.to_repr().as_ref()[..byte_offset]);
 
-    todo!()
+        expected_difference_between_evaluations -= evaluate_field_polynomial_at_point_with_elevated_degree(
+            &[changed_coefficient],
+            &evaluation_point,
+            original_polynomial_degree as u64, // debug: might be an off by one error on the degree
+        );
+    }
+
+    byte_difference_between_evaluations.extend_from_slice(&data_to_append);
+    let coefficient_difference_between_evaluations
+        = convert_byte_vec_to_field_elements_vec(&byte_difference_between_evaluations);
+
+    expected_difference_between_evaluations = evaluate_field_polynomial_at_point_with_elevated_degree(
+        &coefficient_difference_between_evaluations,
+        &evaluation_point,
+        original_polynomial_degree as u64, // debug: might be an off by one error on the degree
+    );
+
+
+    tracing::debug!("Old results: {:?}", &old_results);
+    tracing::debug!("New results: {:?}", &new_results);
+    tracing::debug!("Expected difference between evaluations: {:?}", &expected_difference_between_evaluations);
+    tracing::debug!("Old results + expected difference between evaluations: {:?}", *&old_results + &expected_difference_between_evaluations);
+    tracing::debug!("Old results - expected difference between evaluations: {:?}", *&old_results - &expected_difference_between_evaluations);
+
+    if new_results != old_results + expected_difference_between_evaluations {
+        tracing::error!("File append failed: new results did not match expected results");
+        sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
+            .await.expect("Failed to send message to server");
+        bail!("File append failed: new results did not match expected results");
+    }
+
+    Ok(appended_file_metadata)
 }
 
 pub async fn get_client_metadata_from_database_by_filename(filename: &String) -> Result<Option<FileMetadata>> {

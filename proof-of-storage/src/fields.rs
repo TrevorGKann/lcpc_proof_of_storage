@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::mem;
 
-use ff::PrimeField;
+use ff::{Field, PrimeField};
 use itertools::Itertools;
 use num_traits::{One, Zero};
 use rand::Rng;

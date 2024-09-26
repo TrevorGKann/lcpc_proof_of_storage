@@ -3,7 +3,7 @@ use std::cmp::min;
 use anyhow::{ensure, Result};
 use blake3::Hasher as Blake3;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use ff::PrimeField;
+use ff::{Field, PrimeField};
 use fffft::FieldFFT;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
@@ -16,6 +16,7 @@ use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 use crate::databases::FileMetadata;
 use crate::fields::{is_power_of_two, vector_multiply};
 use crate::fields::writable_ft63::WriteableFt63;
+use crate::networking::server::get_aspect_ratio_default_from_field_len;
 
 pub type FldT<E> = <E as LcEncoding>::F;
 pub type ErrT<E> = <E as LcEncoding>::Err;
