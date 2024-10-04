@@ -92,7 +92,7 @@ pub fn convert_byte_vec_to_field_elements_vec(byte_vec: &[u8]) -> Vec<WriteableF
 
 
     byte_vec.chunks(read_in_bytes)
-        .map(|bytes| { //todo need to add from_le/from_be variants
+        .map(|bytes| {
             let mut full_length_byte_array = [0u8; mem::size_of::<u64>()];
             match writable_ft63::ENDIANNESS {
                 ByteOrder::BigEndian => {
@@ -105,6 +105,25 @@ pub fn convert_byte_vec_to_field_elements_vec(byte_vec: &[u8]) -> Vec<WriteableF
             let u64_array = [u64::from_le_bytes(full_length_byte_array)];
             WriteableFt63::from_u64_array(u64_array).unwrap()
         })
+        .collect()
+}
+
+#[tracing::instrument]
+pub fn convert_field_elements_vec_to_byte_vec(field_elements: &Vec<WriteableFt63>, expected_length: usize) -> Vec<u8> {
+    let per_element_byte_length = (WriteableFt63::CAPACITY / 8) as usize;
+    field_elements.iter().flat_map(|field_element| {
+        let u64_array = field_element.to_u64_array();
+        let mut write_buffer = u64_array_to_byte_array::<1>(&u64_array, writable_ft63::ENDIANNESS);
+        match writable_ft63::ENDIANNESS {
+            ByteOrder::BigEndian => {
+                write_buffer.remove(0);
+            }
+            ByteOrder::LittleEndian => {
+                write_buffer.pop();
+            }
+        }
+        write_buffer
+    }).take(expected_length)
         .collect()
 }
 
@@ -225,13 +244,27 @@ pub fn evaluate_field_polynomial_at_point(field_elements: &Vec<WriteableFt63>, p
 pub fn evaluate_field_polynomial_at_point_with_elevated_degree(field_elements: &[WriteableFt63], point: &WriteableFt63, degree_offset: u64) -> WriteableFt63
 {
     let mut result = WriteableFt63::zero();
-    let mut current_power = WriteableFt63::one().pow([degree_offset]);
+    let mut current_power = point.clone().pow([degree_offset]);
     for field_element in field_elements.iter() {
         result += *field_element * current_power;
         current_power *= point;
     }
     result
 }
+
+
+pub fn vector_multiply(
+    a: &[WriteableFt63],
+    b: &[WriteableFt63],
+) -> WriteableFt63
+{
+    a.iter().zip(b.iter()).map(|(a, b)| *a * b).sum()
+}
+
+pub fn is_power_of_two(x: usize) -> bool {
+    x & (x - 1) == 0
+}
+
 
 #[test]
 fn test_polynomial_eval() {
@@ -247,15 +280,17 @@ fn test_polynomial_eval() {
     assert_eq!(evaluate_field_polynomial_at_point(&field_elements, &point), WriteableFt63::from_u128(2 * (2u128.pow(2)) + 2 + 0));
 }
 
+#[test]
+fn bytes_into_then_out_of_field_elements() {
+    let mut bytes = vec![0u8; 1000];
+    // fill bytes with random data
+    let mut rng = rand::thread_rng();
+    for byte in bytes.iter_mut() {
+        *byte = rng.gen::<u8>();
+    }
+    let field = convert_byte_vec_to_field_elements_vec(&bytes);
 
-pub fn vector_multiply(
-    a: &[WriteableFt63],
-    b: &[WriteableFt63],
-) -> WriteableFt63
-{
-    a.iter().zip(b.iter()).map(|(a, b)| *a * b).sum()
-}
+    let bytes_back = convert_field_elements_vec_to_byte_vec(&field, 1000);
 
-pub fn is_power_of_two(x: usize) -> bool {
-    x & (x - 1) == 0
+    assert_eq!(bytes, bytes_back);
 }
