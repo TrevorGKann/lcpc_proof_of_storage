@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use anyhow::{bail, ensure, Result};
 use bitvec::macros::internal::funty::Unsigned;
 use bitvec::view::BitViewSized;
@@ -26,7 +28,7 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::*;
 use crate::databases::*;
-use crate::fields::{convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, evaluate_field_polynomial_at_point_with_elevated_degree, writable_ft63};
+use crate::fields::{convert_byte_vec_to_field_elements_vec, convert_field_elements_vec_to_byte_vec, evaluate_field_polynomial_at_point, evaluate_field_polynomial_at_point_with_elevated_degree, writable_ft63};
 use crate::fields::writable_ft63::WriteableFt63;
 use crate::lcpc_online::{client_verify_commitment, CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
 use crate::networking::server;
@@ -682,7 +684,7 @@ pub async fn append_to_file(
     security_bits: u8,
     data_to_append: Vec<u8>,
 ) -> Result<FileMetadata> {
-    let original_polynomial_degree = file_metadata.filesize_in_bytes / (WriteableFt63::CAPACITY as usize / 8);
+    let original_polynomial_degree = file_metadata.filesize_in_bytes / (WriteableFt63::CAPACITY / 8) as usize;
     let byte_offset = file_metadata.filesize_in_bytes % (WriteableFt63::CAPACITY / 8) as usize;
     let did_coefficient_change = byte_offset != 0;
 
@@ -803,11 +805,19 @@ pub async fn append_to_file(
     let mut byte_difference_between_evaluations = Vec::with_capacity(data_to_append.len() + WriteableFt63::CAPACITY as usize);
     if did_coefficient_change {
         let mut changed_coefficient: WriteableFt63 = edited_unencoded_row[original_polynomial_degree % file_metadata.num_columns].clone();
-        // let changed_bytes: Vec<u8> = changed_coefficient.as_ref::<[u8]>()[..byte_offset].to_vec();
-        byte_difference_between_evaluations.extend_from_slice(&changed_coefficient.to_repr().as_ref()[..byte_offset]);
+
+        let original_coefficient_bytes = convert_field_elements_vec_to_byte_vec(&[changed_coefficient], byte_offset);
+        byte_difference_between_evaluations.extend(&original_coefficient_bytes);
+        let original_coefficient = convert_byte_vec_to_field_elements_vec(&original_coefficient_bytes);
+        ensure!(original_coefficient.len() == 1, "Expected only one changed coefficient");
+
+        //debug: delete me once this works
+        // tracing::debug!("byte values in the last row: {:?}", convert_field_elements_vec_to_byte_vec(&edited_unencoded_row, edited_unencoded_row.len() * WriteableFt63::CAPACITY as usize / 8));
+        tracing::debug!("bytes in the original coefficient: {:?}", convert_field_elements_vec_to_byte_vec(&[changed_coefficient], byte_offset));
+
 
         expected_difference_between_evaluations -= evaluate_field_polynomial_at_point_with_elevated_degree(
-            &[changed_coefficient],
+            &original_coefficient,
             &evaluation_point,
             original_polynomial_degree as u64, // debug: might be an off by one error on the degree
         );
@@ -817,7 +827,9 @@ pub async fn append_to_file(
     let coefficient_difference_between_evaluations
         = convert_byte_vec_to_field_elements_vec(&byte_difference_between_evaluations);
 
-    expected_difference_between_evaluations = evaluate_field_polynomial_at_point_with_elevated_degree(
+    tracing::debug!("bytes in the new coefficient: {:?}", convert_field_elements_vec_to_byte_vec(&coefficient_difference_between_evaluations, min(WriteableFt63::CAPACITY as usize / 8, data_to_append.len() + byte_offset)));
+
+    expected_difference_between_evaluations += evaluate_field_polynomial_at_point_with_elevated_degree(
         &coefficient_difference_between_evaluations,
         &evaluation_point,
         original_polynomial_degree as u64, // debug: might be an off by one error on the degree
@@ -827,10 +839,11 @@ pub async fn append_to_file(
     tracing::debug!("Old results: {:?}", &old_results);
     tracing::debug!("New results: {:?}", &new_results);
     tracing::debug!("Expected difference between evaluations: {:?}", &expected_difference_between_evaluations);
+    tracing::debug!("Actual difference between evaluation: {:?}", *&new_results - &old_results);
     tracing::debug!("Old results + expected difference between evaluations: {:?}", *&old_results + &expected_difference_between_evaluations);
     tracing::debug!("Old results - expected difference between evaluations: {:?}", *&old_results - &expected_difference_between_evaluations);
 
-    if new_results != old_results + expected_difference_between_evaluations {
+    if new_results != *&old_results + expected_difference_between_evaluations {
         tracing::error!("File append failed: new results did not match expected results");
         sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
             .await.expect("Failed to send message to server");

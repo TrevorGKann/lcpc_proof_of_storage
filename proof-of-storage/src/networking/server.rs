@@ -350,15 +350,15 @@ async fn handle_client_append_to_file(file_metadata: FileMetadata, mut file_data
     let new_file_handle = get_file_location_from_id(&new_id);
 
     tracing::debug!("server: appending new data to file: {:?} bytes -> {:?}", file_data_to_append.len(), old_file_handle);
-    tokio::fs::copy(&old_file_handle, &new_file_handle).await?;
+    // tokio::fs::copy(&old_file_handle, &new_file_handle).await?;
 
-    let mut new_file_data = tokio::fs::read(&new_file_handle).await?;
+    let mut new_file_data = tokio::fs::read(&old_file_handle).await?;
     new_file_data.append(&mut file_data_to_append);
 
-    let mut new_file = tokio::fs::File::open(&new_file_handle).await?;
     // error: need to actually append to this file. Right now it ought to be tripple writing but instead it's
     //  not writing anything at all. Need to fix.
-    new_file.write_all(&new_file_data).await?;
+    tokio::fs::write(&new_file_handle, &new_file_data).await
+        .context("failed while writing file from client to new file location")?;
     tracing::debug!("server: appended file now exists at {:?} with length {}", new_file_handle, new_file_data.len());
 
 
@@ -685,6 +685,9 @@ async fn handle_client_append_or_edit_eval_request(
     } else {
         new_file_metadata.filesize_in_bytes.div_ceil(WriteableFt63::CAPACITY as usize)
     };
+
+    //debug: change back to new file data
+    // let end_of_edited_row = fielded_old_file_data.len() - 1;
 
     let edited_unencoded_row = fielded_new_file_data[start_of_edited_row..=end_of_edited_row].to_vec();
 
