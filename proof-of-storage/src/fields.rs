@@ -109,8 +109,7 @@ pub fn convert_byte_vec_to_field_elements_vec(byte_vec: &[u8]) -> Vec<WriteableF
 }
 
 #[tracing::instrument]
-pub fn convert_field_elements_vec_to_byte_vec(field_elements: &Vec<WriteableFt63>, expected_length: usize) -> Vec<u8> {
-    let per_element_byte_length = (WriteableFt63::CAPACITY / 8) as usize;
+pub fn convert_field_elements_vec_to_byte_vec(field_elements: &[WriteableFt63], expected_length: usize) -> Vec<u8> {
     field_elements.iter().flat_map(|field_element| {
         let u64_array = field_element.to_u64_array();
         let mut write_buffer = u64_array_to_byte_array::<1>(&u64_array, writable_ft63::ENDIANNESS);
@@ -281,8 +280,43 @@ fn test_polynomial_eval() {
 }
 
 #[test]
+fn test_polynomial_eval_with_elevated_degree() {
+    let field_elements = vec![WriteableFt63::zero(), WriteableFt63::zero(), WriteableFt63::zero()];
+    let point = WriteableFt63::one();
+    assert_eq!(evaluate_field_polynomial_at_point_with_elevated_degree(&field_elements, &point, 1), WriteableFt63::zero());
+
+
+    let field_elements = vec![WriteableFt63::one(), WriteableFt63::one(), WriteableFt63::one()];
+    assert_eq!(evaluate_field_polynomial_at_point_with_elevated_degree(&field_elements, &point, 1), WriteableFt63::one() + WriteableFt63::one() + WriteableFt63::one());
+
+
+    let field_elements = vec![WriteableFt63::zero(), WriteableFt63::zero(), WriteableFt63::one() + WriteableFt63::one()];
+    let point = WriteableFt63::one() + WriteableFt63::one();
+    assert_eq!(evaluate_field_polynomial_at_point(
+        &field_elements,
+        &point,
+    ), evaluate_field_polynomial_at_point_with_elevated_degree(
+        &[WriteableFt63::one() + WriteableFt63::one()],
+        &point,
+        2,
+    ));
+
+    let field_elements = vec![WriteableFt63::zero(), WriteableFt63::zero(), WriteableFt63::one() + WriteableFt63::one(), WriteableFt63::one() + WriteableFt63::one()];
+    let point = WriteableFt63::one() + WriteableFt63::one();
+    assert_eq!(evaluate_field_polynomial_at_point(
+        &field_elements,
+        &point,
+    ), evaluate_field_polynomial_at_point_with_elevated_degree(
+        &[WriteableFt63::one() + WriteableFt63::one(), WriteableFt63::one() + WriteableFt63::one()],
+        &point,
+        2,
+    ));
+}
+
+#[test]
 fn bytes_into_then_out_of_field_elements() {
-    let mut bytes = vec![0u8; 1000];
+    static LEN: usize = 999;
+    let mut bytes = vec![0u8; LEN];
     // fill bytes with random data
     let mut rng = rand::thread_rng();
     for byte in bytes.iter_mut() {
@@ -290,7 +324,7 @@ fn bytes_into_then_out_of_field_elements() {
     }
     let field = convert_byte_vec_to_field_elements_vec(&bytes);
 
-    let bytes_back = convert_field_elements_vec_to_byte_vec(&field, 1000);
+    let bytes_back = convert_field_elements_vec_to_byte_vec(&field, LEN);
 
     assert_eq!(bytes, bytes_back);
 }
