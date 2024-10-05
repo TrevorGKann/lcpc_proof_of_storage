@@ -681,13 +681,10 @@ async fn handle_client_append_or_edit_eval_request(
 
     let start_of_edited_row = (old_file_metadata.num_rows - 1) * old_file_metadata.num_columns;
     let end_of_edited_row = if (old_file_metadata.num_rows < new_file_metadata.num_rows) {
-        (old_file_metadata.num_rows * old_file_metadata.num_columns) - 1 //debug: this might be an off-by-one error
+        (old_file_metadata.num_rows * old_file_metadata.num_columns) - 1
     } else {
         new_file_metadata.filesize_in_bytes.div_ceil(WriteableFt63::CAPACITY as usize)
-    };
-
-    //debug: change back to new file data
-    // let end_of_edited_row = fielded_old_file_data.len() - 1;
+    }; // optimization: can probably just be a `min` instead of an if-then-else
 
     let edited_unencoded_row = fielded_new_file_data[start_of_edited_row..=end_of_edited_row].to_vec();
 
@@ -798,13 +795,13 @@ fn get_file_handle_from_metadata(file_metadata: &FileMetadata) -> PathBuf {
 
 fn get_file_location_from_id(id: &Ulid) -> PathBuf {
     let mut path = env::current_dir().unwrap();
-    path.push("PoS_server_files");
+    path.push(constants::SERVER_FILE_FOLDER);
 
     //check that directory folder exists
     if !path.exists() {
         std::fs::create_dir(&path).unwrap();
     }
 
-    path.push(format!("{}.PoSFile", id.to_string()));
+    path.push(format!("{}.{}", id.to_string(), constants::FILE_EXTENSION));
     path
 }

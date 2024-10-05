@@ -1,3 +1,5 @@
+pub static SERVER_FILE_FOLDER: &str = "PoR_server_files";
+pub static FILE_EXTENSION: &str = "porfile";
 pub static DATABASE_ADDRESS: &str = "PoR_Database";
 pub static SERVER_NAMESPACE: &str = "server";
 pub static SERVER_DATABASE_NAME: &str = "data";

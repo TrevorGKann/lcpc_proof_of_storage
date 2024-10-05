@@ -848,6 +848,17 @@ pub async fn append_to_file(
         bail!("File append failed: new results did not match expected results");
     }
 
+    sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata.clone(), old_file_metadata: appended_file_metadata.clone(), accepted: true })
+        .await.expect("Failed to send message to server");
+
+
+    // delete old file in the database and replace with the new one
+    let mut db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
+    db.use_ns(constants::CLIENT_NAMESPACE).use_db(constants::CLIENT_DATABASE_NAME).await?;
+    db.create::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, appended_file_metadata.id_ulid.to_string()))
+        .content(appended_file_metadata.clone()).await?;
+    db.delete::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id_ulid.to_string())).await?;
+
     Ok(appended_file_metadata)
 }
 
