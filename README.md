@@ -16,6 +16,8 @@ https://eprint.iacr.org/2021/1043
 
 - `lcpc-test-fields` - field definitions and misc for testing / benching
 
+- `proof-of-storage` - a showcase of how this can be used for proof of remote file retrievability
+
 - `scripts` - miscellaneous
 
 ## license
