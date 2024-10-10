@@ -463,7 +463,7 @@ where
             &evaluation_point,
             &evaluation_result,
             file_metadata.num_rows,
-            file_metadata.num_columns,
+            file_metadata.num_encoded_columns,
             &cols_to_verify,
             &received_columns,
         );

@@ -114,7 +114,7 @@ where
 
     // encode the data
 
-    return match what_to_extract {
+    match what_to_extract {
         CommitRequestType::Commit => {
             let commit = LcCommit::<D, LigeroEncoding<F>>::commit(
                 &field_data,
@@ -214,7 +214,7 @@ where
 
             Ok(CommitOrLeavesOutput::ColumnsWithPath(columns))
         }
-    };
+    }
 }
 
 
@@ -448,7 +448,8 @@ where
         .map(|(_, value)| value)
         .collect();
 
-    for (received_column, received_value) in received_columns.iter().zip(result_values_that_match_column_indices.iter()) {
+    for (received_column, received_value) in received_columns.iter()
+        .zip(result_values_that_match_column_indices.iter()) {
         let expected_result = fields::vector_multiply(left_evaluation_column, &received_column.col[..]);
         if expected_result != **received_value {
             return Err(VerifierError::ColumnEval);
@@ -567,7 +568,7 @@ fn verify_polynomial_eval() {
     // let mut right_accumulator = WriteableFt63::one();
 
     let (left_eval_column, right_eval_column)
-        = form_side_vectors_for_polynomial_evaluation_from_point(&eval_point, commit.n_rows, commit.n_cols);
+        = form_side_vectors_for_polynomial_evaluation_from_point(&eval_point, commit.n_rows, commit.n_per_row);
 
     let server_partial_evaluation = verifiable_polynomial_evaluation(&commit, &left_eval_column);
 

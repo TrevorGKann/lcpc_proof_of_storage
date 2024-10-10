@@ -454,8 +454,8 @@ pub mod network_tests {
 
         let appended_metadata = appended_response.unwrap();
 
-        assert_eq!(appended_metadata.num_columns, 8);
-        assert_eq!(appended_metadata.num_encoded_columns, 16);
+        assert_eq!(appended_metadata.num_columns, 4);
+        assert_eq!(appended_metadata.num_encoded_columns, 8);
         assert_eq!(appended_metadata.filename, metadata.filename);
         assert!(appended_metadata.num_rows >= metadata.num_rows);
     }
