@@ -1,0 +1,9 @@
+[profile.default]
+retries = 2
+
+[test-groups]
+serial = { max-threads = 1 }
+
+[[profile.default.overrides]]
+test-group = "serial"
+filter = "test(networking::tests)"
