@@ -35,7 +35,9 @@ use crate::networking::server;
 use crate::networking::server::{get_aspect_ratio_default_from_field_len, get_aspect_ratio_default_from_file_len};
 use crate::networking::shared::*;
 
-//todo need to not have this connect each time because it'll have to log in each time too. need to keep a constant connection
+const FIXED_RANDOM_SEED_CHANGE_LATER: u64 = 1337;
+
+// todo: need to not have this connect each time because it'll have to log in each time too. need to keep a constant connection
 #[tracing::instrument]
 pub async fn upload_file(
     file_name: String,
@@ -78,7 +80,7 @@ pub async fn upload_file(
         _ => get_aspect_ratio_default_from_file_len::<WriteableFt63>(file_data.len())
     };
 
-    let cols_to_verify = get_columns_from_random_seed(1337, required_columns_to_test, num_encoded_columns);
+    let cols_to_verify = get_columns_from_random_seed(FIXED_RANDOM_SEED_CHANGE_LATER, required_columns_to_test, num_encoded_columns);
     tracing::debug!("pre-computing expected column leaves...");
     let CommitOrLeavesOutput::Leaves(locally_derived_leaves) = convert_file_data_to_commit::<Blake3, WriteableFt63>(
         &field_file_data,
@@ -212,7 +214,7 @@ pub async fn download_file(file_metadata: FileMetadata,
     // verify that file is the correct, commited to file
     // first derive the columns that we'll request from the server
     let column_indices_to_verify = get_columns_from_random_seed(
-        1337,
+        FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(&file_metadata),
         file_metadata.num_encoded_columns);
     tracing::trace!("client: requesting the following columns from the server: {:?}", column_indices_to_verify);
@@ -316,7 +318,7 @@ pub async fn verify_compact_commit(
 
     // pick the random columns
     let cols_to_verify = get_columns_from_random_seed(
-        1337, //todo refactor s.t. this is a function arg and not hardcoded
+        FIXED_RANDOM_SEED_CHANGE_LATER, // todo: refactor s.t. this is a function arg and not hardcoded
         get_PoS_soudness_n_cols(file_metadata),
         file_metadata.num_encoded_columns,
     );
@@ -388,7 +390,7 @@ where
     let mut stream = TcpStream::connect(&server_ip).await.unwrap();
     let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
 
-    let rng = &mut ChaCha8Rng::seed_from_u64(1337);
+    let rng = &mut ChaCha8Rng::seed_from_u64(FIXED_RANDOM_SEED_CHANGE_LATER);
     let evaluation_point = WriteableFt63::random(rng);
 
     sink.send(ClientMessages::RequestPolynomialEvaluation { file_metadata: file_metadata.clone(), evaluation_point })
@@ -416,7 +418,7 @@ where
     tracing::debug!("client: received polynomial evaluation from server");
 
     let cols_to_verify = get_columns_from_random_seed(
-        1337,
+        FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(file_metadata),
         file_metadata.num_encoded_columns,
     );
@@ -524,16 +526,16 @@ where
         bail!("Failed to reshape file: requested dimensions not met");
     }
 
-    let mut random_seed = ChaCha8Rng::seed_from_u64(1337);
+    let mut random_seed = ChaCha8Rng::seed_from_u64(FIXED_RANDOM_SEED_CHANGE_LATER);
     let evaluation_point = WriteableFt63::random(&mut random_seed);
 
     let requested_original_columns = get_columns_from_random_seed(
-        1337,
+        FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(file_metadata),
         file_metadata.num_encoded_columns,
     );
     let requested_new_columns = get_columns_from_random_seed(
-        1337,
+        FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(&new_file_metadata),
         new_file_metadata.num_encoded_columns,
     );
@@ -684,11 +686,6 @@ pub async fn append_to_file(
     security_bits: u8,
     data_to_append: Vec<u8>,
 ) -> Result<FileMetadata> {
-    let original_polynomial_degree = file_metadata.filesize_in_bytes / (WriteableFt63::CAPACITY / 8) as usize;
-    let byte_offset = file_metadata.filesize_in_bytes % (WriteableFt63::CAPACITY / 8) as usize;
-    let did_coefficient_change = byte_offset != 0;
-
-
     tracing::info!("requesting append to file from server");
     let mut stream = TcpStream::connect(&server_ip).await.unwrap();
     let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
@@ -716,6 +713,9 @@ pub async fn append_to_file(
         }
     };
 
+    // todo: These failures should probably be pushed up into a "cancel transaction" message that the client
+    //  can send to the server. I also probably need to restructure the messaging interface so the client can
+    //  keep the same interaction with the server throughout functions.
     if (file_metadata.num_columns != appended_file_metadata.num_columns)
         || (file_metadata.num_encoded_columns != appended_file_metadata.num_encoded_columns)
     {
@@ -731,11 +731,11 @@ pub async fn append_to_file(
         bail!("File append failed: Insufficient bytes on new commit");
     }
 
-    let mut random_seed = ChaCha8Rng::seed_from_u64(1337);
+    let mut random_seed = ChaCha8Rng::seed_from_u64(FIXED_RANDOM_SEED_CHANGE_LATER);
     let evaluation_point = WriteableFt63::random(&mut random_seed);
 
     let mut requested_columns = get_columns_from_random_seed(
-        1337,
+        FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(&file_metadata),
         file_metadata.num_encoded_columns,
     );
@@ -792,14 +792,19 @@ pub async fn append_to_file(
         &new_columns,
     );
 
-    if old_results.is_err() || new_results.is_err() {
+    let (Ok(old_results), Ok(new_results)) = (old_results, new_results) else {
         tracing::error!("File append failed: verification failed");
         sink.send(ClientMessages::EditOrAppendResponse { new_file_metadata: file_metadata, old_file_metadata: appended_file_metadata, accepted: false })
             .await.expect("Failed to send message to server");
         bail!("File append failed: verification failed");
-    }
-    let old_results = old_results.unwrap();
-    let new_results = new_results.unwrap();
+    };
+    // let old_results = old_results.unwrap();
+    // let new_results = new_results.unwrap();
+
+
+    let original_polynomial_degree = file_metadata.filesize_in_bytes / (WriteableFt63::CAPACITY / 8) as usize;
+    let byte_offset = file_metadata.filesize_in_bytes % (WriteableFt63::CAPACITY / 8) as usize;
+    let did_coefficient_change = byte_offset != 0;
 
     let mut expected_difference_between_evaluations = WriteableFt63::zero();
     let mut byte_difference_between_evaluations = Vec::with_capacity(data_to_append.len() + WriteableFt63::CAPACITY as usize);
@@ -860,6 +865,71 @@ pub async fn append_to_file(
     db.delete::<Option<FileMetadata>>((constants::CLIENT_METADATA_TABLE, file_metadata.id_ulid.to_string())).await?;
 
     Ok(appended_file_metadata)
+}
+
+pub async fn edit_file(
+    file_metadata: FileMetadata,
+    server_ip: String,
+    security_bits: u8,
+    data_to_append: Vec<u8>,
+    edit_start_location: usize,
+) -> Result<FileMetadata> {
+    ensure!(data_to_append.len() + edit_start_location <= file_metadata.filesize_in_bytes, 
+        "Edited data location will end out of bounds");
+
+    tracing::info!("requesting edit to file from server; file: {} @ server: {}", file_metadata.filename, server_ip);
+    let mut stream = TcpStream::connect(&server_ip).await.unwrap();
+    let (mut stream, mut sink) = wrap_stream::<ClientMessages, ServerMessages>(stream);
+
+    sink.send(ClientMessages::EditFileBytes {
+        file_metadata: file_metadata.clone(),
+        start_byte: edit_start_location,
+        replacement_bytes: data_to_append,
+    }).await.expect("failed to send initial edit message to server");
+
+    let Some(Ok(transmission)) = stream.next().await else {
+        tracing::error!("Failed to receive message from server");
+        bail!("Failed to receive message from server");
+    };
+    tracing::debug!("Client received: {:?}", transmission);
+
+    let ServerMessages::CompactCommit { file_metadata: edited_file_metadata } = transmission
+    else {
+        return match transmission {
+            ServerMessages::BadResponse { error } => {
+                tracing::error!("File append failed: {}", error);
+                bail!("File append failed on server end: {}", error)
+            }
+            _ => {
+                tracing::error!("Unknown server response: {:?}", transmission);
+                bail!("Unknown server response: {:?}", transmission)
+            }
+        }
+    };
+
+    ensure!(edited_file_metadata.filesize_in_bytes == file_metadata.filesize_in_bytes, "file unexpectedly changed shape on edit");
+    ensure!(edited_file_metadata.filename == file_metadata.filename, "file unexpectedly changed name on edit");
+    ensure!(edited_file_metadata.num_rows == file_metadata.num_rows, "file unexpectedly changed number of rows on edit");
+    ensure!(edited_file_metadata.num_columns == file_metadata.num_columns, "file unexpectedly changed number of columns on edit");
+    ensure!(edited_file_metadata.num_encoded_columns == file_metadata.num_encoded_columns, "file unexpectedly changed number of encoded columns on edit");
+
+
+    let mut random_seed = ChaCha8Rng::seed_from_u64(FIXED_RANDOM_SEED_CHANGE_LATER);
+    let evaluation_point = WriteableFt63::random(&mut random_seed);
+
+    let mut requested_columns = get_columns_from_random_seed(
+        FIXED_RANDOM_SEED_CHANGE_LATER,
+        get_PoS_soudness_n_cols(&file_metadata),
+        file_metadata.num_encoded_columns,
+    );
+
+    sink.send(ClientMessages::RequestEditOrAppendEvaluation {
+        old_file_metadata: file_metadata.clone(),
+        new_file_metadata: edited_file_metadata.clone(),
+        evaluation_point: evaluation_point.clone(),
+        columns_to_expand: requested_columns.clone(),
+    }).await.expect("Failed to send message to server");
+    todo!()
 }
 
 pub async fn get_client_metadata_from_database_by_filename(filename: &String) -> Result<Option<FileMetadata>> {

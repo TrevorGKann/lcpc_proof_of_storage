@@ -4,5 +4,5 @@ test:
 
 # clean database
 cleanDB:
-    rm -r proof-of-storage/PoR_Database/**
-    rm -r proof-of-storage/PoR_server_files/**
+    -rm -r proof-of-storage/PoR_Database/**
+    -rm -r proof-of-storage/PoR_server_files/**
