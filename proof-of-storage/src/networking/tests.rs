@@ -441,13 +441,13 @@ pub mod network_tests {
 
         let metadata = upload_response.unwrap();
 
-        let data_to_append = fs::read(source_file).await.unwrap();
+        let mut data_to_append = fs::read(source_file).await.unwrap();
 
         let appended_response = client::append_to_file(
             metadata.clone(),
             format!("localhost:{}", port),
             8,
-            data_to_append,
+            data_to_append.clone(),
         ).await;
 
         tracing::debug!("client received: {:?}", appended_response);
@@ -458,6 +458,22 @@ pub mod network_tests {
         assert_eq!(appended_metadata.num_encoded_columns, 8);
         assert_eq!(appended_metadata.filename, metadata.filename);
         assert!(appended_metadata.num_rows >= metadata.num_rows);
+        assert_eq!(appended_metadata.filesize_in_bytes, metadata.filesize_in_bytes * 2);
+
+        tokio::fs::rename(source_file, dest_temp_file).await.unwrap();
+
+        let download_response = client::download_file(
+            appended_metadata,
+            format!("localhost:{}", port),
+            32,
+        ).await;
+
+        let downloaded_data = fs::read(source_file).await.unwrap();
+        let mut appended_data = data_to_append.clone();
+        appended_data.append(&mut data_to_append);
+
+        assert_eq!(downloaded_data, appended_data);
+
+        tokio::fs::rename(dest_temp_file, source_file).await.unwrap();
     }
 }
-
