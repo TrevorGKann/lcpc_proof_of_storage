@@ -1,5 +1,6 @@
 use std::fmt;
 
+use ff::PrimeField;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -16,15 +17,20 @@ pub struct FileMetadata {
     pub filesize_in_bytes: usize,
     pub stored_server: ServerHost,
     pub root: PoSRoot,
+    // todo: refactor add: start_byte_offset
 }
 
 impl FileMetadata {
-    pub fn get_file_columns(&self) -> usize {
-        self.num_encoded_columns / 2
+    pub fn get_end_coefficient_coordinates<F: PrimeField>(&self) -> (usize, usize) {
+        (self.num_rows, self.filesize_in_bytes % (self.num_encoded_columns * (F::CAPACITY as usize / 8)))
     }
 
-    pub fn get_end_coordinates(&self) -> (usize, usize) {
-        (self.num_rows, self.filesize_in_bytes % self.num_encoded_columns)
+    pub fn get_last_coefficient_write_byte_offset<F: PrimeField>(&self) -> usize {
+        self.filesize_in_bytes % (F::CAPACITY as usize / 8)
+    }
+
+    pub fn bytes_in_a_row<F: PrimeField>(&self) -> usize {
+        self.num_columns * (F::CAPACITY as usize / 8)
     }
 }
 
