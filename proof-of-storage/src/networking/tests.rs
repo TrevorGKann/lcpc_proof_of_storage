@@ -9,7 +9,7 @@ pub mod network_tests {
     use blake3::traits::digest::Output;
     use ff::PrimeField;
     use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
+    use rand_core::{RngCore, SeedableRng};
     use serial_test::serial;
     use surrealdb::engine::local::RocksDb;
     use surrealdb::Surreal;
@@ -473,6 +473,79 @@ pub mod network_tests {
         appended_data.append(&mut data_to_append);
 
         assert_eq!(downloaded_data, appended_data);
+
+        tokio::fs::rename(dest_temp_file, source_file).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_file_edit() {
+        let source_file = "test_files/test.txt";
+        let dest_temp_file = "test.txt";
+        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+
+        let port = start_test_with_server_on_random_port_and_get_port("test_file_append".to_string()).await;
+
+        // try to delete the file first, in case it's already uploaded
+        let to_delete_metadata = crate::networking::client::get_client_metadata_from_database_by_filename(
+            &"test.txt".to_string(),
+        ).await;
+
+        if let Ok(Some(metadata)) = to_delete_metadata {
+            tracing::debug!("client requesting file deletion");
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+            tracing::debug!("client received: {:?}", delete_result);
+        } else {
+            tracing::debug!("client did not request file deletion, no file found on database");
+        }
+
+
+        let metadata = client::upload_file(
+            source_file.to_owned(),
+            Some(4),
+            Some(8),
+            format!("localhost:{}", port),
+        ).await.unwrap();
+
+        // generate a vector of random bytes to edit in
+        let mut expected_data = fs::read(source_file).await.unwrap();
+        let mut seed = ChaCha8Rng::seed_from_u64(1337);
+        let mut random_data = vec![0u8; 100];
+        seed.fill_bytes(&mut random_data);
+        let location_to_edit_to
+            = seed.next_u32() as usize % (expected_data.len() - random_data.len());
+        expected_data.splice(
+            location_to_edit_to..location_to_edit_to + random_data.len(),
+            random_data.clone().into_iter());
+
+        let edit_metadata = client::edit_file(
+            metadata.clone(),
+            format!("localhost:{}", port),
+            8,
+            random_data.clone(),
+            location_to_edit_to,
+        ).await.unwrap();
+
+        assert_eq!(edit_metadata.num_columns, 4);
+        assert_eq!(edit_metadata.num_encoded_columns, 8);
+        assert_eq!(edit_metadata.filename, metadata.filename);
+        assert_eq!(edit_metadata.num_rows, metadata.num_rows);
+        assert_eq!(edit_metadata.filesize_in_bytes, metadata.filesize_in_bytes);
+
+        tokio::fs::rename(source_file, dest_temp_file).await.unwrap();
+
+        let download_response = client::download_file(
+            edit_metadata,
+            format!("localhost:{}", port),
+            32,
+        ).await;
+
+        let downloaded_data = fs::read(source_file).await.unwrap();
+
+        assert_eq!(downloaded_data, expected_data);
 
         tokio::fs::rename(dest_temp_file, source_file).await.unwrap();
     }
