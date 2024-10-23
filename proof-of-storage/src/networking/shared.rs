@@ -43,7 +43,7 @@ pub enum ClientMessages {
     UploadNewFile { filename: String, file: Vec<u8>, columns: usize, encoded_columns: usize },
     RequestFile { file_metadata: FileMetadata },
     RequestFileRow { file_metadata: FileMetadata, row: usize },
-    EditFileRow { file_metadata: FileMetadata, row: usize, file: Vec<u8> },
+    EditFileBytes { file_metadata: FileMetadata, start_byte: usize, replacement_bytes: Vec<u8> },
     AppendToFile { file_metadata: FileMetadata, append_data: Vec<u8> },
     RequestEncodedColumn { file_metadata: FileMetadata, row: usize },
     RequestProof { file_metadata: FileMetadata, columns_to_verify: Vec<usize> },
@@ -60,17 +60,28 @@ pub enum ClientMessages {
         columns_to_expand_original: Vec<usize>,
         columns_to_expand_new: Vec<usize>,
     },
-    RequestEditOrAppendEvaluation {
-        old_file_metadata: FileMetadata,
-        new_file_metadata: FileMetadata,
-        evaluation_point: TestField,
-        columns_to_expand: Vec<usize>,
-        // functionally equivalent of ReshapeEvaluation but with the omission of differing columns to expand
-    },
     ReshapeResponse {
         new_file_metadata: FileMetadata,
         old_file_metadata: FileMetadata,
         accepted: bool,
+    },
+    // functionally equivalent of ReshapeEvaluation but with the omission of differing columns
+    // to expand and obviously the context
+    RequestAppendEvaluation {
+        old_file_metadata: FileMetadata,
+        new_file_metadata: FileMetadata,
+        evaluation_point: TestField,
+        columns_to_expand: Vec<usize>,
+    },
+    // this differs from the append request because we also need to get the un-encoded rows to
+    // see the difference in coefficients, whereas the append evaluation can determine which rows
+    // to send based on the metadata alone.
+    RequestEditEvaluation {
+        old_file_metadata: FileMetadata,
+        new_file_metadata: FileMetadata,
+        evaluation_point: TestField,
+        columns_to_expand: Vec<usize>,
+        requested_unencoded_row_range_inclusive: (usize, usize),
     },
     EditOrAppendResponse {
         new_file_metadata: FileMetadata,
@@ -98,14 +109,24 @@ pub enum ServerMessages
         new_result_vector: Vec<TestField>,
         new_columns: Vec<PoSColumn>,
     },
-    EditOrAppendEvaluation {
+    AppendEvaluation {
         original_result_vector: Vec<TestField>,
         original_columns: Vec<PoSColumn>,
         new_result_vector: Vec<TestField>,
         new_columns: Vec<PoSColumn>,
         edited_unencoded_row: Vec<WriteableFt63>,
+        // optimization: this can probably just be the raw bytes and we can let the client compile
+        //  them into the correct format. That gives the benefit of A) less overhead and B) less
+        //  coded dependency on the `WriteableFT63` type
+    },
+    EditEvaluation {
+        original_result_vector: Vec<TestField>,
+        original_columns: Vec<PoSColumn>,
+        new_result_vector: Vec<TestField>,
+        new_columns: Vec<PoSColumn>,
+        edited_unencoded_rows: Vec<u8>,
     },
     ServerKeepAlive,
     FileDeleted { filename: String },
-    BadResponse { error: String },
+    ErrorResponse { error: String },
 }

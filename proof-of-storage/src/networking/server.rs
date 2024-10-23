@@ -86,13 +86,19 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::RequestFileRow { file_metadata, row } => {
                 handle_client_request_file_row(file_metadata, row).await
             }
-            ClientMessages::EditFileRow { file_metadata, row, file } => {
-                handle_client_edit_file_row(file_metadata, row, file).await
+            ClientMessages::EditFileBytes {
+                file_metadata, start_byte, replacement_bytes: file
+            } => {
+                handle_client_edit_file_bytes(file_metadata, start_byte, file).await
+            }
+            ClientMessages::RequestEditEvaluation { old_file_metadata, new_file_metadata, evaluation_point, columns_to_expand, requested_unencoded_row_range_inclusive } => {
+                // handle_client_request_edit_eval(old_file_metadata, evaluation_point, columns_to_expand).await
+                todo!()
             }
             ClientMessages::AppendToFile { file_metadata, append_data } => {
                 handle_client_append_to_file(file_metadata, append_data).await
             }
-            ClientMessages::RequestEditOrAppendEvaluation { old_file_metadata, new_file_metadata, evaluation_point, columns_to_expand } => {
+            ClientMessages::RequestAppendEvaluation { old_file_metadata, new_file_metadata, evaluation_point, columns_to_expand } => {
                 handle_client_append_or_edit_eval_request(&old_file_metadata, &new_file_metadata, &evaluation_point, &columns_to_expand).await
             }
             shared::ClientMessages::EditOrAppendResponse { new_file_metadata, old_file_metadata, accepted } => {
@@ -288,12 +294,16 @@ async fn handle_client_request_file_row(file_metadata: FileMetadata, row: usize)
 }
 
 #[tracing::instrument]
-async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, new_file_data: Vec<u8>) -> Result<InternalServerMessage> {
+async fn handle_client_edit_file_bytes(
+    file_metadata: FileMetadata,
+    start_byte: usize,
+    new_file_data: Vec<u8>,
+) -> Result<InternalServerMessage> {
     // edit the requested row in the file
 
     check_file_metadata(&file_metadata)?;
 
-    ensure!(new_file_data.len() == file_metadata.num_columns, "new file data is not the correct length".to_string());
+    // ensure!(new_file_data.len() == file_metadata.num_columns, "new file data is not the correct length".to_string());
 
     let old_file_handle = get_file_handle_from_metadata(&file_metadata);
     let new_id = Ulid::new();
@@ -303,8 +313,8 @@ async fn handle_client_edit_file_row(file_metadata: FileMetadata, row: usize, ne
         tokio::fs::copy(&old_file_handle, &new_file_handle).await?;
         let mut new_file = tokio::fs::File::open(&new_file_handle).await?;
 
-        let seek_pointer = file_metadata.num_columns * row;
-        new_file.seek(SeekFrom::Start(seek_pointer as u64));
+        // let seek_pointer = ;
+        new_file.seek(SeekFrom::Start(start_byte as u64));
 
         new_file.write_all(&new_file_data).await?;
     }
@@ -688,7 +698,7 @@ async fn handle_client_append_or_edit_eval_request(
 
     let edited_unencoded_row = fielded_new_file_data[start_of_edited_row..=end_of_edited_row].to_vec();
 
-    Ok(ServerMessages::EditOrAppendEvaluation {
+    Ok(ServerMessages::AppendEvaluation {
         original_result_vector: result_vector_for_old_commit,
         original_columns: columns_for_old_commit,
         new_result_vector: result_vector_for_new_commit,
@@ -780,7 +790,7 @@ pub fn get_aspect_ratio_default_from_file_len<Field: PrimeField>(file_len: usize
 
 fn make_bad_response(message: String) -> InternalServerMessage {
     tracing::error!("{}", message);
-    ServerMessages::BadResponse { error: message }
+    ServerMessages::ErrorResponse { error: message }
 }
 
 fn check_file_metadata(file_metadata: &FileMetadata) -> Result<()> {
