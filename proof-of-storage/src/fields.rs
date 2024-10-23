@@ -16,7 +16,8 @@ pub enum ByteOrder {
 
 pub trait FieldBytes: PrimeField {
     const BYTE_ORDER: ByteOrder;
-    const U64_WIDTH: usize;
+
+    const BYTE_WIDTH: usize;
 
     fn from_u8_array(array: &[u8]) -> Option<Self>;
 
@@ -73,6 +74,8 @@ pub mod writable_ft63 {
         pub fn to_u64_array(&self) -> [u64; 1] {
             self.0
         }
+
+        pub const BYTE_CAPACITY: u32 = Self::CAPACITY / 8;
     }
 }
 
