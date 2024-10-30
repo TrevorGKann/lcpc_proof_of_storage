@@ -91,17 +91,37 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             } => {
                 handle_client_edit_file_bytes(file_metadata, start_byte, file).await
             }
-            ClientMessages::RequestEditEvaluation { old_file_metadata, new_file_metadata, evaluation_point, columns_to_expand, requested_unencoded_row_range_inclusive } => {
-                // handle_client_request_edit_eval(old_file_metadata, evaluation_point, columns_to_expand).await
-                todo!()
+            ClientMessages::RequestEditEvaluation {
+                old_file_metadata,
+                new_file_metadata,
+                evaluation_point,
+                columns_to_expand,
+                requested_unencoded_row_range_inclusive
+            } => {
+                handle_client_append_or_edit_eval_request(&old_file_metadata, &new_file_metadata,
+                                                          &evaluation_point, &columns_to_expand,
+                                                          Some(requested_unencoded_row_range_inclusive))
+                    .await
             }
             ClientMessages::AppendToFile { file_metadata, append_data } => {
                 handle_client_append_to_file(file_metadata, append_data).await
             }
-            ClientMessages::RequestAppendEvaluation { old_file_metadata, new_file_metadata, evaluation_point, columns_to_expand } => {
-                handle_client_append_or_edit_eval_request(&old_file_metadata, &new_file_metadata, &evaluation_point, &columns_to_expand).await
+            ClientMessages::RequestAppendEvaluation {
+                old_file_metadata,
+                new_file_metadata,
+                evaluation_point,
+                columns_to_expand
+            } => {
+                handle_client_append_or_edit_eval_request(&old_file_metadata, &new_file_metadata,
+                                                          &evaluation_point, &columns_to_expand,
+                                                          None)
+                    .await
             }
-            shared::ClientMessages::EditOrAppendResponse { new_file_metadata, old_file_metadata, accepted } => {
+            shared::ClientMessages::EditOrAppendResponse {
+                new_file_metadata,
+                old_file_metadata,
+                accepted
+            } => {
                 handle_client_append_or_edit_response(&old_file_metadata, &new_file_metadata, accepted).await
             }
             ClientMessages::RequestEncodedColumn { file_metadata, row } => {
@@ -309,7 +329,8 @@ async fn handle_client_edit_file_bytes(
     let new_id = Ulid::new();
     let new_file_handle = get_file_location_from_id(&new_id);
 
-    { //scope for file editing
+    //scope for file editing
+    {
         tokio::fs::copy(&old_file_handle, &new_file_handle).await?;
         let mut new_file = tokio::fs::File::open(&new_file_handle).await?;
 
@@ -317,6 +338,8 @@ async fn handle_client_edit_file_bytes(
         new_file.seek(SeekFrom::Start(start_byte as u64));
 
         new_file.write_all(&new_file_data).await?;
+        // error: this isn't writing to the file at this point, not sure why not
+        new_file.flush().await?;
     }
     // optimization: stream the file in only once and live update the edit, since I have to convert it anyways
 
@@ -365,8 +388,6 @@ async fn handle_client_append_to_file(file_metadata: FileMetadata, mut file_data
     let mut new_file_data = tokio::fs::read(&old_file_handle).await?;
     new_file_data.append(&mut file_data_to_append);
 
-    // error: need to actually append to this file. Right now it ought to be tripple writing but instead it's
-    //  not writing anything at all. Need to fix.
     tokio::fs::write(&new_file_handle, &new_file_data).await
         .context("failed while writing file from client to new file location")?;
     tracing::debug!("server: appended file now exists at {:?} with length {}", new_file_handle, new_file_data.len());
@@ -645,6 +666,7 @@ async fn handle_client_append_or_edit_eval_request(
     new_file_metadata: &FileMetadata,
     evaluation_point: &WriteableFt63,
     columns_to_expand: &Vec<usize>,
+    requested_unencoded_row_range_inclusive_for_edits: Option<(usize, usize)>,
 ) -> Result<ServerMessages> {
     check_file_metadata(&old_file_metadata)?;
     check_file_metadata(&new_file_metadata)?;
@@ -689,22 +711,47 @@ async fn handle_client_append_or_edit_eval_request(
     let result_vector_for_new_commit = verifiable_polynomial_evaluation(&new_commit, &evaluation_left_vector_for_new_commit);
     let columns_for_new_commit = server_retreive_columns(&new_commit, columns_to_expand);
 
-    let start_of_edited_row = (old_file_metadata.num_rows - 1) * old_file_metadata.num_columns;
-    let end_of_edited_row = if (old_file_metadata.num_rows < new_file_metadata.num_rows) {
-        (old_file_metadata.num_rows * old_file_metadata.num_columns) - 1
-    } else {
-        new_file_metadata.filesize_in_bytes.div_ceil(WriteableFt63::CAPACITY as usize)
-    }; // optimization: can probably just be a `min` instead of an if-then-else
+    match requested_unencoded_row_range_inclusive_for_edits {
+        None => { // the case for appends, the client only needs one line
+            let start_of_edited_row = (old_file_metadata.num_rows - 1) * old_file_metadata.num_columns;
+            let end_of_edited_row = if (old_file_metadata.num_rows < new_file_metadata.num_rows) {
+                (old_file_metadata.num_rows * old_file_metadata.num_columns) - 1
+            } else {
+                new_file_metadata.filesize_in_bytes.div_ceil(WriteableFt63::CAPACITY as usize)
+            }; // optimization: can probably just be a `min` instead of an if-then-else
 
-    let edited_unencoded_row = fielded_new_file_data[start_of_edited_row..=end_of_edited_row].to_vec();
+            let edited_unencoded_row = fielded_new_file_data[start_of_edited_row..=end_of_edited_row].to_vec();
 
-    Ok(ServerMessages::AppendEvaluation {
-        original_result_vector: result_vector_for_old_commit,
-        original_columns: columns_for_old_commit,
-        new_result_vector: result_vector_for_new_commit,
-        new_columns: columns_for_new_commit,
-        edited_unencoded_row,
-    })
+            Ok(ServerMessages::AppendEvaluation {
+                original_result_vector: result_vector_for_old_commit,
+                original_columns: columns_for_old_commit,
+                new_result_vector: result_vector_for_new_commit,
+                new_columns: columns_for_new_commit,
+                edited_unencoded_row,
+            })
+        }
+        Some((start, finish)) => { // the case for edits, the client needs multiple lines
+            let start_of_edited_row_in_bytes = start
+                * old_file_metadata.num_columns
+                * WriteableFt63::BYTE_CAPACITY as usize;
+            let end_of_edited_row_in_bytes = ((finish + 1)
+                * old_file_metadata.num_columns
+                * WriteableFt63::BYTE_CAPACITY as usize)
+                - 1;
+            let end_of_edited_row_in_bytes = min(end_of_edited_row_in_bytes, new_file_data.len());
+
+            let edited_unencoded_rows = new_file_data[start_of_edited_row_in_bytes..=end_of_edited_row_in_bytes]
+                .to_vec();
+
+            Ok(ServerMessages::EditEvaluation {
+                original_result_vector: result_vector_for_old_commit,
+                original_columns: columns_for_old_commit,
+                new_result_vector: result_vector_for_new_commit,
+                new_columns: columns_for_new_commit,
+                edited_unencoded_rows,
+            })
+        }
+    }
 }
 
 
