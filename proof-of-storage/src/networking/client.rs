@@ -920,6 +920,8 @@ pub async fn edit_file(
         "file unexpectedly changed number of columns on edit");
     ensure!(edited_file_metadata.num_encoded_columns == file_metadata.num_encoded_columns,
         "file unexpectedly changed number of encoded columns on edit");
+    ensure!(edited_file_metadata.root.root != file_metadata.root.root,
+        "Server sent back the same root, probability of this is nil");
 
 
     let mut random_seed = ChaCha8Rng::seed_from_u64(FIXED_RANDOM_SEED_CHANGE_LATER);
@@ -969,7 +971,8 @@ pub async fn edit_file(
         }
     };
 
-    ensure!(edited_unencoded_rows.len() >= data_to_append_len, "server sent insufficient data to verify polynomial");
+    ensure!(edited_unencoded_rows.len() >= data_to_append_len,
+        "server sent insufficient data to verify polynomial");
     ensure!(edited_unencoded_rows.len() % (WriteableFt63::BYTE_CAPACITY as usize * file_metadata.num_columns) == 0,
         "server did not send an entire row");
 
@@ -992,6 +995,10 @@ pub async fn edit_file(
         &requested_columns,
         &new_columns,
     );
+
+    // error: I need to verify that the rows sent back from the server are in fact the requested
+    //  rows. To do this the client needs to slice the rows, encode them, then verify they match
+    //  the columns sent back from the server.
 
     let (Ok(old_results), Ok(new_results)) = (old_results, new_results)
     else {
@@ -1052,6 +1059,11 @@ pub async fn edit_file(
         &evaluation_point,
         changed_row_start_degree as u64,
     );
+
+    tracing::debug!("Old results: {:?}", &old_results);
+    tracing::debug!("New results: {:?}", &new_results);
+    tracing::debug!("Expected difference between evaluations: {:?}", &expected_difference);
+    tracing::debug!("Actual difference between evaluation: {:?}", *&new_results - &old_results);
 
     ensure!(old_results + expected_difference == new_results,
     "file append failed: verification failed");
