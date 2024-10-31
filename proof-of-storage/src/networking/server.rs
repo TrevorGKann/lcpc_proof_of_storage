@@ -332,13 +332,14 @@ async fn handle_client_edit_file_bytes(
     //scope for file editing
     {
         tokio::fs::copy(&old_file_handle, &new_file_handle).await?;
-        let mut new_file = tokio::fs::File::open(&new_file_handle).await?;
+        // let mut new_file = tokio::fs::File::open(&new_file_handle).await?;
+        let mut new_file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&new_file_handle)
+            .await?;
 
-        // let seek_pointer = ;
-        new_file.seek(SeekFrom::Start(start_byte as u64));
-
+        new_file.seek(SeekFrom::Start(start_byte as u64)).await?;
         new_file.write_all(&new_file_data).await?;
-        // error: this isn't writing to the file at this point, not sure why not
         new_file.flush().await?;
     }
     // optimization: stream the file in only once and live update the edit, since I have to convert it anyways
@@ -734,13 +735,13 @@ async fn handle_client_append_or_edit_eval_request(
             let start_of_edited_row_in_bytes = start
                 * old_file_metadata.num_columns
                 * WriteableFt63::BYTE_CAPACITY as usize;
-            let end_of_edited_row_in_bytes = ((finish + 1)
+            let end_of_original_row_in_bytes = ((finish + 1)
                 * old_file_metadata.num_columns
                 * WriteableFt63::BYTE_CAPACITY as usize)
                 - 1;
-            let end_of_edited_row_in_bytes = min(end_of_edited_row_in_bytes, new_file_data.len());
+            let end_of_original_row_in_bytes = min(end_of_original_row_in_bytes, old_file_data.len());
 
-            let edited_unencoded_rows = new_file_data[start_of_edited_row_in_bytes..=end_of_edited_row_in_bytes]
+            let original_unencoded_rows = old_file_data[start_of_edited_row_in_bytes..=end_of_original_row_in_bytes]
                 .to_vec();
 
             Ok(ServerMessages::EditEvaluation {
@@ -748,7 +749,7 @@ async fn handle_client_append_or_edit_eval_request(
                 original_columns: columns_for_old_commit,
                 new_result_vector: result_vector_for_new_commit,
                 new_columns: columns_for_new_commit,
-                edited_unencoded_rows,
+                original_unencoded_rows,
             })
         }
     }

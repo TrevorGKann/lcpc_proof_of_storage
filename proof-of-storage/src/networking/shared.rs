@@ -124,7 +124,7 @@ pub enum ServerMessages
         original_columns: Vec<PoSColumn>,
         new_result_vector: Vec<TestField>,
         new_columns: Vec<PoSColumn>,
-        edited_unencoded_rows: Vec<u8>,
+        original_unencoded_rows: Vec<u8>,
     },
     ServerKeepAlive,
     FileDeleted { filename: String },

@@ -879,6 +879,7 @@ pub async fn edit_file(
     ensure!(data_to_append_len + edit_start_location <= file_metadata.filesize_in_bytes,
         "Edited data location will end out of bounds");
     // todo: This doesn't have to be the case, but it is for now.
+    ensure!(data_to_append_len != 0, "there must be a non-zero edit");
 
     tracing::info!("requesting edit to file from server; file: {} @ server: {}", file_metadata.filename, server_ip);
     let mut stream = TcpStream::connect(&server_ip).await.unwrap();
@@ -956,7 +957,7 @@ pub async fn edit_file(
         original_columns,
         new_result_vector,
         new_columns,
-        edited_unencoded_rows
+        original_unencoded_rows: edited_unencoded_rows
     } = transmission
     else {
         return match transmission {
@@ -1048,6 +1049,10 @@ pub async fn edit_file(
         = fields::convert_byte_vec_to_field_elements_vec(&expected_edited_bytes);
     ensure!(original_coefficients.len() == new_coefficients.len(),
         "num coefficients unexpectedly have different lenghts");
+
+    // debug: this is a valid case if someone is useless patching data with itself. It's not
+    //  wrong in that case though. Keeping this around for now since it's not what I'm doing
+    ensure!(new_coefficients != original_coefficients, "no data was edited");
 
     let changed_row_start_degree = first_edited_row * file_metadata.num_columns;
     let expected_difference = fields::evaluate_field_polynomial_at_point_with_elevated_degree(
