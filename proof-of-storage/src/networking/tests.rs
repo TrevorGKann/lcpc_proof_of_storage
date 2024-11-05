@@ -553,8 +553,8 @@ pub mod network_tests {
 
     #[tokio::test]
     #[serial]
-    #[should_panic(expected = "Failed to verify columns")]
-    async fn test_file_verification_bad() {
+    // #[should_panic(expected = "Failed to verify columns")]
+    async fn test_file_verification_rejects_bad_proofs() {
         use std::env;
         use tokio::fs::OpenOptions;
 
@@ -593,13 +593,19 @@ pub mod network_tests {
         assert_eq!(metadata.filename, source_file);
         assert_eq!(metadata.filesize_in_bytes, tokio::fs::read(source_file).await.unwrap().len());
 
+        client::request_proof(
+            metadata.clone(),
+            format!("localhost:{}", port),
+            8,
+        ).await.unwrap();
 
-        let mut path = env::current_dir().unwrap();
-        path.push(constants::SERVER_FILE_FOLDER);
-
-        path.push(format!("{}.{}", metadata.id_ulid.to_string(), constants::FILE_EXTENSION));
-
+        // Modify the file on the server end, this should make the client fail its next test
         {
+            let mut path = env::current_dir().unwrap();
+            path.push(constants::SERVER_FILE_FOLDER);
+
+            path.push(format!("{}.{}", metadata.id_ulid.to_string(), constants::FILE_EXTENSION));
+
             let mut servers_file = OpenOptions::new()
                 .write(true)
                 .open(&path)
@@ -616,10 +622,13 @@ pub mod network_tests {
             servers_file.flush().await.unwrap();
         }
 
-        client::request_proof(
+        let bad_verify_result = client::request_proof(
             metadata,
             format!("localhost:{}", port),
             8,
-        ).await.unwrap();
+        ).await;
+        tracing::debug!("client received: {:?}", bad_verify_result);
+
+        assert!(bad_verify_result.is_err());
     }
 }
