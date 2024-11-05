@@ -2,6 +2,7 @@ use crate::networking::client;
 
 #[cfg(test)]
 pub mod network_tests {
+    use std::io::SeekFrom;
     use std::time::Duration;
 
     use anyhow::{bail, ensure, Result};
@@ -15,7 +16,7 @@ pub mod network_tests {
     use surrealdb::Surreal;
     // use pretty_assertions::assert_eq;
     use tokio::fs;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::time::sleep;
     use ulid::Ulid;
@@ -548,5 +549,77 @@ pub mod network_tests {
         assert_eq!(downloaded_data, expected_data);
 
         tokio::fs::rename(dest_temp_file, source_file).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[should_panic(expected = "Failed to verify columns")]
+    async fn test_file_verification_bad() {
+        use std::env;
+        use tokio::fs::OpenOptions;
+
+        let source_file = "test_files/test.txt";
+        let dest_temp_file = "test.txt";
+        let cleanup = Cleanup { files: vec![dest_temp_file.to_string()] };
+
+        let port = start_test_with_server_on_random_port_and_get_port("test_file_append".to_string()).await;
+
+        // try to delete the file first, in case it's already uploaded
+        let to_delete_metadata = crate::networking::client::get_client_metadata_from_database_by_filename(
+            &"test.txt".to_string(),
+        ).await;
+
+        if let Ok(Some(metadata)) = to_delete_metadata {
+            tracing::debug!("client requesting file deletion");
+            let delete_result = client::delete_file(
+                metadata,
+                format!("localhost:{}", port),
+            ).await;
+            tracing::debug!("client received: {:?}", delete_result);
+        } else {
+            tracing::debug!("client did not request file deletion, no file found on database");
+        }
+
+
+        let metadata = client::upload_file(
+            source_file.to_owned(),
+            Some(4),
+            Some(8),
+            format!("localhost:{}", port),
+        ).await.unwrap();
+
+        assert_eq!(metadata.num_columns, 4);
+        assert_eq!(metadata.num_encoded_columns, 8);
+        assert_eq!(metadata.filename, source_file);
+        assert_eq!(metadata.filesize_in_bytes, tokio::fs::read(source_file).await.unwrap().len());
+
+
+        let mut path = env::current_dir().unwrap();
+        path.push(constants::SERVER_FILE_FOLDER);
+
+        path.push(format!("{}.{}", metadata.id_ulid.to_string(), constants::FILE_EXTENSION));
+
+        {
+            let mut servers_file = OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .await
+                .unwrap();
+
+            let mut seed = ChaCha8Rng::seed_from_u64(1337);
+            let seek_point = seed.next_u32() as usize % (metadata.filesize_in_bytes - 2);
+            let mut bytes_to_edit = vec![0u8; 2];
+            seed.fill_bytes(&mut bytes_to_edit);
+
+            servers_file.seek(SeekFrom::Start(seek_point as u64)).await.unwrap();
+            servers_file.write_all(&bytes_to_edit).await.unwrap();
+            servers_file.flush().await.unwrap();
+        }
+
+        client::request_proof(
+            metadata,
+            format!("localhost:{}", port),
+            8,
+        ).await.unwrap();
     }
 }
