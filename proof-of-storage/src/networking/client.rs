@@ -370,8 +370,9 @@ pub async fn verify_compact_commit(
 
     if verification_result.is_err() {
         tracing::error!("Failed to verify columns");
-        //todo send error to server
-        return todo!();
+        //todo: send error to server
+        // return todo!();
+        bail!("Failed to verify columns");
     }
     tracing::debug!("client: file verification successful!");
     Ok(())
