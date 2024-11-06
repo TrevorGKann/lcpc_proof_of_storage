@@ -42,3 +42,6 @@ typenum = "1.13"
 
 
 pretty_assertions = "1.4.0"
+
+[profile.release]
+debug = true

@@ -49,3 +49,5 @@ serial_test = "*"
 name = "pos"
 path = "src/bin/pos.rs"
 
+[profile.release]
+debug = true
