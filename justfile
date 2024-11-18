@@ -8,8 +8,8 @@ test:
 
 # clean database
 cleanDB:
-    -rm -r {{ source_directory() }}/proof-of-storage/PoR_Database/**
-    -rm -r {{ source_directory() }}/proof-of-storage/PoR_server_files/**
+    -rm -rf {{ source_directory() }}/proof-of-storage/PoR_Database/**
+    -rm -rf {{ source_directory() }}/proof-of-storage/PoR_server_files/**
 
 # get the size of the database on the disk
 db-size:
