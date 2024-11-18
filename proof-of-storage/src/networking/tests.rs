@@ -56,7 +56,7 @@ pub mod network_tests {
             .compact()
             .with_file(true)
             .with_line_number(true)
-            .with_max_level(tracing::Level::DEBUG)
+            .with_max_level(tracing::Level::TRACE)
             .finish();
 
         // use that subscriber to process traces emitted after this point
@@ -553,7 +553,6 @@ pub mod network_tests {
 
     #[tokio::test]
     #[serial]
-    // #[should_panic(expected = "Failed to verify columns")]
     async fn test_file_verification_rejects_bad_proofs() {
         use std::env;
         use tokio::fs::OpenOptions;

@@ -64,6 +64,7 @@ pub async fn server_main(port: u16, verbosity: u8) -> Result<()> {
 }
 
 
+#[tracing::instrument]
 pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
     let (mut stream, mut sink)
         = wrap_stream::<InternalServerMessage, ClientMessages>(stream);

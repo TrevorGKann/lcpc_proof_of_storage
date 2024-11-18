@@ -177,6 +177,7 @@ pub async fn upload_file(
     Ok((file_metadata))
 }
 
+#[tracing::instrument]
 pub async fn download_file(file_metadata: FileMetadata,
                            server_ip: String,
                            security_bits: u8,
@@ -283,6 +284,7 @@ pub async fn download_file(file_metadata: FileMetadata,
 
 
 /// this is a thin wrapper for verify_compact_commit function
+#[tracing::instrument]
 pub async fn request_proof(
     file_metadata: FileMetadata,
     server_ip: String,
@@ -294,6 +296,7 @@ pub async fn request_proof(
     verify_compact_commit(&file_metadata, &mut stream, &mut sink).await
 }
 
+#[tracing::instrument]
 pub fn get_columns_from_random_seed(
     random_seed: u64,
     number_of_columns_to_extract: usize,
@@ -328,6 +331,10 @@ pub async fn verify_compact_commit(
     sink.send(ClientMessages::RequestProof { file_metadata: file_metadata.clone(), columns_to_verify: cols_to_verify.clone() })
         .await.expect("Failed to send message to server");
 
+    #[cfg(test)]
+    {
+        tracing::trace!("This is a timing/build test");
+    }
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
@@ -378,6 +385,7 @@ pub async fn verify_compact_commit(
     Ok(())
 }
 
+#[tracing::instrument]
 pub async fn client_request_and_verify_polynomial<D>(
     file_metadata: &FileMetadata,
     server_ip: String,
@@ -479,6 +487,7 @@ where
     Ok(())
 }
 
+#[tracing::instrument]
 pub async fn reshape_file<D>(
     file_metadata: &FileMetadata,
     server_ip: String,
@@ -636,6 +645,7 @@ where
 }
 
 
+#[tracing::instrument]
 pub async fn delete_file(
     file_metadata: FileMetadata,
     server_ip: String,
@@ -681,6 +691,7 @@ pub async fn delete_file(
     Ok(())
 }
 
+#[tracing::instrument]
 pub async fn append_to_file(
     file_metadata: FileMetadata,
     server_ip: String,
@@ -869,6 +880,7 @@ pub async fn append_to_file(
     Ok(appended_file_metadata)
 }
 
+#[tracing::instrument]
 pub async fn edit_file(
     file_metadata: FileMetadata,
     server_ip: String,
@@ -1093,6 +1105,7 @@ pub async fn edit_file(
     Ok(edited_file_metadata)
 }
 
+#[tracing::instrument]
 pub async fn get_client_metadata_from_database_by_filename(filename: &String)
                                                            -> Result<Option<FileMetadata>> {
     let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
