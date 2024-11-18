@@ -10,6 +10,7 @@ use rand::Rng;
 
 use data_field::ByteOrder;
 
+use crate::fields::data_field::DataField;
 use crate::fields::writable_ft63::WriteableFt63;
 
 mod data_field;
@@ -36,7 +37,7 @@ pub mod writable_ft63 {
     use ff_derive_num::Num;
     use serde::{Deserialize, Serialize};
 
-    use crate::fields::data_field::ByteOrder;
+    use crate::fields::data_field::{ByteOrder, DataField};
     use crate::fields::FieldErr;
 
     pub const U64_WIDTH: usize = 1;
@@ -64,6 +65,25 @@ pub mod writable_ft63 {
         }
 
         pub const BYTE_CAPACITY: u32 = Self::CAPACITY / 8;
+    }
+
+
+    impl DataField for WriteableFt63 {
+        type DataBytes = [u8; 7];
+        const ENDIANNESS: ByteOrder = ByteOrder::LittleEndian;
+
+        fn from_data_bytes(buf: &Self::DataBytes) -> Self {
+            let mut zero_padded = [0u8; 8];
+            zero_padded[..7].copy_from_slice(buf);
+            let internal_u64_arrangement = [u64::from_le_bytes(zero_padded)];
+            WriteableFt63(internal_u64_arrangement)
+        }
+
+        fn to_data_bytes(&self) -> Self::DataBytes {
+            let mut return_array: [u8; 7] = [0u8; 7];
+            return_array.copy_from_slice(&self.0[0].to_le_bytes()[0..8]);
+            return_array
+        }
     }
 }
 
