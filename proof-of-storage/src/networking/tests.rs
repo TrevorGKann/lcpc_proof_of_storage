@@ -24,7 +24,7 @@ pub mod network_tests {
     use crate::databases::*;
     use crate::fields;
     use crate::fields::{convert_byte_vec_to_field_elements_vec, random_writeable_field_vec};
-    use crate::fields::writable_ft63::writable_ft63::WriteableFt63;
+    use crate::fields::WriteableFt63;
     use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, decode_row, form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns, verifiable_polynomial_evaluation, verify_full_polynomial_evaluation_wrapper_with_single_eval_point};
     use crate::networking::client;
     use crate::networking::server::handle_client_loop;

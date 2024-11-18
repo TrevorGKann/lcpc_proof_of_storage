@@ -164,20 +164,24 @@ pub fn field_elements_vec_to_file(path: &str, field_elements: &Vec<WriteableFt63
     }
 }
 
-pub fn random_writeable_field_vec(log_len: usize) -> Vec<WriteableFt63>
+pub fn random_writeable_field_vec<F: DataField>(log_len: usize) -> Vec<F>
 {
     use std::iter::repeat_with;
 
     let mut rng = rand::thread_rng();
 
-    let read_in_bytes = (WriteableFt63::CAPACITY / 8) as usize;
+    let read_in_bytes = F::DATA_BYTE_CAPACITY * (1 << log_len);
+    let byte_vec = repeat_with(|| rng.gen::<u8>()).take(read_in_bytes as usize).collect_vec();
+    let random_vector: Vec<F> = F::from_byte_vec(
+        &byte_vec
+    );
 
-    //create a vector of u8 arrays with len `read_in_byte_width` and fill it with random bytes
-    let random_vector: Vec<WriteableFt63> = repeat_with(|| {
-        let random_u8_vector = repeat_with(|| rng.gen::<u8>()).take(read_in_bytes).collect_vec();
-        let random_u64_array = byte_array_to_u64_array::<1>(&random_u8_vector, WriteableFt63::ENDIANNESS);
-        WriteableFt63::from_u64_array(random_u64_array).unwrap()
-    }).take(1 << log_len).collect_vec();
+    // //create a vector of u8 arrays with len `read_in_byte_width` and fill it with random bytes
+    // let random_vector: Vec<WriteableFt63> = repeat_with(|| {
+    //     let random_u8_vector = repeat_with(|| rng.gen::<u8>()).take(read_in_bytes).collect_vec();
+    //     let random_u64_array = byte_array_to_u64_array::<1>(&random_u8_vector, WriteableFt63::ENDIANNESS);
+    //     WriteableFt63::from_u64_array(random_u64_array).unwrap()
+    // }).take(1 << log_len).collect_vec();
     random_vector
 }
 
@@ -208,10 +212,10 @@ pub fn evaluate_field_polynomial_at_point_with_elevated_degree(field_elements: &
 }
 
 
-pub fn vector_multiply(
-    a: &[WriteableFt63],
-    b: &[WriteableFt63],
-) -> WriteableFt63
+pub fn vector_multiply<F: PrimeField>(
+    a: &[F],
+    b: &[F],
+) -> F
 {
     a.iter().zip(b.iter()).map(|(a, b)| *a * b).sum()
 }

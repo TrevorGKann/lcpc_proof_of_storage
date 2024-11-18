@@ -12,7 +12,6 @@ pub mod tests {
 
     use crate::fields::*;
     use crate::fields;
-    use crate::fields::writable_ft63::writable_ft63;
     use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit};
 
     const CLEANUP_VALUES: bool = true;
@@ -35,7 +34,7 @@ pub mod tests {
     }
 
 
-    type TestField = writable_ft63::WriteableFt63;
+    type TestField = WriteableFt63;
 
     #[test]
     fn file_to_field_to_file() {
@@ -65,7 +64,7 @@ pub mod tests {
 
     #[test]
     fn max_element_from_bytes() {
-        type TestField = fields::writable_ft63::writable_ft63::WriteableFt63;
+        type TestField = fields::WriteableFt63;
         const CAPACITY: usize = TestField::CAPACITY as usize;
         const BYTE_WIDTH: usize = CAPACITY / 8;
 
@@ -165,7 +164,7 @@ pub mod tests {
         use blake3::Hasher as Blake3;
         use itertools::iterate;
         use merlin::Transcript;
-        type TestField = writable_ft63::WriteableFt63;
+        type TestField = WriteableFt63;
         // type TestField = Ft255;
         // type TestField = proof_of_storage::fields::ft253_192::Ft253_192;
 
@@ -219,7 +218,7 @@ pub mod tests {
         use blake3::Hasher as Blake3;
         use itertools::iterate;
         use merlin::Transcript;
-        type TestField = writable_ft63::WriteableFt63;
+        type TestField = WriteableFt63;
         // type TestField = Ft255;
         // type TestField = proof_of_storage::fields::ft253_192::Ft253_192;
 
@@ -273,7 +272,7 @@ pub mod tests {
         use blake3::Hasher as Blake3;
         use itertools::iterate;
         use merlin::Transcript;
-        type TestField = writable_ft63::WriteableFt63;
+        type TestField = WriteableFt63;
         // type TestField = Ft255;
         // type TestField = proof_of_storage::fields::ft253_192::Ft253_192;
 
