@@ -7,6 +7,7 @@ use itertools::Itertools;
 use num_traits::{FromBytes, One, ToBytes, Zero};
 use num_traits::ops::bytes::NumBytes;
 use rand::Rng;
+use tracing_subscriber::registry::Data;
 
 use data_field::ByteOrder;
 pub use writable_ft63::WriteableFt63;
@@ -33,7 +34,7 @@ pub mod ft253_192 {
 }
 
 #[tracing::instrument]
-pub fn read_file_to_field_elements_vec(file: &mut File) -> (usize, Vec<WriteableFt63>) {
+pub fn read_file_to_field_elements_vec<F: DataField>(file: &mut File) -> (usize, Vec<F>) {
     // todo: need to convert to async with tokio file
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
@@ -43,25 +44,11 @@ pub fn read_file_to_field_elements_vec(file: &mut File) -> (usize, Vec<Writeable
 }
 
 #[tracing::instrument]
-pub fn convert_byte_vec_to_field_elements_vec(byte_vec: &[u8]) -> Vec<WriteableFt63> {
-    let read_in_bytes = (WriteableFt63::CAPACITY / 8) as usize;
+pub fn convert_byte_vec_to_field_elements_vec<F: DataField>(byte_vec: &[u8]) -> Vec<F> {
+    let read_in_bytes = (F::DATA_BYTE_CAPACITY) as usize;
 
 
-    byte_vec.chunks(read_in_bytes)
-        .map(|bytes| {
-            let mut full_length_byte_array = [0u8; mem::size_of::<u64>()];
-            match writable_ft63::ENDIANNESS {
-                ByteOrder::BigEndian => {
-                    full_length_byte_array[mem::size_of::<u64>() - bytes.len()..].copy_from_slice(bytes);
-                }
-                ByteOrder::LittleEndian => {
-                    full_length_byte_array[..bytes.len()].copy_from_slice(bytes);
-                }
-            }
-            let u64_array = [u64::from_le_bytes(full_length_byte_array)];
-            WriteableFt63::from_u64_array(u64_array).unwrap()
-        })
-        .collect()
+    F::from_byte_vec(byte_vec)
 }
 
 #[tracing::instrument]

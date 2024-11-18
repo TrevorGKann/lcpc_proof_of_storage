@@ -29,7 +29,7 @@ pub trait DataField: PrimeField {
         vec.chunks(Self::DATA_BYTE_CAPACITY as usize)
             .map(|byte_chunk| {
                 let mut byte_array: Self::DataBytes = Self::DataBytes::default();
-                byte_array.as_mut().clone_from_slice(byte_chunk);
+                byte_array.as_mut()[..byte_chunk.len()].clone_from_slice(byte_chunk);
                 Self::from_data_bytes(&byte_array)
             })
             .collect::<Vec<Self>>()
