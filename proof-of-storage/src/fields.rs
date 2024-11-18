@@ -4,28 +4,15 @@ use std::mem;
 
 use ff::{Field, PrimeField};
 use itertools::Itertools;
-use num_traits::{One, Zero};
+use num_traits::{FromBytes, One, ToBytes, Zero};
+use num_traits::ops::bytes::NumBytes;
 use rand::Rng;
+
+use data_field::ByteOrder;
 
 use crate::fields::writable_ft63::WriteableFt63;
 
-pub enum ByteOrder {
-    BigEndian,
-    LittleEndian,
-}
-
-pub trait FieldBytes: PrimeField {
-    const BYTE_ORDER: ByteOrder;
-
-    const BYTE_WIDTH: usize;
-
-    fn from_u8_array(array: &[u8]) -> Option<Self>;
-
-    fn to_u8_array(&self) -> &[u64];
-
-    fn from_u64_array(array: &[u64]) -> Option<Self>;
-    fn to_u64_array(&self) -> &[u64];
-}
+mod data_field;
 
 #[derive(Debug)]
 pub enum FieldErr {
@@ -49,7 +36,8 @@ pub mod writable_ft63 {
     use ff_derive_num::Num;
     use serde::{Deserialize, Serialize};
 
-    use crate::fields::{ByteOrder, FieldErr};
+    use crate::fields::data_field::ByteOrder;
+    use crate::fields::FieldErr;
 
     pub const U64_WIDTH: usize = 1;
     pub const U8_WIDTH: usize = U64_WIDTH * 8;
