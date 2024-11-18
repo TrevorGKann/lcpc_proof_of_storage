@@ -12,6 +12,7 @@ pub mod tests {
 
     use crate::fields::*;
     use crate::fields;
+    use crate::fields::writable_ft63::writable_ft63;
     use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit};
 
     const CLEANUP_VALUES: bool = true;
@@ -64,7 +65,7 @@ pub mod tests {
 
     #[test]
     fn max_element_from_bytes() {
-        type TestField = fields::writable_ft63::WriteableFt63;
+        type TestField = fields::writable_ft63::writable_ft63::WriteableFt63;
         const CAPACITY: usize = TestField::CAPACITY as usize;
         const BYTE_WIDTH: usize = CAPACITY / 8;
 

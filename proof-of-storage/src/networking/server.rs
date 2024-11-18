@@ -26,7 +26,7 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use crate::{fields, PoSColumn, PoSCommit};
 use crate::databases::{constants, FileMetadata, ServerHost, User};
 use crate::fields::{convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, is_power_of_two, read_file_to_field_elements_vec};
-use crate::fields::writable_ft63::WriteableFt63;
+use crate::fields::WriteableFt63;
 use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation};
 use crate::networking::shared;
 use crate::networking::shared::ClientMessages;

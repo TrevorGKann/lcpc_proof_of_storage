@@ -8,9 +8,10 @@ use merlin::Transcript;
 use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use proof_of_storage::fields;
+use proof_of_storage::fields::writable_ft63;
 
 // type TestField = fields::ft253_192::Ft253_192;
-type TestField = fields::writable_ft63::WriteableFt63;
+type TestField = writable_ft63::writable_ft63::WriteableFt63;
 
 fn main() {
     //Create a compact commit off a matrixLigero encoding with a Rho of 2
@@ -48,7 +49,7 @@ fn main() {
     transcript.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
 
     let proof = commit.prove(&outer_tensor, &encoding, &mut transcript).unwrap();
-    let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut transcript );
+    let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut transcript);
 
 
     println!("verification: {:?}\n", verification);

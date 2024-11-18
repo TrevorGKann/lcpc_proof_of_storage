@@ -9,12 +9,12 @@ use num_traits::ops::bytes::NumBytes;
 use rand::Rng;
 
 use data_field::ByteOrder;
+pub use writable_ft63::WriteableFt63;
 
 use crate::fields::data_field::DataField;
-use crate::fields::writable_ft63::WriteableFt63;
 
-mod data_field;
-
+pub mod data_field;
+mod writable_ft63;
 #[derive(Debug)]
 pub enum FieldErr {
     InvalidFieldElement,
@@ -30,61 +30,6 @@ pub mod ft253_192 {
     #[PrimeFieldGenerator = "3"]
     #[PrimeFieldReprEndianness = "big"]
     pub struct Ft253_192([u64; 4]);
-}
-
-pub mod writable_ft63 {
-    use ff::PrimeField;
-    use ff_derive_num::Num;
-    use serde::{Deserialize, Serialize};
-
-    use crate::fields::data_field::{ByteOrder, DataField};
-    use crate::fields::FieldErr;
-
-    pub const U64_WIDTH: usize = 1;
-    pub const U8_WIDTH: usize = U64_WIDTH * 8;
-    pub const ENDIANNESS: ByteOrder = ByteOrder::LittleEndian;
-
-    #[derive(PrimeField, Num, Deserialize, Serialize)]
-    #[PrimeFieldModulus = "5102708120182849537"]
-    #[PrimeFieldGenerator = "10"]
-    #[PrimeFieldReprEndianness = "little"]
-    pub struct WriteableFt63([u64; 1]);
-
-    impl WriteableFt63 {
-        pub fn from_u64_array(input: [u64; U64_WIDTH]) -> Result<Self, FieldErr> {
-            let ret = Self(input);
-            if ret.is_valid() {
-                Ok(ret)
-            } else {
-                Err(FieldErr::InvalidFieldElement)
-            }
-        }
-
-        pub fn to_u64_array(&self) -> [u64; 1] {
-            self.0
-        }
-
-        pub const BYTE_CAPACITY: u32 = Self::CAPACITY / 8;
-    }
-
-
-    impl DataField for WriteableFt63 {
-        type DataBytes = [u8; 7];
-        const ENDIANNESS: ByteOrder = ByteOrder::LittleEndian;
-
-        fn from_data_bytes(buf: &Self::DataBytes) -> Self {
-            let mut zero_padded = [0u8; 8];
-            zero_padded[..7].copy_from_slice(buf);
-            let internal_u64_arrangement = [u64::from_le_bytes(zero_padded)];
-            WriteableFt63(internal_u64_arrangement)
-        }
-
-        fn to_data_bytes(&self) -> Self::DataBytes {
-            let mut return_array: [u8; 7] = [0u8; 7];
-            return_array.copy_from_slice(&self.0[0].to_le_bytes()[0..8]);
-            return_array
-        }
-    }
 }
 
 #[tracing::instrument]
@@ -230,7 +175,7 @@ pub fn random_writeable_field_vec(log_len: usize) -> Vec<WriteableFt63>
     //create a vector of u8 arrays with len `read_in_byte_width` and fill it with random bytes
     let random_vector: Vec<WriteableFt63> = repeat_with(|| {
         let random_u8_vector = repeat_with(|| rng.gen::<u8>()).take(read_in_bytes).collect_vec();
-        let random_u64_array = byte_array_to_u64_array::<1>(&random_u8_vector, writable_ft63::ENDIANNESS);
+        let random_u64_array = byte_array_to_u64_array::<1>(&random_u8_vector, WriteableFt63::ENDIANNESS);
         WriteableFt63::from_u64_array(random_u64_array).unwrap()
     }).take(1 << log_len).collect_vec();
     random_vector

@@ -28,8 +28,8 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::*;
 use crate::databases::*;
-use crate::fields::{convert_byte_vec_to_field_elements_vec, convert_field_elements_vec_to_byte_vec, evaluate_field_polynomial_at_point, evaluate_field_polynomial_at_point_with_elevated_degree, writable_ft63};
-use crate::fields::writable_ft63::WriteableFt63;
+use crate::fields::{convert_byte_vec_to_field_elements_vec, convert_field_elements_vec_to_byte_vec, evaluate_field_polynomial_at_point, evaluate_field_polynomial_at_point_with_elevated_degree};
+use crate::fields::WriteableFt63;
 use crate::lcpc_online::{client_verify_commitment, CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit, FldT, get_PoS_soudness_n_cols, hash_column_to_digest, server_retreive_columns};
 use crate::networking::server;
 use crate::networking::server::{get_aspect_ratio_default_from_field_len, get_aspect_ratio_default_from_file_len};

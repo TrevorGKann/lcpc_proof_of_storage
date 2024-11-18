@@ -12,7 +12,7 @@ use lcpc_ligero_pc::LigeroEncoding;
 
 use crate::{PoSColumn, PoSField};
 use crate::databases::FileMetadata;
-use crate::fields::writable_ft63::WriteableFt63;
+use crate::fields::WriteableFt63;
 
 type WrappedStream = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type WrappedSink = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;

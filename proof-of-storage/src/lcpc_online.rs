@@ -15,7 +15,7 @@ use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 use crate::databases::FileMetadata;
 use crate::fields::{is_power_of_two, vector_multiply};
-use crate::fields::writable_ft63::WriteableFt63;
+use crate::fields::WriteableFt63;
 use crate::networking::server::get_aspect_ratio_default_from_field_len;
 
 pub type FldT<E> = <E as LcEncoding>::F;

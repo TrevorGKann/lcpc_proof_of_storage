@@ -2,10 +2,9 @@ extern crate core;
 
 use blake3::Hasher as Blake3;
 
+use fields::WriteableFt63;
 use lcpc_2d::{LcColumn, LcCommit, LcEvalProof, LcRoot};
 use lcpc_ligero_pc::LigeroEncoding;
-
-use crate::fields::writable_ft63::WriteableFt63;
 
 pub mod fields;
 pub mod networking;
