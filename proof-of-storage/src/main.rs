@@ -8,10 +8,10 @@ use merlin::Transcript;
 use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 use proof_of_storage::fields;
-use proof_of_storage::fields::writable_ft63;
+use proof_of_storage::fields::WriteableFt63;
 
 // type TestField = fields::ft253_192::Ft253_192;
-type TestField = writable_ft63::writable_ft63::WriteableFt63;
+type TestField = WriteableFt63;
 
 fn main() {
     //Create a compact commit off a matrixLigero encoding with a Rho of 2
