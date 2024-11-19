@@ -1,15 +1,12 @@
 use std::fs::File;
 use std::io::{Read, Write};
 
+use crate::fields::data_field::DataField;
 use ff::{Field, PrimeField};
 pub use ft253_192::Ft253_192;
 use itertools::Itertools;
-use num_traits::{One, ToBytes, Zero};
 use rand::Rng;
-use tracing_subscriber::registry::Data;
 pub use writable_ft63::WriteableFt63;
-
-use crate::fields::data_field::DataField;
 
 pub mod data_field;
 mod ft253_192;
@@ -34,8 +31,7 @@ pub fn read_file_to_field_elements_vec<F: DataField>(file: &mut File) -> (usize,
 
 #[tracing::instrument]
 pub fn convert_byte_vec_to_field_elements_vec<F: DataField>(byte_vec: &[u8]) -> Vec<F> {
-    let read_in_bytes = (F::DATA_BYTE_CAPACITY) as usize;
-
+    // todo: can refactor this entire function as a F::from_byte_vec(byte_vec)
     F::from_byte_vec(byte_vec)
 }
 
@@ -58,8 +54,6 @@ pub fn read_file_path_to_field_elements_vec<F: DataField>(path: &str) -> Vec<F> 
 
 pub fn field_elements_vec_to_file<F: DataField>(path: &str, field_elements: &Vec<F>) {
     let mut file = File::create(path).unwrap();
-
-    let write_out_byte_width = (F::DATA_BYTE_CAPACITY) as usize;
 
     for (index, field_element) in field_elements.iter().enumerate() {
         let mut write_buffer = F::field_vec_to_byte_vec(&[*field_element]);
