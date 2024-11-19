@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::fields::data_field::{ByteOrder, DataField};
 use crate::fields::FieldErr;
 
-pub const ENDIANNESS: ByteOrder = ByteOrder::LittleEndian;
-
 #[derive(PrimeField, Num, Deserialize, Serialize)]
 #[PrimeFieldModulus = "5102708120182849537"]
 #[PrimeFieldGenerator = "10"]
@@ -29,7 +27,6 @@ impl WriteableFt63 {
 
     pub const BYTE_CAPACITY: u32 = Self::CAPACITY / 8;
 }
-
 
 impl DataField for WriteableFt63 {
     type DataBytes = [u8; 7];
