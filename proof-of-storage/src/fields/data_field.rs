@@ -1,6 +1,13 @@
 use ff::PrimeField;
 use num_traits::ops::bytes::NumBytes;
 
+/// Interface to allow for data storage, retrieval, and usage from PrimeFields without loss.
+/// Loses some of the storage capacity of the native field (due to modulus bits and use of bytes
+/// for native CPU efficiency).
+///
+/// Users have to assign how bytes get stored within and retrieved from the field without loss. i.e,
+/// if your field natively represents as `[u64; 1]` you have to tell which bytes of that u64 to 
+/// fill and take from.   
 pub trait DataField: PrimeField {
     /// Specifies the total bytes that can be stored in the field elements without loss.
     ///     Because of the modulus bits, and to efficiently use bytes (at some loss of total bit
