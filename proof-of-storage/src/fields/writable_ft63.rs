@@ -48,3 +48,8 @@ impl DataField for WriteableFt63 {
         return_array
     }
 }
+
+#[test]
+fn test_type_sizes_are_correct() {
+    assert!(WriteableFt63::test_type_sizes_are_correct())
+}
