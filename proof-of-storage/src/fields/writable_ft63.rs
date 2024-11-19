@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::fields::data_field::{ByteOrder, DataField};
 use crate::fields::FieldErr;
 
-pub const U64_WIDTH: usize = 1;
-pub const U8_WIDTH: usize = U64_WIDTH * 8;
 pub const ENDIANNESS: ByteOrder = ByteOrder::LittleEndian;
 
 #[derive(PrimeField, Num, Deserialize, Serialize)]
@@ -16,7 +14,7 @@ pub const ENDIANNESS: ByteOrder = ByteOrder::LittleEndian;
 pub struct WriteableFt63([u64; 1]);
 
 impl WriteableFt63 {
-    pub fn from_u64_array(input: [u64; U64_WIDTH]) -> Result<Self, FieldErr> {
+    pub fn from_u64_array(input: [u64; 1]) -> Result<Self, FieldErr> {
         let ret = Self(input);
         if ret.is_valid() {
             Ok(ret)

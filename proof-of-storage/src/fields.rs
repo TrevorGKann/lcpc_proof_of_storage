@@ -52,21 +52,11 @@ pub fn convert_byte_vec_to_field_elements_vec<F: DataField>(byte_vec: &[u8]) -> 
 }
 
 #[tracing::instrument]
-pub fn convert_field_elements_vec_to_byte_vec(field_elements: &[WriteableFt63], expected_length: usize) -> Vec<u8> {
-    field_elements.iter().flat_map(|field_element| {
-        let u64_array = field_element.to_u64_array();
-        let mut write_buffer = u64_array_to_byte_array::<1>(&u64_array, writable_ft63::ENDIANNESS);
-        match writable_ft63::ENDIANNESS {
-            ByteOrder::BigEndian => {
-                write_buffer.remove(0);
-            }
-            ByteOrder::LittleEndian => {
-                write_buffer.pop();
-            }
-        }
-        write_buffer
-    }).take(expected_length)
-        .collect()
+pub fn convert_field_elements_vec_to_byte_vec<F: DataField>(field_elements: &[F],
+                                                            expected_length: usize) -> Vec<u8> {
+    let mut bytes = F::field_vec_to_byte_vec(field_elements);
+    bytes.truncate(expected_length);
+    bytes
 }
 
 
@@ -269,7 +259,7 @@ fn bytes_into_then_out_of_field_elements() {
     for byte in bytes.iter_mut() {
         *byte = rng.gen::<u8>();
     }
-    let field = convert_byte_vec_to_field_elements_vec(&bytes);
+    let field = convert_byte_vec_to_field_elements_vec::<WriteableFt63>(&bytes);
 
     let bytes_back = convert_field_elements_vec_to_byte_vec(&field, LEN);
 
