@@ -10,9 +10,11 @@ pub mod tests {
     use lcpc_2d::LcEncoding;
     use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
-    use crate::fields::*;
     use crate::fields;
-    use crate::lcpc_online::{CommitDimensions, CommitOrLeavesOutput, CommitRequestType, convert_file_data_to_commit};
+    use crate::fields::*;
+    use crate::lcpc_online::{
+        convert_file_data_to_commit, CommitDimensions, CommitOrLeavesOutput, CommitRequestType,
+    };
 
     const CLEANUP_VALUES: bool = true;
 
@@ -33,7 +35,6 @@ pub mod tests {
         }
     }
 
-
     type TestField = WriteableFt63;
 
     #[test]
@@ -41,11 +42,16 @@ pub mod tests {
         let known_file = "test_files/test.txt";
         let temp_file = "temp_file__file_to_field_to_file__test.txt";
 
-        let cleanup = Cleanup { files: vec![temp_file.to_string()] };
+        let cleanup = Cleanup {
+            files: vec![temp_file.to_string()],
+        };
 
         let file_as_field: Vec<TestField> = read_file_path_to_field_elements_vec(known_file);
         field_elements_vec_to_file(temp_file, &file_as_field);
-        assert_eq!(std::fs::read(known_file).unwrap_or(vec![]), std::fs::read(temp_file).unwrap_or(vec![]));
+        assert_eq!(
+            std::fs::read(known_file).unwrap_or(vec![]),
+            std::fs::read(temp_file).unwrap_or(vec![])
+        );
 
         std::mem::drop(cleanup);
     }
@@ -54,7 +60,9 @@ pub mod tests {
     fn field_to_file_to_field() {
         let temp_file = "temp_file__field_to_file_to_field__test.txt";
 
-        let cleanup = Cleanup { files: vec![temp_file.to_string()] };
+        let cleanup = Cleanup {
+            files: vec![temp_file.to_string()],
+        };
 
         let random_field: Vec<TestField> = random_writeable_field_vec(1);
         field_elements_vec_to_file(temp_file, &random_field);
@@ -82,9 +90,9 @@ pub mod tests {
 
     #[test]
     fn end_to_end_with_set_dimensions() {
+        use blake3::Hasher as Blake3;
         use itertools::iterate;
         use merlin::Transcript;
-        use blake3::Hasher as Blake3;
         // let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("test_file.txt");
         // let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
         // let data_realized_width = data_min_width.next_power_of_two();
@@ -104,10 +112,12 @@ pub mod tests {
             &encoded_file_data,
             CommitRequestType::Commit,
             CommitDimensions::Square,
-        ).unwrap() else { panic!("Unexpected failure to convert file to commitment") };
+        )
+        .unwrap() else {
+            panic!("Unexpected failure to convert file to commitment")
+        };
 
-        let encoding
-            = LigeroEncoding::<TestField>::new_from_dims(commit.n_per_row, commit.n_cols);
+        let encoding = LigeroEncoding::<TestField>::new_from_dims(commit.n_per_row, commit.n_cols);
         let mut file = std::fs::File::open(filename).unwrap();
         let (size_in_bytes, field_vector) = read_file_to_field_elements_vec(&mut file);
 
@@ -126,23 +136,38 @@ pub mod tests {
             .take(commit.get_n_per_row())
             .collect();
         let outer_tensor: Vec<TestField> = {
-            let xr_eval_point_raised_to_power_for_outer_tensor = x_eval_point * inner_tensor.last().unwrap();
-            iterate(TestField::ONE, |&v| v * xr_eval_point_raised_to_power_for_outer_tensor)
-                .take(commit.get_n_rows())
-                .collect()
+            let xr_eval_point_raised_to_power_for_outer_tensor =
+                x_eval_point * inner_tensor.last().unwrap();
+            iterate(TestField::ONE, |&v| {
+                v * xr_eval_point_raised_to_power_for_outer_tensor
+            })
+            .take(commit.get_n_rows())
+            .collect()
         };
 
         let mut transcript = Transcript::new(b"test");
         transcript.append_message(b"polycommit", commit.get_root().as_ref());
-        transcript.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
+        transcript.append_message(
+            b"ncols",
+            &(encoding.get_n_col_opens() as u64).to_be_bytes()[..],
+        );
 
         let mut proof_transcript = transcript.clone();
         let mut verification_transcript = transcript.clone();
 
-        let proof = commit.prove(&outer_tensor, &encoding, &mut proof_transcript).unwrap();
-        let verification = proof.verify(commit.get_root().as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut verification_transcript).unwrap();
+        let proof = commit
+            .prove(&outer_tensor, &encoding, &mut proof_transcript)
+            .unwrap();
+        let verification = proof
+            .verify(
+                commit.get_root().as_ref(),
+                &outer_tensor,
+                &inner_tensor,
+                &encoding,
+                &mut verification_transcript,
+            )
+            .unwrap();
     }
-
 
     fn get_random_coeffs<T>() -> Vec<T>
     where
@@ -164,6 +189,7 @@ pub mod tests {
         use blake3::Hasher as Blake3;
         use itertools::iterate;
         use merlin::Transcript;
+        // type TestField = Ft253_192;
         type TestField = WriteableFt63;
         // type TestField = Ft255;
         // type TestField = proof_of_storage::fields::ft253_192::Ft253_192;
@@ -210,7 +236,7 @@ pub mod tests {
             &enc2,
             &mut tr2,
         )
-            .unwrap();
+        .unwrap();
     }
 
     #[test]
@@ -264,7 +290,7 @@ pub mod tests {
             &enc2,
             &mut tr2,
         )
-            .unwrap();
+        .unwrap();
     }
 
     #[test]
@@ -282,7 +308,8 @@ pub mod tests {
         let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
         let data_realized_width = data_min_width.next_power_of_two();
         let matrix_colums = (data_realized_width + 1).next_power_of_two();
-        let encoding = LigeroEncoding::<TestField>::new_from_dims(data_realized_width, matrix_colums);
+        let encoding =
+            LigeroEncoding::<TestField>::new_from_dims(data_realized_width, matrix_colums);
         let comm = LigeroCommit::<Blake3, _>::commit(&data, &encoding).unwrap();
         // this is the polynomial commitment
         let root = comm.get_root();
@@ -307,13 +334,19 @@ pub mod tests {
         // compute an evaluation proof
         let mut tr1 = Transcript::new(b"test transcript");
         tr1.append_message(b"polycommit", root.as_ref());
-        tr1.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
+        tr1.append_message(
+            b"ncols",
+            &(encoding.get_n_col_opens() as u64).to_be_bytes()[..],
+        );
         let pf = comm.prove(&outer_tensor[..], &encoding, &mut tr1).unwrap();
 
         // verify it and finish evaluation
         let mut tr2 = Transcript::new(b"test transcript");
         tr2.append_message(b"polycommit", root.as_ref());
-        tr2.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
+        tr2.append_message(
+            b"ncols",
+            &(encoding.get_n_col_opens() as u64).to_be_bytes()[..],
+        );
         let enc2 = LigeroEncoding::new_from_dims(pf.get_n_per_row(), pf.get_n_cols());
         pf.verify(
             root.as_ref(),
@@ -322,6 +355,6 @@ pub mod tests {
             &enc2,
             &mut tr2,
         )
-            .unwrap();
+        .unwrap();
     }
 }
