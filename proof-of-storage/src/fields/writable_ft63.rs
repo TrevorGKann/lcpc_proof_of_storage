@@ -46,7 +46,7 @@ impl DataField for WriteableFt63 {
 
     fn to_data_bytes(&self) -> Self::DataBytes {
         let mut return_array: [u8; 7] = [0u8; 7];
-        return_array.copy_from_slice(&self.0[0].to_le_bytes()[0..8]);
+        return_array.copy_from_slice(&self.0[0].to_le_bytes()[0..7]);
         return_array
     }
 }
