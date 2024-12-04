@@ -51,3 +51,6 @@ path = "src/bin/pos.rs"
 
 [profile.release]
 debug = true
+
+[features]
+benchmark = []
