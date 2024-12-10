@@ -7,7 +7,7 @@ test:
     cargo nextest run -p proof-of-storage
 
 # clean database
-cleanDB:
+clean-db:
     -rm -rf {{ source_directory() }}/proof-of-storage/PoR_Database/**
     -rm -rf {{ source_directory() }}/proof-of-storage/PoR_server_files/**
 
