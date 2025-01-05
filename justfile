@@ -15,5 +15,19 @@ clean-db:
 db-size:
     du -sch {{ source_directory() }}/proof-of-storage/PoR_*
 
-proof-bench:
-    cargo flamegraph --root --unit-test proof_of_storage -- networking::tests::network_tests::test_file_verification_bad
+proof-flame:
+    cargo flamegraph --root --unit-test proof_of_storage \
+      -- networking::tests::network_tests::test_file_verification_bad
+
+build-pos-bin:
+    cd {{ source_directory() }}/proof-of-storage/
+    cargo build --bin pos --target-dir artifacts/ --release
+
+bench:
+    cargo bench -p proof-of-storage
+
+bench-report:
+    cd {{ source_directory() }}/target/
+    zip -qr report.zip target/criterion/
+
+#    mv report.zip ../

@@ -1,3 +1,4 @@
+#![feature(generic_const_exprs)]
 #[allow(clippy::module_inception)]
 #[cfg(test)]
 #[allow(unused)]

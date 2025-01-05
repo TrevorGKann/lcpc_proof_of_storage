@@ -57,7 +57,7 @@ pub async fn upload_file(
     use std::path::Path;
     tracing::debug!("reading file {} from disk", file_name);
 
-    #[cfg(feature = "benchmark")]
+    //    #[cfg(feature = "benchmark")]
     let benchmark_span = span!(
         Level::TRACE,
         "benchmark",
@@ -69,9 +69,9 @@ pub async fn upload_file(
     let file_path = Path::new(&file_name);
     let mut file_data = fs::read(file_path).await?;
 
-    #[cfg(feature = "benchmark")]
+    //    #[cfg(feature = "benchmark")]
     benchmark_span.exit();
-    #[cfg(feature = "benchmark")]
+    //    #[cfg(feature = "benchmark")]
     let benchmark_span = span!(
         Level::TRACE,
         "benchmark",
@@ -158,9 +158,9 @@ pub async fn upload_file(
         bail!("Failed to convert file data to leaves");
     };
 
-    #[cfg(feature = "benchmark")]
+    //    #[cfg(feature = "benchmark")]
     benchmark_span.exit();
-    #[cfg(feature = "benchmark")]
+    //    #[cfg(feature = "benchmark")]
     let benchmark_span = span!(
         Level::TRACE,
         "benchmark",
@@ -182,18 +182,28 @@ pub async fn upload_file(
     };
 
     #[cfg(feature = "benchmark")]
-    tracing::info!("sending {} total bytes", std::mem::size_of_val(&to_send));
+    {
+        let string_struct = serde_json::to_string(&to_send).unwrap();
+        tracing::info!("sending {} total bytes", string_struct.len());
+        let mut send_file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open("./sending_data")
+            .await?;
+        send_file.write_all(string_struct.as_bytes()).await?;
+    }
 
     sink.send(to_send).await?;
 
-    #[cfg(feature = "benchmark")]
+    //    #[cfg(feature = "benchmark")]
     let benchmark_span = benchmark_span.exit();
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::CompactCommit { mut file_metadata } = transmission else {
         match transmission {
@@ -224,11 +234,11 @@ pub async fn upload_file(
 
     tracing::info!("client: Requesting a proof from the server...");
     tracing::trace!(
-        "client: requesting the following columns from the server: {:?}",
+        "client: requesting the following columns from the server: {:.500?}",
         cols_to_verify
     );
 
-    #[cfg(feature = "benchmark")]
+    //    #[cfg(feature = "benchmark")]
     let benchmark_span = benchmark_span.entered();
 
     sink.send(ClientMessages::RequestProof {
@@ -237,14 +247,14 @@ pub async fn upload_file(
     })
     .await?;
 
-    #[cfg(feature = "benchmark")]
+    //    #[cfg(feature = "benchmark")]
     let benchmark_span = benchmark_span.exit();
 
     let Some(Ok(transmission)) = stream.next().await else {
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::Columns {
         columns: received_columns,
@@ -314,7 +324,7 @@ pub async fn download_file(
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::File { file: file_data } = transmission else {
         return match transmission {
@@ -353,7 +363,7 @@ pub async fn download_file(
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::trace!("Client received: {:?}", transmission);
+    // tracing::trace!("client received: {:?}", transmission);
 
     let ServerMessages::Columns {
         columns: received_columns,
@@ -429,7 +439,7 @@ pub async fn request_proof(
     verify_compact_commit(&file_metadata, &mut stream, &mut sink).await
 }
 
-#[tracing::instrument]
+// #[tracing::instrument]
 pub fn get_columns_from_random_seed(
     random_seed: u64,
     number_of_columns_to_extract: usize,
@@ -445,7 +455,7 @@ pub fn get_columns_from_random_seed(
     cols_to_verify
 }
 
-#[tracing::instrument]
+#[tracing::instrument(skip(stream, sink))]
 pub async fn verify_compact_commit(
     file_metadata: &FileMetadata,
     stream: &mut SerStream<ServerMessages>,
@@ -484,7 +494,7 @@ pub async fn verify_compact_commit(
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::Columns {
         columns: received_columns,
@@ -565,7 +575,7 @@ where
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::PolynomialEvaluation { evaluation_result } = transmission else {
         return match transmission {
@@ -605,7 +615,7 @@ where
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server")
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::Columns {
         columns: received_columns,
@@ -681,7 +691,7 @@ where
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::CompactCommit {
         file_metadata: new_file_metadata,
@@ -869,7 +879,7 @@ pub async fn delete_file(file_metadata: FileMetadata, server_ip: String) -> Resu
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::FileDeleted { filename } = transmission else {
         return match transmission {
@@ -902,7 +912,7 @@ pub async fn delete_file(file_metadata: FileMetadata, server_ip: String) -> Resu
     Ok(())
 }
 
-#[tracing::instrument]
+#[tracing::instrument(skip(data_to_append))]
 pub async fn append_to_file(
     file_metadata: FileMetadata,
     server_ip: String,
@@ -924,7 +934,7 @@ pub async fn append_to_file(
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::CompactCommit {
         file_metadata: appended_file_metadata,
@@ -994,7 +1004,7 @@ pub async fn append_to_file(
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::AppendEvaluation {
         original_result_vector,
@@ -1152,7 +1162,7 @@ pub async fn append_to_file(
     Ok(appended_file_metadata)
 }
 
-#[tracing::instrument]
+#[tracing::instrument(skip(data_to_append))]
 pub async fn edit_file(
     file_metadata: FileMetadata,
     server_ip: String,
@@ -1188,7 +1198,7 @@ pub async fn edit_file(
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::CompactCommit {
         file_metadata: edited_file_metadata,
@@ -1258,7 +1268,7 @@ pub async fn edit_file(
         tracing::error!("Failed to receive message from server");
         bail!("Failed to receive message from server");
     };
-    tracing::debug!("Client received: {:?}", transmission);
+    // tracing::debug!("client received: {:?}", transmission);
 
     let ServerMessages::EditEvaluation {
         original_result_vector,

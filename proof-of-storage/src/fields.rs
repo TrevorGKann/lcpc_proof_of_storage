@@ -1,16 +1,23 @@
 use std::fs::File;
 use std::io::{Read, Write};
+use std::ops::Div;
 
-use crate::fields::data_field::DataField;
+use anyhow::Result;
+use bitvec::view::BitViewSized;
 use ff::{Field, PrimeField};
-pub use ft253_192::Ft253_192;
 use itertools::Itertools;
 use rand::Rng;
+use tokio::io::{AsyncReadExt, BufReader};
+
+pub use ft253_192::Ft253_192;
 pub use writable_ft63::WriteableFt63;
+
+use crate::fields::data_field::DataField;
 
 pub mod data_field;
 mod ft253_192;
 mod writable_ft63;
+mod field_generator_iter;
 
 #[derive(Debug)]
 pub enum FieldErr {
@@ -30,6 +37,76 @@ pub fn read_file_to_field_elements_vec<F: DataField>(file: &mut File) -> (usize,
 }
 
 #[tracing::instrument]
+pub async fn stream_file_to_field_elements_vec<F: DataField>(file: &mut tokio::fs::File)
+                                                             -> Result<(usize, Vec<F>)>
+{
+    // BUF_SIZE has to be a multiple of DATA_BYTE_CAPACITY since the buf reader will not cyclically
+    //  fill but instead will fill a partial one at the end of the buffer.
+    const BUF_MULT: usize = 1000;
+    let BUF_SIZE: usize = BUF_MULT * F::DATA_BYTE_CAPACITY as usize;
+
+    let file_size = file.metadata().await?.len();
+    let total_elems = file_size.div_ceil(F::DATA_BYTE_CAPACITY as u64);
+    let mut field_vec: Vec<F> = Vec::with_capacity(total_elems as usize);
+
+    let mut reader = BufReader::with_capacity(BUF_SIZE, file);
+    let mut buffer = F::DataBytes::default();
+
+    loop {
+        // Read bytes into the buffer
+        let bytes_read = reader.read(buffer.as_mut()).await?;
+        if bytes_read == 0 {
+            break; // EOF reached
+        }
+        if bytes_read < F::DATA_BYTE_CAPACITY as usize {
+            for i in bytes_read..F::DATA_BYTE_CAPACITY as usize {
+                buffer.as_mut()[i] = 0u8;
+            }
+        }
+
+        // Convert the buffer slice into field elements and extend the vector
+        field_vec.push(F::from_data_bytes(&buffer));
+    }
+
+    Ok((file_size as usize, field_vec))
+}
+
+#[tracing::instrument]
+pub fn stream_file_to_field_elements_vec_sync<F: DataField>(file: &mut std::fs::File)
+                                                            -> Result<(usize, Vec<F>)>
+{
+    // BUF_SIZE has to be a multiple of DATA_BYTE_CAPACITY since the buf reader will not cyclically
+    //  fill but instead will fill a partial one at the end of the buffer.
+    const BUF_MULT: usize = 1000;
+    let buf_size: usize = BUF_MULT * F::DATA_BYTE_CAPACITY as usize;
+
+    let file_size = file.metadata()?.len();
+    let total_elems = file_size.div_ceil(F::DATA_BYTE_CAPACITY as u64);
+    let mut field_vec: Vec<F> = Vec::with_capacity(total_elems as usize);
+
+    let mut reader = std::io::BufReader::with_capacity(buf_size, file);
+    let mut buffer = F::DataBytes::default();
+
+    loop {
+        // Read bytes into the buffer
+        let bytes_read = reader.read(buffer.as_mut())?;
+        if bytes_read == 0 {
+            break; // EOF reached
+        }
+        if bytes_read < F::DATA_BYTE_CAPACITY as usize {
+            for i in bytes_read..F::DATA_BYTE_CAPACITY as usize {
+                buffer.as_mut()[i] = 0u8;
+            }
+        }
+
+        // Convert the buffer slice into field elements and extend the vector
+        field_vec.push(F::from_data_bytes(&buffer));
+    }
+
+    Ok((file_size as usize, field_vec))
+}
+
+// #[tracing::instrument]
 pub fn convert_byte_vec_to_field_elements_vec<F: DataField>(byte_vec: &[u8]) -> Vec<F> {
     // todo: can refactor this entire function as a F::from_byte_vec(byte_vec)
     F::from_byte_vec(byte_vec)
@@ -176,7 +253,7 @@ fn test_polynomial_eval_with_elevated_degree() {
     ];
     let point = WriteableFt63::ONE + WriteableFt63::ONE;
     assert_eq!(
-        evaluate_field_polynomial_at_point(&field_elements, &point,),
+        evaluate_field_polynomial_at_point(&field_elements, &point),
         evaluate_field_polynomial_at_point_with_elevated_degree(
             &[WriteableFt63::ONE + WriteableFt63::ONE],
             &point,
@@ -192,7 +269,7 @@ fn test_polynomial_eval_with_elevated_degree() {
     ];
     let point = WriteableFt63::ONE + WriteableFt63::ONE;
     assert_eq!(
-        evaluate_field_polynomial_at_point(&field_elements, &point,),
+        evaluate_field_polynomial_at_point(&field_elements, &point),
         evaluate_field_polynomial_at_point_with_elevated_degree(
             &[
                 WriteableFt63::ONE + WriteableFt63::ONE,
@@ -218,4 +295,48 @@ fn bytes_into_then_out_of_field_elements() {
     let bytes_back = convert_field_elements_vec_to_byte_vec(&field, LEN);
 
     assert_eq!(bytes, bytes_back);
+}
+
+#[tokio::test]
+async fn different_read_to_vecs_are_equivalent() {
+    use field_generator_iter::FieldGeneratorIter;
+    let files = [
+        "test_files/1000_byte_file.bytes".to_string(),
+        "test_files/4000_byte_file.bytes".to_string(),
+        "test_files/10000_byte_file.bytes".to_string(),
+        "test_files/40000_byte_file.bytes".to_string(),
+    ];
+    // println!("{:?}", std::env::current_dir());
+    for file_name in files {
+        println!("testing file {}", file_name);
+        let original = {
+            let mut file = std::fs::File::open(&file_name).unwrap();
+            read_file_to_field_elements_vec::<WriteableFt63>(&mut file)
+        };
+        let rewrite = {
+            let mut file = tokio::fs::File::open(&file_name).await.unwrap();
+            stream_file_to_field_elements_vec::<WriteableFt63>(&mut file).await.unwrap()
+        };
+        let sync_rewrite = {
+            let mut file = std::fs::File::open(&file_name).unwrap();
+            stream_file_to_field_elements_vec_sync::<WriteableFt63>(&mut file).unwrap()
+        };
+        let iter_rewrite: Vec<WriteableFt63> = {
+            let file = std::fs::File::open(&file_name).unwrap();
+            let reader = std::io::BufReader::new(file).bytes().map(|r| r.unwrap());
+            let field_iter = FieldGeneratorIter::new(reader);
+            field_iter.collect()
+        };
+        assert_eq!(original.0, rewrite.0);
+        assert_eq!(original.0, sync_rewrite.0);
+        for i in 0..original.1.len() {
+            assert_eq!(original.1[i], rewrite.1[i], "failed at index {} on file {}", i, file_name);
+            assert_eq!(original.1[i], rewrite.1[i], "failed at index {} on file {}", i, file_name);
+            assert_eq!(original.1[i], iter_rewrite[i], "failed at index {} on file {} for iter",
+                       i, file_name);
+        }
+        assert_eq!(original.1.len(), rewrite.1.len());
+        assert_eq!(original.1.len(), sync_rewrite.1.len());
+        assert_eq!(original.1.len(), iter_rewrite.len());
+    }
 }

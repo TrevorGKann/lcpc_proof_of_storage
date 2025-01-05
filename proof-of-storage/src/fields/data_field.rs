@@ -45,9 +45,9 @@ pub trait DataField: PrimeField {
     /// Converts a vec of field elements to at least the corresponding data that fills it in
     /// bytes. Will zero pad the ending byte array if the original bytes were insufficiently long.
     ///
-    /// For example, if `DataBytes` is `[u8; 2]` and the string `[1,2,3]` are fed into
+    /// For example, if `DataBytes` is a `[u8; 2]` and the byte string `[1,2,3]` is fed into
     /// `from_byte_vec` and then back from `field_vec_to_byte_vec`, the user would get `[1,2,3,0]`.
-    /// In other words, if ending zero padding is important, the user must keep track of the
+    /// In other words, if ending zero padding matters, the user must keep track of the
     /// total byte count.
     fn field_vec_to_byte_vec(field_vec: &[Self]) -> Vec<u8> {
         field_vec.iter()

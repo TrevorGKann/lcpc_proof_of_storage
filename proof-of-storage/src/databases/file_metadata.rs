@@ -1,7 +1,6 @@
-use std::fmt;
-
 use ff::PrimeField;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use ulid::Ulid;
 
 use crate::databases::server_host::ServerHost;
@@ -22,7 +21,10 @@ pub struct FileMetadata {
 
 impl FileMetadata {
     pub fn get_end_coefficient_coordinates<F: PrimeField>(&self) -> (usize, usize) {
-        (self.num_rows, self.filesize_in_bytes % (self.num_encoded_columns * (F::CAPACITY as usize / 8)))
+        (
+            self.num_rows,
+            self.filesize_in_bytes % (self.num_encoded_columns * (F::CAPACITY as usize / 8)),
+        )
     }
 
     pub fn get_last_coefficient_write_byte_offset<F: PrimeField>(&self) -> usize {
@@ -37,9 +39,22 @@ impl FileMetadata {
 impl fmt::Display for FileMetadata {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.stored_server.server_name.as_ref().is_some() {
-            write!(f, "File: {} - {} total bytes, stored on \"{}\"", self.filename, self.filesize_in_bytes, self.stored_server.server_name.as_ref().unwrap())
+            write!(
+                f,
+                "File: {} - {} total bytes, stored on \"{}\"",
+                self.filename,
+                self.filesize_in_bytes,
+                self.stored_server.server_name.as_ref().unwrap()
+            )
         } else {
-            write!(f, "File: \"{}\" - {} total bytes, stored at {}:{}", self.filename, self.filesize_in_bytes, self.stored_server.server_ip, self.stored_server.server_port)
+            write!(
+                f,
+                "File: \"{}\" - {} total bytes, stored at {}:{}",
+                self.filename,
+                self.filesize_in_bytes,
+                self.stored_server.server_ip,
+                self.stored_server.server_port
+            )
         }
     }
 }

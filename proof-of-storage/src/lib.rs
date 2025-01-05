@@ -1,3 +1,6 @@
+#![feature(generic_const_exprs)]
+#![feature(associated_type_defaults)]
+#![feature(iter_array_chunks)]
 extern crate core;
 
 use blake3::Hasher as Blake3;

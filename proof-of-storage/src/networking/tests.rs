@@ -1,38 +1,45 @@
+#![feature(generic_const_exprs)]
 use crate::networking::client;
 
 #[cfg(test)]
 pub mod network_tests {
+    use std::env;
     use std::io::SeekFrom;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     use anyhow::{bail, ensure, Result};
-    use blake3::traits::digest::Output;
     use blake3::Hasher as Blake3;
+    use blake3::traits::digest::Output;
     use ff::PrimeField;
+    // use pretty_assertions::assert_eq;
+    use metrics::histogram;
+    use num_traits::pow;
     use rand_chacha::ChaCha8Rng;
     use rand_core::{RngCore, SeedableRng};
+    use rayon::iter::IntoParallelRefIterator;
     use serial_test::serial;
     use surrealdb::engine::local::RocksDb;
     use surrealdb::Surreal;
-    // use pretty_assertions::assert_eq;
     use tokio::fs;
     use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-    use tokio::time::sleep;
-    use tracing_subscriber::fmt::format::FmtSpan;
+    use tokio::time::{Instant, sleep};
+    use tracing::{Instrument, Level, span, Span};
     use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::fmt::format::FmtSpan;
     use ulid::Ulid;
 
     use crate::databases::*;
     use crate::fields;
-    use crate::fields::WriteableFt63;
     use crate::fields::{convert_byte_vec_to_field_elements_vec, random_writeable_field_vec};
+    use crate::fields::WriteableFt63;
     use crate::lcpc_online::{
-        convert_file_data_to_commit, decode_row,
-        form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols,
-        hash_column_to_digest, server_retreive_columns, verifiable_polynomial_evaluation,
-        verify_full_polynomial_evaluation_wrapper_with_single_eval_point, CommitDimensions,
-        CommitOrLeavesOutput, CommitRequestType,
+        CommitDimensions, CommitOrLeavesOutput,
+        CommitRequestType, convert_file_data_to_commit,
+        decode_row, form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols,
+        hash_column_to_digest, server_retreive_columns,
+        verifiable_polynomial_evaluation, verify_full_polynomial_evaluation_wrapper_with_single_eval_point,
     };
     use crate::networking::client;
     use crate::networking::server::handle_client_loop;
@@ -40,6 +47,7 @@ pub mod network_tests {
 
     use super::*;
 
+    #[tracing::instrument(name = "Server thread", parent = None)]
     async fn test_start_server(port: u16) {
         tracing::info!("Server starting");
 
@@ -55,11 +63,18 @@ pub mod network_tests {
             listener.local_addr().unwrap()
         );
 
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                tokio::spawn(async move { handle_client_loop(stream).await });
-            }
-        });
+        // let server_span = span!(parent: None, Level::INFO, "Server thread");
+
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(
+                async move {
+                    let connection_span = span!(Level::INFO, "client connection");
+                    let _enter = connection_span.enter();
+                    handle_client_loop(stream).in_current_span().await
+                }
+                    .in_current_span(),
+            );
+        }
     }
 
     fn start_tracing_for_tests() -> Result<()> {
@@ -74,7 +89,7 @@ pub mod network_tests {
             .with_line_number(true)
             .with_max_level(tracing::Level::TRACE)
             .with_env_filter(env_filter)
-            .with_span_events(FmtSpan::CLOSE)
+            // .with_span_events(FmtSpan::FULL)
             .finish();
 
         // use that subscriber to process traces emitted after this point
@@ -88,7 +103,7 @@ pub mod network_tests {
 
         // select a random port
         let port = rand::random::<u16>();
-        tokio::spawn(test_start_server(port)).await;
+        tokio::spawn(test_start_server(port));
         port
     }
 
@@ -111,7 +126,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-        .await;
+            .await;
 
         tracing::debug!("client received: {:?}", response);
 
@@ -147,7 +162,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-            .await;
+                .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -163,7 +178,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-        .await;
+            .await;
 
         tracing::debug!("client received: {:?}", response);
 
@@ -182,33 +197,28 @@ pub mod network_tests {
     #[serial]
     async fn upload_then_download_file() {
         // setup cleanup files
-        let source_file = "test_files/test.txt";
+        let source_file = "test_files/4000_byte_file.bytes";
         let dest_temp_file = "test.txt";
         let cleanup = Cleanup {
             files: vec![dest_temp_file.to_string()],
         };
-
-        let port = start_test_with_server_on_random_port_and_get_port(
-            "upload_then_download_file".to_string(),
-        )
-        .await;
-
-        // try to delete the file first, in case it's already uploaded
-        let to_delete_metadata =
-            crate::networking::client::get_client_metadata_from_database_by_filename(
-                &"test.txt".to_string(),
-            )
-            .await;
-
-        if let Ok(Some(metadata)) = to_delete_metadata {
-            let delete_result = client::delete_file(metadata, format!("localhost:{}", port)).await;
-        }
 
         let file_data = fs::read(source_file).await.unwrap();
         tracing::info!(
             "file start: {:?}...",
             file_data.iter().take(10).collect::<Vec<&u8>>()
         );
+        // copy original file to temp location for comparison later
+        tokio::fs::copy(source_file, dest_temp_file).await.unwrap();
+
+        let port = start_test_with_server_on_random_port_and_get_port(
+            "upload_then_download_file".to_string(),
+        )
+            .await;
+
+        let client_span = span!(Level::INFO, "Client thread").entered();
+        let start = Instant::now();
+        let histogram = histogram!("client_time");
 
         let upload_response = client::upload_file(
             source_file.to_owned(),
@@ -216,19 +226,19 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-        .await;
+            .await;
 
-        tracing::debug!("client received: {:?}", upload_response);
+        // tracing::debug!("client received: {:?}", upload_response);
 
         let metadata = upload_response.unwrap();
-
-        // copy original file to temp location for comparison later
-        tokio::fs::copy(source_file, dest_temp_file).await.unwrap();
 
         tracing::info!("requesting download");
         client::download_file(metadata, format!("localhost:{}", port), 0)
             .await
             .unwrap();
+
+        histogram.record(start.elapsed());
+        client_span.exit();
 
         let mut downloaded_data = fs::read(dest_temp_file).await.unwrap();
 
@@ -253,14 +263,14 @@ pub mod network_tests {
         let port = start_test_with_server_on_random_port_and_get_port(
             "upload_then_download_file".to_string(),
         )
-        .await;
+            .await;
 
         // try to delete the file first, in case it's already uploaded
         let to_delete_metadata =
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-            .await;
+                .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -282,7 +292,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-        .await;
+            .await;
 
         tracing::debug!("client received: {:?}", upload_response);
 
@@ -294,7 +304,7 @@ pub mod network_tests {
             &metadata,
             format!("localhost:{}", port),
         )
-        .await;
+            .await;
 
         let evaluation_result = response.unwrap();
         tracing::info!("Test passed successfully!");
@@ -309,7 +319,7 @@ pub mod network_tests {
             CommitRequestType::Commit,
             CommitDimensions::Square,
         )
-        .unwrap() else {
+            .unwrap() else {
             panic!("Unexpected failure to convert file to commitment")
         };
 
@@ -340,11 +350,11 @@ pub mod network_tests {
             constants::SERVER_METADATA_TABLE,
             file_metadata.id_ulid.to_string(),
         ))
-        // db.create::<Option<FileMetadata>>(constants::SERVER_METADATA_TABLE)
-        // db.create::<Option<FileMetadata>>("FileMetadata")
-        .content(&file_metadata)
-        .await
-        .unwrap();
+            // db.create::<Option<FileMetadata>>(constants::SERVER_METADATA_TABLE)
+            // db.create::<Option<FileMetadata>>("FileMetadata")
+            .content(&file_metadata)
+            .await
+            .unwrap();
         tracing::debug!("File metadata appended to database: {:?}", &file_metadata);
 
         let retrieve_result: Option<FileMetadata> = db
@@ -382,7 +392,7 @@ pub mod network_tests {
                     num_encoded_columns: 8,
                 },
             )
-            .unwrap()
+                .unwrap()
         else {
             panic!()
         };
@@ -418,7 +428,7 @@ pub mod network_tests {
                     num_encoded_columns: 16,
                 },
             )
-            .unwrap()
+                .unwrap()
         else {
             panic!()
         };
@@ -471,7 +481,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-            .await;
+                .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -489,7 +499,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-        .await;
+            .await;
 
         tracing::debug!("client received: {:?}", upload_response);
 
@@ -524,7 +534,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-            .await;
+                .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -542,7 +552,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-        .await;
+            .await;
 
         tracing::debug!("client received: {:?}", upload_response);
 
@@ -556,7 +566,7 @@ pub mod network_tests {
             8,
             data_to_append.clone(),
         )
-        .await;
+            .await;
 
         tracing::debug!("client received: {:?}", appended_response);
 
@@ -611,7 +621,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-            .await;
+                .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -627,7 +637,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-        .await;
+            .await;
         tracing::debug!("client received: {:?}", metadata);
         let metadata = metadata.unwrap();
 
@@ -651,7 +661,7 @@ pub mod network_tests {
             random_data.clone(),
             location_to_edit_to,
         )
-        .await;
+            .await;
         tracing::debug!("client received: {:?}", edit_metadata);
         let edit_metadata = edit_metadata.unwrap();
 
@@ -702,7 +712,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-            .await;
+                .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -718,8 +728,8 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-        .await
-        .unwrap();
+            .await
+            .unwrap();
 
         assert_eq!(metadata.num_columns, 4);
         assert_eq!(metadata.num_encoded_columns, 8);
@@ -765,5 +775,48 @@ pub mod network_tests {
 
         assert!(bad_verify_result.is_err());
         tracing::info!("Test passed successfully!");
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn generate_test_files_of_different_sizes() {
+        use tokio::io::AsyncWriteExt;
+
+        let prefixes = vec![1usize, 4];
+        let orders_of_magnitude: Vec<usize> = (3..=6).collect();
+        let sizes: Vec<usize> = vec![];
+
+        let mut test_files_path = env::current_dir().unwrap();
+        test_files_path.push("test_files");
+
+        let mut rng = rand::thread_rng();
+        let mut buffer = [0u8; 8192];
+
+        for order_mag in orders_of_magnitude.iter() {
+            for prefix in prefixes.iter() {
+                let total_size = pow(10, *order_mag) * prefix;
+
+                let mut file_location = test_files_path.clone();
+                file_location.push(format!("{}_byte_file.bytes", total_size));
+                println!("creating the file {}", file_location.display());
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(&file_location)
+                    .await
+                    .unwrap();
+
+                let mut bytes_written = 0;
+                let mut bytes_left = total_size;
+
+                while bytes_left > 0 {
+                    let chunk_size = bytes_left.min(buffer.len());
+                    rng.fill_bytes(&mut buffer[0..chunk_size]);
+                    file.write_all(&buffer[..chunk_size]).await.unwrap();
+                    bytes_written += chunk_size;
+                    bytes_left -= chunk_size;
+                }
+            }
+        }
     }
 }

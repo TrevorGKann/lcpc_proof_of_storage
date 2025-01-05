@@ -1,8 +1,9 @@
 [profile.default]
-retries = 2
+retries = 6
+jitter = true
 
 [test-groups]
-serial = { max-threads = 1 }
+serial = { max-threads = 1, backoff = "exponential", delay = "5" }
 
 [[profile.default.overrides]]
 test-group = "serial"
