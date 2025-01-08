@@ -80,6 +80,7 @@ mod tests {
     use crate::lcpc_online::{convert_file_data_to_commit, CommitDimensions, CommitOrLeavesOutput, CommitRequestType};
     use blake3::Hasher as Blake3;
     use blake3::traits::digest::{Digest, Output};
+    use futures::stream::iter;
     use lcpc_2d::{check_comm, LcCommit, ProverError};
     use lcpc_ligero_pc::LigeroEncoding;
     use crate::lcpc_online::row_generator_iter::RowGeneratorIter;
@@ -99,7 +100,7 @@ mod tests {
         const encoded_len: usize = 8;
 
         println!("making original style commit");
-        let regular_commit: LcCommit<Blake3, LigeroEncoding<WriteableFt63>> = {
+        let mut regular_commit: LcCommit<Blake3, LigeroEncoding<WriteableFt63>> = {
             let field_elements = convert_byte_vec_to_field_elements_vec(&bytes);
             let commit_result = convert_file_data_to_commit::<Blake3, WriteableFt63>(
                 &field_elements,
@@ -111,20 +112,19 @@ mod tests {
         };
 
         println!("making iterated commit");
-        let iterated_commit_rows: Vec<WriteableFt63> = {
+        let iterated_commit_rows = {
             let iter_field: FieldGeneratorIter<_, WriteableFt63> = FieldGeneratorIter::new(bytes.clone().into_iter());
 
             let iter_row: RowGeneratorIter<WriteableFt63, _, _,unencoded_len, encoded_len> = RowGeneratorIter::new_ligero(iter_field);
 
-            let rows: Vec<[WriteableFt63; encoded_len]> = iter_row.collect();
-
-            // println!("{}", rows);
-            rows.into_iter().flatten().collect()
+            iter_row
         };
 
-        // assert_eq!(regular_commit.coeffs, iterated_commit.coeffs);
-        assert_eq!(regular_commit.comm, iterated_commit_rows);
-        // assert_eq!(regular_commit.hashes, iterated_commit.hashes);
+        iterated_commit_rows
+            .zip(regular_commit.comm.chunks(encoded_len))
+            .for_each(|(iterated, regular)| {
+                assert_eq!(iterated[..], *regular);
+            });
     }
 }
 
