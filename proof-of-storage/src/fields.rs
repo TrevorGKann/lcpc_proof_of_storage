@@ -16,8 +16,8 @@ use crate::fields::data_field::DataField;
 
 pub mod data_field;
 mod ft253_192;
-mod writable_ft63;
-mod field_generator_iter;
+pub mod writable_ft63;
+pub mod field_generator_iter;
 
 #[derive(Debug)]
 pub enum FieldErr {
