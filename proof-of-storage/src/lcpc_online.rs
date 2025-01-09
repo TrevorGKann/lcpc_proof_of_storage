@@ -1,8 +1,8 @@
 use std::cmp::min;
 
 use anyhow::{ensure, Result};
-use blake3::Hasher as Blake3;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
+use blake3::Hasher as Blake3;
 use ff::{Field, PrimeField};
 use fffft::FieldFFT;
 use num_traits::{One, Zero};
@@ -10,18 +10,18 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use lcpc_2d::{
-    FieldHash, LcColumn, LcCommit, LcEncoding, open_column, VerifierError, VerifierResult,
-    verify_column_path,
+    open_column, verify_column_path, FieldHash, LcColumn, LcCommit, LcEncoding, VerifierError,
+    VerifierResult,
 };
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
-use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 use crate::databases::FileMetadata;
-use crate::fields::{is_power_of_two, vector_multiply};
 use crate::fields::WriteableFt63;
+use crate::fields::{is_power_of_two, vector_multiply};
 use crate::networking::server::get_aspect_ratio_default_from_field_len;
+use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 
-mod row_generator_iter;
+pub mod row_generator_iter;
 
 pub type FldT<E> = <E as LcEncoding>::F;
 pub type ErrT<E> = <E as LcEncoding>::Err;
@@ -130,9 +130,9 @@ where
             Ok(CommitOrLeavesOutput::Commit(commit))
         }
         CommitRequestType::Leaves(requested_leaves) => {
-            // optimization: is not to compute the entire FFT but rather evaluate the FFT as a 
-            //  function at each of the requested points. Note that this isn't computationally 
-            //  better but more memory efficient for very small memory sizes. Likely we can 
+            // optimization: is not to compute the entire FFT but rather evaluate the FFT as a
+            //  function at each of the requested points. Note that this isn't computationally
+            //  better but more memory efficient for very small memory sizes. Likely we can
             //  ignore it for this project
 
             let mut coeffs_with_padding = vec![F::ZERO; num_matrix_rows * num_pre_encoded_columns];
@@ -621,7 +621,7 @@ fn verify_polynomial_eval() {
         &columns_to_fetch_indices,
         &columns,
     )
-        .unwrap();
+    .unwrap();
     let local_evaluation = fields::evaluate_field_polynomial_at_point(&coefs, &eval_point);
 
     assert_eq!(server_full_evaluation_of_polynomial, local_evaluation);
