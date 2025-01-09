@@ -4,7 +4,7 @@ use crate::fields::data_field::DataField;
 
 pub struct FieldGeneratorIter<I, F>
 where
-    I: Iterator<Item=u8>,
+    I: Iterator<Item = u8>,
     F: DataField,
 {
     inner: I,
@@ -14,7 +14,7 @@ where
 
 impl<I, F> FieldGeneratorIter<I, F>
 where
-    I: Iterator<Item=u8>,
+    I: Iterator<Item = u8>,
     F: DataField,
 {
     pub fn new(inner: I) -> Self {
@@ -28,7 +28,7 @@ where
 
 impl<I, F> Iterator for FieldGeneratorIter<I, F>
 where
-    I: Iterator<Item=u8>,
+    I: Iterator<Item = u8>,
     F: DataField,
 {
     type Item = F;
@@ -42,7 +42,6 @@ where
                 break;
             }
         }
-
 
         if self.buffer_pos == 0 {
             return None;
@@ -59,9 +58,12 @@ where
 #[cfg(test)]
 mod tests {
     use rand::Rng;
+    use std::io::{BufReader, Read};
 
-    use crate::fields::{convert_byte_vec_to_field_elements_vec, WriteableFt63};
     use crate::fields::field_generator_iter::FieldGeneratorIter;
+    use crate::fields::{
+        convert_byte_vec_to_field_elements_vec, read_file_path_to_field_elements_vec, WriteableFt63,
+    };
 
     #[test]
     fn compare_iterator_to_normal() {
@@ -75,10 +77,23 @@ mod tests {
         let field = convert_byte_vec_to_field_elements_vec::<WriteableFt63>(&bytes.clone());
         let iter_field: Vec<WriteableFt63> = FieldGeneratorIter::new(bytes.into_iter()).collect();
 
-
         assert_eq!(iter_field, field);
     }
 
     #[test]
-    fn compare_iterator_on_a_file() {}
+    fn compare_iterator_on_a_file() {
+        let test_file_path = "test_files/10000_byte_file.bytes";
+        let test_file = std::fs::File::open(test_file_path).unwrap();
+
+        let mut file_bytes = BufReader::new(test_file)
+            .bytes()
+            .map(|result| result.unwrap());
+
+        let iterated_field_elements =
+            FieldGeneratorIter::new(&mut file_bytes).collect::<Vec<WriteableFt63>>();
+
+        let reference_field_elements = read_file_path_to_field_elements_vec(test_file_path);
+
+        assert_eq!(iterated_field_elements, reference_field_elements);
+    }
 }
