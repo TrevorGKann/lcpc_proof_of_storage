@@ -88,7 +88,6 @@ pub trait LcEncoding: Clone + std::fmt::Debug + Sync {
     /// Error type for encoding
     type Err: std::fmt::Debug + std::error::Error + Send;
 
-
     /// Encoding function
     fn encode<T: AsMut<[Self::F]>>(&self, inp: T) -> Result<(), Self::Err>;
 
@@ -212,7 +211,7 @@ where
     fn unwrap<D, E>(self) -> LcCommit<D, E>
     where
         D: Digest,
-        E: LcEncoding<F=F>,
+        E: LcEncoding<F = F>,
     {
         let hashes = self
             .hashes
@@ -464,7 +463,7 @@ where
     fn unwrap<D, E>(self) -> LcColumn<D, E>
     where
         D: Digest,
-        E: LcEncoding<F=F>,
+        E: LcEncoding<F = F>,
     {
         let col = self.col;
         let path = self
@@ -590,7 +589,7 @@ where
     fn unwrap<D, E>(self) -> LcEvalProof<D, E>
     where
         D: Digest,
-        E: LcEncoding<F=F>,
+        E: LcEncoding<F = F>,
     {
         let columns = self.columns.into_iter().map(|c| c.unwrap()).collect();
 
@@ -768,7 +767,7 @@ fn hash_columns<D, E>(
     }
 }
 
-fn merkle_tree<D>(ins: &[Output<D>], outs: &mut [Output<D>])
+pub fn merkle_tree<D>(ins: &[Output<D>], outs: &mut [Output<D>])
 where
     D: Digest + FixedOutputReset,
 {
@@ -976,11 +975,7 @@ where
 }
 
 // Check a column opening
-pub fn verify_column_path<D, E>(
-    column: &LcColumn<D, E>,
-    col_num: usize,
-    root: &Output<D>,
-) -> bool
+pub fn verify_column_path<D, E>(column: &LcColumn<D, E>, col_num: usize, root: &Output<D>) -> bool
 where
     D: Digest + FixedOutputReset,
     E: LcEncoding,
