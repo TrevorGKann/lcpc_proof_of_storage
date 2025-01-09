@@ -60,6 +60,11 @@ name = "commit"
 harness = false
 
 [[bench]]
+name = "file_to_commit_root"
+harness = false
+
+
+[[bench]]
 name = "buffer_vs_stream_file"
 harness = false
 
