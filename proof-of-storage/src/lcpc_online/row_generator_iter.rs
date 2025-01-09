@@ -1,17 +1,16 @@
-use std::iter::Iterator;
-// use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use lcpc_2d::{FieldHash, LcEncoding, ProverError, merkle_tree};
-use digest::{Digest, FixedOutputReset, Output};
-use lcpc_ligero_pc::LigeroEncoding;
-use anyhow::{Context, Result};
-use blake3::traits::digest;
+// use digest::{Digest, FixedOutputReset, Output};
 use crate::fields::data_field::DataField;
+use anyhow::{Context, Result};
+use blake3::traits::digest::{Digest, FixedOutputReset, Output};
+use lcpc_2d::{merkle_tree, FieldHash, LcEncoding};
+use lcpc_ligero_pc::LigeroEncoding;
+use std::iter::Iterator;
 
 pub struct RowGeneratorIter<F, I, E>
 where
     F: DataField,
-    I: Iterator<Item=F>,
-    E: LcEncoding<F=F>,
+    I: Iterator<Item = F>,
+    E: LcEncoding<F = F>,
 {
     field_iterator: I,
     coefs_buffer: Vec<F>, // fft done in place
@@ -24,12 +23,12 @@ where
 impl<F, I, E> RowGeneratorIter<F, I, E>
 where
     F: DataField,
-    I: Iterator<Item=F>,
-    E: LcEncoding<F=F>,
+    I: Iterator<Item = F>,
+    E: LcEncoding<F = F>,
 {
     pub fn get_column_digests<D>(mut self) -> Vec<Output<D>>
     where
-    D: Digest + FixedOutputReset
+        D: Digest + FixedOutputReset,
     {
         let mut digests = Vec::with_capacity(self.coefs_buffer.len());
         for _ in 0..self.coefs_buffer.len() {
@@ -54,7 +53,7 @@ where
 
     pub fn get_specified_column_digests<D>(mut self, column_indices: &[usize]) -> Vec<Output<D>>
     where
-        D: Digest + FixedOutputReset
+        D: Digest + FixedOutputReset,
     {
         let mut digests = Vec::with_capacity(column_indices.len());
         for _ in 0..column_indices.len() {
@@ -79,12 +78,14 @@ where
 
     pub fn convert_to_commit_root<D>(self) -> Result<Output<D>>
     where
-        D: Digest + FixedOutputReset
+        D: Digest + FixedOutputReset,
     {
         let leaves: Vec<Output<D>> = self.get_column_digests::<D>();
 
-        let len_of_merkle_tree = leaves.len()
-            .checked_next_power_of_two().context("no next power of two")?
+        let len_of_merkle_tree = leaves
+            .len()
+            .checked_next_power_of_two()
+            .context("no next power of two")?
             - 1;
 
         // step 2: compute rest of Merkle tree
@@ -97,7 +98,7 @@ where
 impl<F, I> RowGeneratorIter<F, I, LigeroEncoding<F>>
 where
     F: DataField,
-    I: Iterator<Item=F>,
+    I: Iterator<Item = F>,
     // E = LigeroEncoding<F>
 {
     pub fn new_ligero(field_iterator: I, num_pre_encoded: usize, num_encoded: usize) -> Self {
@@ -122,8 +123,8 @@ where
 impl<F, I, E> Iterator for RowGeneratorIter<F, I, E>
 where
     F: DataField,
-    I: Iterator<Item=F>,
-    E: LcEncoding<F=F>,
+    I: Iterator<Item = F>,
+    E: LcEncoding<F = F>,
 {
     type Item = Vec<F>;
 
@@ -154,25 +155,23 @@ where
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use rand::Rng;
 
-    use crate::fields::{convert_byte_vec_to_field_elements_vec, WriteableFt63};
     use crate::fields::field_generator_iter::FieldGeneratorIter;
-    use crate::lcpc_online::{convert_file_data_to_commit, CommitDimensions, CommitOrLeavesOutput, CommitRequestType};
-    use blake3::Hasher as Blake3;
-    use blake3::traits::digest::{Digest, Output};
-    use futures::stream::iter;
-    use lcpc_2d::{check_comm, LcCommit, ProverError};
-    use lcpc_ligero_pc::LigeroEncoding;
+    use crate::fields::{convert_byte_vec_to_field_elements_vec, WriteableFt63};
     use crate::lcpc_online::row_generator_iter::RowGeneratorIter;
+    use crate::lcpc_online::{
+        convert_file_data_to_commit, CommitDimensions, CommitOrLeavesOutput, CommitRequestType,
+    };
+    use blake3::traits::digest::Digest;
+    use blake3::Hasher as Blake3;
+    use lcpc_2d::LcCommit;
+    use lcpc_ligero_pc::LigeroEncoding;
 
     #[test]
     fn is_row_iterator_the_same_as_non_iter() {
-
         static LEN: usize = 999;
         let mut bytes = vec![0u8; LEN];
         // fill bytes with random data
@@ -190,17 +189,25 @@ mod tests {
             let commit_result = convert_file_data_to_commit::<Blake3, WriteableFt63>(
                 &field_elements,
                 CommitRequestType::Commit,
-                CommitDimensions::Specified { num_pre_encoded_columns: UNENCODED_LEN, num_encoded_columns: ENCODED_LEN }
-            ).unwrap();
-            let CommitOrLeavesOutput::Commit(commit) = commit_result else {panic!()};
+                CommitDimensions::Specified {
+                    num_pre_encoded_columns: UNENCODED_LEN,
+                    num_encoded_columns: ENCODED_LEN,
+                },
+            )
+            .unwrap();
+            let CommitOrLeavesOutput::Commit(commit) = commit_result else {
+                panic!()
+            };
             commit
         };
 
         println!("making iterated commit");
         let iterated_commit_rows = {
-            let iter_field: FieldGeneratorIter<_, WriteableFt63> = FieldGeneratorIter::new(bytes.clone().into_iter());
+            let iter_field: FieldGeneratorIter<_, WriteableFt63> =
+                FieldGeneratorIter::new(bytes.clone().into_iter());
 
-            let iter_row: RowGeneratorIter<WriteableFt63, _, _> = RowGeneratorIter::new_ligero(iter_field, UNENCODED_LEN, ENCODED_LEN);
+            let iter_row: RowGeneratorIter<WriteableFt63, _, _> =
+                RowGeneratorIter::new_ligero(iter_field, UNENCODED_LEN, ENCODED_LEN);
 
             iter_row
         };
@@ -214,7 +221,6 @@ mod tests {
 
     #[test]
     fn is_row_iterator_the_same_root() {
-
         static LEN: usize = 999;
         let mut bytes = vec![0u8; LEN];
         // fill bytes with random data
@@ -232,17 +238,25 @@ mod tests {
             let commit_result = convert_file_data_to_commit::<Blake3, WriteableFt63>(
                 &field_elements,
                 CommitRequestType::Commit,
-                CommitDimensions::Specified { num_pre_encoded_columns: UNENCODED_LEN, num_encoded_columns: ENCODED_LEN }
-            ).unwrap();
-            let CommitOrLeavesOutput::Commit(commit) = commit_result else {panic!()};
+                CommitDimensions::Specified {
+                    num_pre_encoded_columns: UNENCODED_LEN,
+                    num_encoded_columns: ENCODED_LEN,
+                },
+            )
+            .unwrap();
+            let CommitOrLeavesOutput::Commit(commit) = commit_result else {
+                panic!()
+            };
             commit
         };
 
         println!("making iterated commit");
         let iterated_commit_root = {
-            let iter_field: FieldGeneratorIter<_, WriteableFt63> = FieldGeneratorIter::new(bytes.clone().into_iter());
+            let iter_field: FieldGeneratorIter<_, WriteableFt63> =
+                FieldGeneratorIter::new(bytes.clone().into_iter());
 
-            let iter_row: RowGeneratorIter<WriteableFt63, _, _> = RowGeneratorIter::new_ligero(iter_field, UNENCODED_LEN, ENCODED_LEN);
+            let iter_row: RowGeneratorIter<WriteableFt63, _, _> =
+                RowGeneratorIter::new_ligero(iter_field, UNENCODED_LEN, ENCODED_LEN);
 
             iter_row.convert_to_commit_root::<Blake3>().unwrap()
         };
@@ -250,4 +264,3 @@ mod tests {
         assert_eq!(regular_commit.get_root().root, iterated_commit_root)
     }
 }
-
