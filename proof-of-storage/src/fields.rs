@@ -9,15 +9,16 @@ use itertools::Itertools;
 use rand::Rng;
 use tokio::io::{AsyncReadExt, BufReader};
 
-pub use ft253_192::Ft253_192;
-pub use writable_ft63::WriteableFt63;
-
 use crate::fields::data_field::DataField;
 
 pub mod data_field;
-mod ft253_192;
-pub mod writable_ft63;
 pub mod field_generator_iter;
+mod ft253_192;
+pub use ft253_192::Ft253_192;
+mod random_byte_iterator;
+pub use random_byte_iterator::RandomBytesIterator;
+pub mod writable_ft63;
+pub use writable_ft63::WriteableFt63;
 
 #[derive(Debug)]
 pub enum FieldErr {
@@ -37,9 +38,9 @@ pub fn read_file_to_field_elements_vec<F: DataField>(file: &mut File) -> (usize,
 }
 
 #[tracing::instrument]
-pub async fn stream_file_to_field_elements_vec<F: DataField>(file: &mut tokio::fs::File)
-                                                             -> Result<(usize, Vec<F>)>
-{
+pub async fn stream_file_to_field_elements_vec<F: DataField>(
+    file: &mut tokio::fs::File,
+) -> Result<(usize, Vec<F>)> {
     // BUF_SIZE has to be a multiple of DATA_BYTE_CAPACITY since the buf reader will not cyclically
     //  fill but instead will fill a partial one at the end of the buffer.
     const BUF_MULT: usize = 1000;
@@ -72,9 +73,9 @@ pub async fn stream_file_to_field_elements_vec<F: DataField>(file: &mut tokio::f
 }
 
 #[tracing::instrument]
-pub fn stream_file_to_field_elements_vec_sync<F: DataField>(file: &mut std::fs::File)
-                                                            -> Result<(usize, Vec<F>)>
-{
+pub fn stream_file_to_field_elements_vec_sync<F: DataField>(
+    file: &mut std::fs::File,
+) -> Result<(usize, Vec<F>)> {
     // BUF_SIZE has to be a multiple of DATA_BYTE_CAPACITY since the buf reader will not cyclically
     //  fill but instead will fill a partial one at the end of the buffer.
     const BUF_MULT: usize = 1000;
@@ -315,7 +316,9 @@ async fn different_read_to_vecs_are_equivalent() {
         };
         let rewrite = {
             let mut file = tokio::fs::File::open(&file_name).await.unwrap();
-            stream_file_to_field_elements_vec::<WriteableFt63>(&mut file).await.unwrap()
+            stream_file_to_field_elements_vec::<WriteableFt63>(&mut file)
+                .await
+                .unwrap()
         };
         let sync_rewrite = {
             let mut file = std::fs::File::open(&file_name).unwrap();
@@ -330,13 +333,37 @@ async fn different_read_to_vecs_are_equivalent() {
         assert_eq!(original.0, rewrite.0);
         assert_eq!(original.0, sync_rewrite.0);
         for i in 0..original.1.len() {
-            assert_eq!(original.1[i], rewrite.1[i], "failed at index {} on file {}", i, file_name);
-            assert_eq!(original.1[i], rewrite.1[i], "failed at index {} on file {}", i, file_name);
-            assert_eq!(original.1[i], iter_rewrite[i], "failed at index {} on file {} for iter",
-                       i, file_name);
+            assert_eq!(
+                original.1[i], rewrite.1[i],
+                "failed at index {} on file {}",
+                i, file_name
+            );
+            assert_eq!(
+                original.1[i], rewrite.1[i],
+                "failed at index {} on file {}",
+                i, file_name
+            );
+            assert_eq!(
+                original.1[i], iter_rewrite[i],
+                "failed at index {} on file {} for iter",
+                i, file_name
+            );
         }
         assert_eq!(original.1.len(), rewrite.1.len());
         assert_eq!(original.1.len(), sync_rewrite.1.len());
         assert_eq!(original.1.len(), iter_rewrite.len());
     }
+}
+
+#[test]
+fn are_fields_the_same() {
+    let bytes = RandomBytesIterator::new().take(1000).collect::<Vec<_>>();
+
+    let writeable63_elements = WriteableFt63::from_byte_vec(&bytes);
+    let writeable253_elements = Ft253_192::from_byte_vec(&bytes);
+
+    assert_eq!(
+        DataField::field_vec_to_byte_vec(&writeable63_elements)[..bytes.len()],
+        DataField::field_vec_to_byte_vec(&writeable253_elements)[..bytes.len()]
+    );
 }
