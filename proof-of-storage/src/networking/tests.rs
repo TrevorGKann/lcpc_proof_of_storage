@@ -9,8 +9,8 @@ pub mod network_tests {
     use std::time::Duration;
 
     use anyhow::{bail, ensure, Result};
-    use blake3::Hasher as Blake3;
     use blake3::traits::digest::Output;
+    use blake3::Hasher as Blake3;
     use ff::PrimeField;
     // use pretty_assertions::assert_eq;
     use metrics::histogram;
@@ -24,22 +24,22 @@ pub mod network_tests {
     use tokio::fs;
     use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
     use tokio::net::TcpListener;
-    use tokio::time::{Instant, sleep};
-    use tracing::{Instrument, Level, span, Span};
-    use tracing_subscriber::EnvFilter;
+    use tokio::time::{sleep, Instant};
+    use tracing::{span, Instrument, Level, Span};
     use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_subscriber::EnvFilter;
     use ulid::Ulid;
 
     use crate::databases::*;
     use crate::fields;
-    use crate::fields::{convert_byte_vec_to_field_elements_vec, random_writeable_field_vec};
     use crate::fields::WriteableFt63;
+    use crate::fields::{convert_byte_vec_to_field_elements_vec, random_writeable_field_vec};
     use crate::lcpc_online::{
-        CommitDimensions, CommitOrLeavesOutput,
-        CommitRequestType, convert_file_data_to_commit,
-        decode_row, form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols,
-        hash_column_to_digest, server_retreive_columns,
-        verifiable_polynomial_evaluation, verify_full_polynomial_evaluation_wrapper_with_single_eval_point,
+        convert_file_data_to_commit, decode_row,
+        form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols,
+        hash_column_to_digest, server_retreive_columns, verifiable_polynomial_evaluation,
+        verify_full_polynomial_evaluation_wrapper_with_single_eval_point, CommitDimensions,
+        CommitOrLeavesOutput, CommitRequestType,
     };
     use crate::networking::client;
     use crate::networking::server::handle_client_loop;
@@ -72,7 +72,7 @@ pub mod network_tests {
                     let _enter = connection_span.enter();
                     handle_client_loop(stream).in_current_span().await
                 }
-                    .in_current_span(),
+                .in_current_span(),
             );
         }
     }
@@ -126,7 +126,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-            .await;
+        .await;
 
         tracing::debug!("client received: {:?}", response);
 
@@ -162,7 +162,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-                .await;
+            .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -178,7 +178,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-            .await;
+        .await;
 
         tracing::debug!("client received: {:?}", response);
 
@@ -214,7 +214,7 @@ pub mod network_tests {
         let port = start_test_with_server_on_random_port_and_get_port(
             "upload_then_download_file".to_string(),
         )
-            .await;
+        .await;
 
         let client_span = span!(Level::INFO, "Client thread").entered();
         let start = Instant::now();
@@ -226,7 +226,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-            .await;
+        .await;
 
         // tracing::debug!("client received: {:?}", upload_response);
 
@@ -263,14 +263,14 @@ pub mod network_tests {
         let port = start_test_with_server_on_random_port_and_get_port(
             "upload_then_download_file".to_string(),
         )
-            .await;
+        .await;
 
         // try to delete the file first, in case it's already uploaded
         let to_delete_metadata =
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-                .await;
+            .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -292,7 +292,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-            .await;
+        .await;
 
         tracing::debug!("client received: {:?}", upload_response);
 
@@ -304,7 +304,7 @@ pub mod network_tests {
             &metadata,
             format!("localhost:{}", port),
         )
-            .await;
+        .await;
 
         let evaluation_result = response.unwrap();
         tracing::info!("Test passed successfully!");
@@ -319,7 +319,7 @@ pub mod network_tests {
             CommitRequestType::Commit,
             CommitDimensions::Square,
         )
-            .unwrap() else {
+        .unwrap() else {
             panic!("Unexpected failure to convert file to commitment")
         };
 
@@ -350,11 +350,11 @@ pub mod network_tests {
             constants::SERVER_METADATA_TABLE,
             file_metadata.id_ulid.to_string(),
         ))
-            // db.create::<Option<FileMetadata>>(constants::SERVER_METADATA_TABLE)
-            // db.create::<Option<FileMetadata>>("FileMetadata")
-            .content(&file_metadata)
-            .await
-            .unwrap();
+        // db.create::<Option<FileMetadata>>(constants::SERVER_METADATA_TABLE)
+        // db.create::<Option<FileMetadata>>("FileMetadata")
+        .content(&file_metadata)
+        .await
+        .unwrap();
         tracing::debug!("File metadata appended to database: {:?}", &file_metadata);
 
         let retrieve_result: Option<FileMetadata> = db
@@ -392,7 +392,7 @@ pub mod network_tests {
                     num_encoded_columns: 8,
                 },
             )
-                .unwrap()
+            .unwrap()
         else {
             panic!()
         };
@@ -428,7 +428,7 @@ pub mod network_tests {
                     num_encoded_columns: 16,
                 },
             )
-                .unwrap()
+            .unwrap()
         else {
             panic!()
         };
@@ -481,7 +481,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-                .await;
+            .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -499,7 +499,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-            .await;
+        .await;
 
         tracing::debug!("client received: {:?}", upload_response);
 
@@ -534,7 +534,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-                .await;
+            .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -552,7 +552,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-            .await;
+        .await;
 
         tracing::debug!("client received: {:?}", upload_response);
 
@@ -566,7 +566,7 @@ pub mod network_tests {
             8,
             data_to_append.clone(),
         )
-            .await;
+        .await;
 
         tracing::debug!("client received: {:?}", appended_response);
 
@@ -621,7 +621,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-                .await;
+            .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -637,7 +637,7 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-            .await;
+        .await;
         tracing::debug!("client received: {:?}", metadata);
         let metadata = metadata.unwrap();
 
@@ -661,7 +661,7 @@ pub mod network_tests {
             random_data.clone(),
             location_to_edit_to,
         )
-            .await;
+        .await;
         tracing::debug!("client received: {:?}", edit_metadata);
         let edit_metadata = edit_metadata.unwrap();
 
@@ -712,7 +712,7 @@ pub mod network_tests {
             crate::networking::client::get_client_metadata_from_database_by_filename(
                 &"test.txt".to_string(),
             )
-                .await;
+            .await;
 
         if let Ok(Some(metadata)) = to_delete_metadata {
             tracing::debug!("client requesting file deletion");
@@ -728,8 +728,8 @@ pub mod network_tests {
             Some(8),
             format!("localhost:{}", port),
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         assert_eq!(metadata.num_columns, 4);
         assert_eq!(metadata.num_encoded_columns, 8);
