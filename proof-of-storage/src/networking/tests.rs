@@ -783,7 +783,7 @@ pub mod network_tests {
         use tokio::io::AsyncWriteExt;
 
         let prefixes = vec![1usize, 4];
-        let orders_of_magnitude: Vec<usize> = (3..=6).collect();
+        let orders_of_magnitude: Vec<usize> = (3..=9).collect();
         let sizes: Vec<usize> = vec![];
 
         let mut test_files_path = env::current_dir().unwrap();
