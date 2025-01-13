@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::{merkle_tree, FieldHash, LcEncoding};
 use lcpc_ligero_pc::LigeroEncoding;
+use std::io::Read;
 use std::iter::Iterator;
 
 pub struct RowGeneratorIter<F, I, E>
@@ -102,13 +103,8 @@ where
     // E = LigeroEncoding<F>
 {
     pub fn new_ligero(field_iterator: I, num_pre_encoded: usize, num_encoded: usize) -> Self {
-        // let coefs_buffer = vec![F::ZERO; num_coefs];
-        // let FFT_buffer = vec![F::ZERO; num_encoded_coefs];
-        // let coef_buffer_position = 0;
-
         let encoding = LigeroEncoding::new_from_dims(num_pre_encoded, num_encoded);
 
-        // todo: fixup with heap allocaiton
         RowGeneratorIter {
             field_iterator,
             coefs_buffer: vec![F::ZERO; num_encoded],
@@ -138,6 +134,7 @@ where
             }
         }
 
+        // empty case
         if self.coef_buffer_position == 0 {
             return None;
         }
@@ -158,9 +155,12 @@ where
 #[cfg(test)]
 mod tests {
     use rand::Rng;
+    use std::io::Read;
 
     use crate::fields::field_generator_iter::FieldGeneratorIter;
-    use crate::fields::{convert_byte_vec_to_field_elements_vec, WriteableFt63};
+    use crate::fields::{
+        convert_byte_vec_to_field_elements_vec, read_file_path_to_field_elements_vec, WriteableFt63,
+    };
     use crate::lcpc_online::row_generator_iter::RowGeneratorIter;
     use crate::lcpc_online::{
         convert_file_data_to_commit, CommitDimensions, CommitOrLeavesOutput, CommitRequestType,
@@ -262,5 +262,36 @@ mod tests {
         };
 
         assert_eq!(regular_commit.get_root().root, iterated_commit_root)
+    }
+
+    #[test]
+    fn read_file_to_root_with_iterator() {
+        let test_file_path = "test_files/10000_byte_file.bytes";
+        let file_field: Vec<WriteableFt63> = read_file_path_to_field_elements_vec(test_file_path);
+        let CommitOrLeavesOutput::Commit(reference_commit) =
+            convert_file_data_to_commit::<Blake3, _>(
+                &file_field,
+                CommitRequestType::Commit,
+                CommitDimensions::Square,
+            )
+            .unwrap()
+        else {
+            panic!("didn't get commit!")
+        };
+
+        let buf_reader = std::io::BufReader::new(std::fs::File::open(&test_file_path).unwrap())
+            .bytes()
+            .map(|b| b.unwrap());
+        let field_iterator = FieldGeneratorIter::<_, WriteableFt63>::new(buf_reader);
+        let row_iterator = RowGeneratorIter::new_ligero(
+            field_iterator,
+            reference_commit.n_per_row,
+            reference_commit.n_cols,
+        );
+        let streamed_root = row_iterator.convert_to_commit_root::<Blake3>().unwrap();
+
+        println!("reference root: {:?}", reference_commit.get_root().root);
+        println!("streamed root: {:?}", streamed_root);
+        assert_eq!(reference_commit.get_root().root, streamed_root);
     }
 }
