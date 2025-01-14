@@ -1,3 +1,6 @@
+use crate::databases::FileMetadata;
+use crate::fields::WriteableFt63;
+use crate::{PoSColumn, PoSField};
 use serde::{Deserialize, Serialize};
 use tokio::net::{
     tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -5,10 +8,7 @@ use tokio::net::{
 };
 use tokio_serde::{formats::Json, Framed};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-
-use crate::databases::FileMetadata;
-use crate::fields::WriteableFt63;
-use crate::{PoSColumn, PoSField};
+use ulid::Ulid;
 
 type WrappedStream = FramedRead<OwnedReadHalf, LengthDelimitedCodec>;
 type WrappedSink = FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>;
@@ -47,6 +47,16 @@ pub enum ClientMessages {
         file: Vec<u8>,
         columns: usize,
         encoded_columns: usize,
+    },
+    StartUploadNewFileByChunks {
+        filename: String,
+        columns: usize,
+        encoded_columns: usize,
+    },
+    UploadFileChunk {
+        file_ulid: Ulid,
+        chunk: Vec<u8>,
+        last_chunk: bool,
     },
     RequestFile {
         file_metadata: FileMetadata,
@@ -122,101 +132,16 @@ pub enum ClientMessages {
     ClientKeepAlive,
 }
 
-impl ClientMessages {
-    pub fn deepsize(&self) -> usize {
-        std::mem::size_of_val(self)
-            + match self {
-                ClientMessages::NewUser { username, password } => username.len() + password.len(),
-                ClientMessages::UserLogin { username, password } => username.len() + password.len(),
-                ClientMessages::UploadNewFile {
-                    filename,
-                    file,
-                    columns,
-                    encoded_columns,
-                } => size_of_val(filename) + size_of_val(file),
-                ClientMessages::RequestFile { file_metadata } => size_of_val(file_metadata),
-                ClientMessages::RequestFileRow { file_metadata, row } => size_of_val(file_metadata),
-                ClientMessages::EditFileBytes {
-                    file_metadata,
-                    start_byte,
-                    replacement_bytes,
-                } => size_of_val(file_metadata) + size_of_val(replacement_bytes),
-                ClientMessages::AppendToFile {
-                    file_metadata,
-                    append_data,
-                } => size_of_val(file_metadata) + size_of_val(append_data),
-                ClientMessages::RequestEncodedColumn { file_metadata, row } => {
-                    size_of_val(file_metadata)
-                }
-                ClientMessages::RequestProof {
-                    file_metadata,
-                    columns_to_verify,
-                } => size_of_val(file_metadata) + size_of_val(columns_to_verify),
-                ClientMessages::RequestPolynomialEvaluation {
-                    file_metadata,
-                    evaluation_point,
-                } => size_of_val(file_metadata) + size_of_val(&evaluation_point),
-                ClientMessages::RequestFileReshape {
-                    file_metadata,
-                    new_pre_encoded_columns,
-                    new_encoded_columns,
-                } => size_of_val(file_metadata),
-                ClientMessages::RequestReshapeEvaluation {
-                    old_file_metadata,
-                    new_file_metadata,
-                    evaluation_point,
-                    columns_to_expand_original,
-                    columns_to_expand_new,
-                } => {
-                    size_of_val(old_file_metadata)
-                        + size_of_val(new_file_metadata)
-                        + size_of_val(&evaluation_point)
-                        + size_of_val(columns_to_expand_original)
-                        + size_of_val(columns_to_expand_new)
-                }
-                ClientMessages::ReshapeResponse {
-                    new_file_metadata,
-                    old_file_metadata,
-                    accepted,
-                } => size_of_val(new_file_metadata) + size_of_val(old_file_metadata),
-                ClientMessages::RequestAppendEvaluation {
-                    old_file_metadata,
-                    new_file_metadata,
-                    evaluation_point,
-                    columns_to_expand,
-                } => {
-                    size_of_val(old_file_metadata)
-                        + size_of_val(new_file_metadata)
-                        + size_of_val(&evaluation_point)
-                        + size_of_val(columns_to_expand)
-                }
-                ClientMessages::RequestEditEvaluation {
-                    old_file_metadata,
-                    new_file_metadata,
-                    evaluation_point,
-                    columns_to_expand,
-                    requested_unencoded_row_range_inclusive,
-                } => {
-                    size_of_val(old_file_metadata)
-                        + size_of_val(new_file_metadata)
-                        + size_of_val(&evaluation_point)
-                        + size_of_val(columns_to_expand)
-                }
-                ClientMessages::EditOrAppendResponse {
-                    new_file_metadata,
-                    old_file_metadata,
-                    accepted,
-                } => size_of_val(new_file_metadata) + size_of_val(old_file_metadata),
-                ClientMessages::DeleteFile { file_metadata } => size_of_val(file_metadata),
-                ClientMessages::ClientKeepAlive => 0,
-            }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ServerMessages {
     UserLoginResponse {
         success: bool,
+    },
+    UploadingFileChunkIdentifier {
+        file_ulid: Ulid,
+    },
+    UploadingFileChunkResponse {
+        data_ok: bool,
     },
     CompactCommit {
         file_metadata: FileMetadata,
@@ -267,31 +192,4 @@ pub enum ServerMessages {
     ErrorResponse {
         error: String,
     },
-}
-
-impl ServerMessages {
-    pub fn sizes(&self) -> usize {
-        std::mem::size_of_val(self)
-            + match self {
-                ServerMessages::UserLoginResponse { success } => std::mem::size_of_val(success),
-                ServerMessages::CompactCommit { file_metadata } => {
-                    std::mem::size_of_val(file_metadata)
-                }
-                ServerMessages::Columns { columns } => std::mem::size_of_val(columns),
-                _ => {
-                    // todo: finish
-                    //  issue: need to recursively check size of values, such as vec<column> has internal vecs within.
-                    0
-                } // ServerMessages::File { .. } => {}
-                  // ServerMessages::FileRow { .. } => {}
-                  // ServerMessages::EncodedColumn { .. } => {}
-                  // ServerMessages::PolynomialEvaluation { .. } => {}
-                  // ServerMessages::ReshapeEvaluation { .. } => {}
-                  // ServerMessages::AppendEvaluation { .. } => {}
-                  // ServerMessages::EditEvaluation { .. } => {}
-                  // ServerMessages::ServerKeepAlive => {}
-                  // ServerMessages::FileDeleted { .. } => {}
-                  // ServerMessages::ErrorResponse { .. } => {}
-            }
-    }
 }

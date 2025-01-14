@@ -39,6 +39,7 @@ use crate::networking::shared;
 use crate::networking::shared::wrap_stream;
 use crate::networking::shared::ClientMessages;
 use crate::networking::shared::ServerMessages;
+use crate::networking::shared::ServerMessages::ErrorResponse;
 use crate::{fields, PoSColumn, PoSCommit};
 
 type InternalServerMessage = ServerMessages;
@@ -96,6 +97,18 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
             ClientMessages::RequestFile { file_metadata } => {
                 handle_client_request_file(file_metadata).await
             }
+            ClientMessages::StartUploadNewFileByChunks {
+                filename,
+                columns,
+                encoded_columns,
+            } => {
+                handle_client_start_upload_file_by_chunks(filename, columns, encoded_columns).await
+            }
+            ClientMessages::UploadFileChunk {
+                file_ulid,
+                chunk,
+                last_chunk,
+            } => handle_client_upload_file_chunk(file_ulid, chunk, last_chunk).await,
             ClientMessages::RequestFileRow { file_metadata, row } => {
                 handle_client_request_file_row(file_metadata, row).await
             }
@@ -296,21 +309,6 @@ async fn handle_client_upload_new_file(
     use crate::databases::FileMetadata;
     use crate::lcpc_online;
     use std::path::Path;
-    // let commit_filename = Path::new(&filename)
-    //     .file_name()
-    //     .unwrap()
-    //     .to_str()?;
-
-    // { //database lock scope
-    //     //todo: may not need this if I'm using .ids to store files now
-    //     let db = Surreal::new::<RocksDb>(constants::DATABASE_ADDRESS).await?;
-    //     db.use_ns(constants::SERVER_NAMESPACE).use_db(constants::SERVER_DATABASE_NAME).await?;
-    //     let result: Vec<FileMetadata> = db.query("SELECT * FROM $table WHERE filename = $filename LIMIT 1")
-    //         .bind(("table", constants::SERVER_METADATA_TABLE))
-    //         .bind(("filename", commit_filename))
-    //         .await?.take(0)?;
-    //     ensure!(result.is_empty(), "File already exists");
-    // }
 
     let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
     let CommitOrLeavesOutput::Commit(commit) = convert_file_data_to_commit(
@@ -366,6 +364,24 @@ async fn handle_client_upload_new_file(
     }
 
     Ok(ServerMessages::CompactCommit { file_metadata })
+}
+
+#[tracing::instrument(skip_all)]
+async fn handle_client_start_upload_file_by_chunks(
+    filename: String,
+    pre_encoded_columns: usize,
+    encoded_columns: usize,
+) -> Result<InternalServerMessage> {
+    todo!()
+}
+
+#[tracing::instrument(skip(chunk))]
+async fn handle_client_upload_file_chunk(
+    file_ulid: Ulid,
+    chunk: Vec<u8>,
+    last_chunk: bool,
+) -> Result<InternalServerMessage> {
+    todo!()
 }
 
 #[tracing::instrument(skip_all)]
