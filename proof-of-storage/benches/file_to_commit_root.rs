@@ -36,7 +36,7 @@ fn stream_commit_root(c: &mut Criterion) {
                     let field_iterator = FieldGeneratorIter::<_, WriteableFt63>::new(buf_reader);
                     let row_iterator =
                         RowGeneratorIter::new_ligero(field_iterator, pre_encoded, encoded);
-                    let _streamed_root = row_iterator.convert_to_commit_root::<Blake3>().unwrap();
+                    let _streamed_root = row_iterator.convert_to_commit_root::<Blake3>();
                 })
             },
         );
@@ -50,7 +50,7 @@ fn stream_commit_root(c: &mut Criterion) {
                     let field_iterator = FieldGeneratorIter::<_, WriteableFt63>::new(byte_iterator);
                     let row_iterator =
                         RowGeneratorIter::new_ligero(field_iterator, pre_encoded, encoded);
-                    let _streamed_root = row_iterator.convert_to_commit_root::<Blake3>().unwrap();
+                    let _streamed_root = row_iterator.convert_to_commit_root::<Blake3>();
                 })
             },
         );

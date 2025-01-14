@@ -1,6 +1,6 @@
 // use digest::{Digest, FixedOutputReset, Output};
 use crate::fields::data_field::DataField;
-use anyhow::{Context, Result};
+use anyhow::Context;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::{merkle_tree, FieldHash, LcEncoding};
 use lcpc_ligero_pc::LigeroEncoding;
@@ -77,22 +77,15 @@ where
         hashes
     }
 
-    pub fn convert_to_commit_root<D>(self) -> Result<Output<D>>
+    pub fn convert_to_commit_root<D>(self) -> Output<D>
     where
         D: Digest + FixedOutputReset,
     {
         let leaves: Vec<Output<D>> = self.get_column_digests::<D>();
 
-        let len_of_merkle_tree = leaves
-            .len()
-            .checked_next_power_of_two()
-            .context("no next power of two")?
-            - 1;
-
-        // step 2: compute rest of Merkle tree
         let mut nodes_of_tree: Vec<Output<D>> = vec![Output::<D>::default(); leaves.len() - 1];
         merkle_tree::<D>(&leaves, &mut nodes_of_tree);
-        Ok(nodes_of_tree.last().unwrap().to_owned())
+        nodes_of_tree.last().unwrap().to_owned()
     }
 }
 
@@ -258,7 +251,7 @@ mod tests {
             let iter_row: RowGeneratorIter<WriteableFt63, _, _> =
                 RowGeneratorIter::new_ligero(iter_field, UNENCODED_LEN, ENCODED_LEN);
 
-            iter_row.convert_to_commit_root::<Blake3>().unwrap()
+            iter_row.convert_to_commit_root::<Blake3>()
         };
 
         assert_eq!(regular_commit.get_root().root, iterated_commit_root)
@@ -288,7 +281,7 @@ mod tests {
             reference_commit.n_per_row,
             reference_commit.n_cols,
         );
-        let streamed_root = row_iterator.convert_to_commit_root::<Blake3>().unwrap();
+        let streamed_root = row_iterator.convert_to_commit_root::<Blake3>();
 
         println!("reference root: {:?}", reference_commit.get_root().root);
         println!("streamed root: {:?}", streamed_root);
