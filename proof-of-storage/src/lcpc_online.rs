@@ -21,6 +21,7 @@ use crate::fields::{is_power_of_two, vector_multiply};
 use crate::networking::server::get_aspect_ratio_default_from_field_len;
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 
+pub mod column_digest_accumulator;
 pub mod row_generator_iter;
 
 pub type FldT<E> = <E as LcEncoding>::F;
