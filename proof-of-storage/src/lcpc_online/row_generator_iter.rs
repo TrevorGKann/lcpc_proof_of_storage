@@ -1,5 +1,6 @@
 // use digest::{Digest, FixedOutputReset, Output};
 use crate::fields::data_field::DataField;
+use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
 use anyhow::Context;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::{merkle_tree, FieldHash, LcEncoding};
@@ -7,6 +8,7 @@ use lcpc_ligero_pc::LigeroEncoding;
 use std::io::Read;
 use std::iter::Iterator;
 
+#[derive(Clone)]
 pub struct RowGeneratorIter<F, I, E>
 where
     F: DataField,
@@ -31,25 +33,14 @@ where
     where
         D: Digest + FixedOutputReset,
     {
-        let mut digests = Vec::with_capacity(self.coefs_buffer.len());
-        for _ in 0..self.coefs_buffer.len() {
-            let mut digest = D::new();
-            Digest::update(&mut digest, <Output<D> as Default>::default());
-            digests.push(digest);
-        }
+        let mut digests: ColumnDigestAccumulator<D, F> =
+            ColumnDigestAccumulator::new(self.coefs_buffer.len(), ColumnsToCareAbout::All);
 
         while let Some(row) = self.next() {
-            for (column_index, digest) in digests.iter_mut().enumerate() {
-                row[column_index].digest_update(digest);
-            }
+            digests.update(row).unwrap() // should never panic because the size is fixed
         }
 
-        let mut hashes = Vec::with_capacity(digests.len());
-        for digest in digests {
-            hashes.push(digest.finalize());
-        }
-
-        hashes
+        digests.get_column_digests()
     }
 
     pub fn get_specified_column_digests<D>(mut self, column_indices: &[usize]) -> Vec<Output<D>>
@@ -64,8 +55,8 @@ where
         }
 
         while let Some(row) = self.next() {
-            for column_index in column_indices {
-                row[*column_index].digest_update(&mut digests[*column_index]);
+            for (digest_index, column_index) in column_indices.iter().enumerate() {
+                row[*column_index].digest_update(&mut digests[digest_index]);
             }
         }
 
@@ -152,7 +143,8 @@ mod tests {
 
     use crate::fields::field_generator_iter::FieldGeneratorIter;
     use crate::fields::{
-        convert_byte_vec_to_field_elements_vec, read_file_path_to_field_elements_vec, WriteableFt63,
+        convert_byte_vec_to_field_elements_vec, read_file_path_to_field_elements_vec,
+        RandomBytesIterator, WriteableFt63,
     };
     use crate::lcpc_online::row_generator_iter::RowGeneratorIter;
     use crate::lcpc_online::{
@@ -160,6 +152,7 @@ mod tests {
     };
     use blake3::traits::digest::Digest;
     use blake3::Hasher as Blake3;
+    use itertools::Itertools;
     use lcpc_2d::LcCommit;
     use lcpc_ligero_pc::LigeroEncoding;
 
@@ -210,6 +203,55 @@ mod tests {
             .for_each(|(iterated, regular)| {
                 assert_eq!(iterated[..], *regular);
             });
+    }
+
+    #[test]
+    fn are_specified_columns_correct() {
+        static LEN: usize = 999;
+        let mut bytes = vec![0u8; LEN];
+        // fill bytes with random data
+        let mut rng = rand::thread_rng();
+        for byte in bytes.iter_mut() {
+            *byte = rng.gen::<u8>();
+        }
+
+        const UNENCODED_LEN: usize = 4;
+        const ENCODED_LEN: usize = 8;
+
+        println!("making iterated commit");
+        let iterated_commit_rows = {
+            let iter_field: FieldGeneratorIter<_, WriteableFt63> =
+                FieldGeneratorIter::new(bytes.clone().into_iter());
+
+            let iter_row: RowGeneratorIter<WriteableFt63, _, _> =
+                RowGeneratorIter::new_ligero(iter_field, UNENCODED_LEN, ENCODED_LEN);
+
+            iter_row
+        };
+        let iterated_digests = iterated_commit_rows.get_column_digests::<Blake3>();
+
+        println!("making iterated commit with select columns");
+        let random_indices = RandomBytesIterator::new()
+            .take(4)
+            .map(|i| i as usize % ENCODED_LEN)
+            .unique()
+            .collect::<Vec<usize>>();
+        let partial_digests = {
+            let iter_field: FieldGeneratorIter<_, WriteableFt63> =
+                FieldGeneratorIter::new(bytes.clone().into_iter());
+
+            let iter_row_partial: RowGeneratorIter<WriteableFt63, _, _> =
+                RowGeneratorIter::new_ligero(iter_field, UNENCODED_LEN, ENCODED_LEN);
+
+            iter_row_partial.get_specified_column_digests::<Blake3>(&random_indices)
+        };
+
+        for (partial_index, full_index) in random_indices.iter().enumerate() {
+            assert_eq!(
+                iterated_digests[*full_index],
+                partial_digests[partial_index]
+            );
+        }
     }
 
     #[test]

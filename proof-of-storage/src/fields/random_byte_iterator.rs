@@ -39,6 +39,7 @@ mod tests {
     #[test]
     fn can_i_use_take_a_billion() {
         let mut iterator = RandomBytesIterator::new();
-        iterator.take(usize::max_value());
+        let mut test = iterator.take(usize::max_value());
+        let _ = test.next();
     }
 }

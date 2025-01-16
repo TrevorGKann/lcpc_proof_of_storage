@@ -4,22 +4,51 @@ use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::{merkle_tree, FieldHash};
 use std::marker::PhantomData;
 
+#[derive(Debug, PartialEq)]
+pub enum ColumnsToCareAbout {
+    All,
+    Only(Vec<usize>),
+    // there are no guarantees on what happens if the columns to care about are not unique.
+}
+
 pub struct ColumnDigestAccumulator<D: Digest + FixedOutputReset, F: DataField> {
     column_digests: Vec<D>,
+    columns_to_care_about: ColumnsToCareAbout,
     data_field: PhantomData<F>,
 }
 
 impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
-    pub fn new(number_of_columns: usize) -> Self {
-        let mut column_digests = Vec::with_capacity(number_of_columns);
-        for column in 0..number_of_columns {
-            let mut digest = D::new();
-            Digest::update(&mut digest, <Output<D> as Default>::default());
-            column_digests.push(digest);
-        }
-        ColumnDigestAccumulator {
-            column_digests,
-            data_field: PhantomData,
+    pub fn new(
+        number_of_encoded_columns: usize,
+        columns_to_care_about: ColumnsToCareAbout,
+    ) -> Self {
+        match columns_to_care_about {
+            ColumnsToCareAbout::All => {
+                let mut column_digests = Vec::with_capacity(number_of_encoded_columns);
+                for column in 0..number_of_encoded_columns {
+                    let mut digest = D::new();
+                    Digest::update(&mut digest, <Output<D> as Default>::default());
+                    column_digests.push(digest);
+                }
+                ColumnDigestAccumulator {
+                    column_digests,
+                    columns_to_care_about,
+                    data_field: PhantomData,
+                }
+            }
+            ColumnsToCareAbout::Only(ref indices) => {
+                let mut column_digests = Vec::with_capacity(indices.len());
+                for column in 0..indices.len() {
+                    let mut digest = D::new();
+                    Digest::update(&mut digest, <Output<D> as Default>::default());
+                    column_digests.push(digest);
+                }
+                ColumnDigestAccumulator {
+                    column_digests,
+                    columns_to_care_about,
+                    data_field: PhantomData,
+                }
+            }
         }
     }
 
@@ -27,14 +56,24 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
         self.column_digests.len()
     }
 
-    pub fn update(&mut self, input: Vec<F>) -> Result<()> {
+    pub fn update(&mut self, encoded_row: Vec<F>) -> Result<()> {
         ensure!(
-            input.len() == self.column_digests.len(),
+            encoded_row.len() == self.column_digests.len(),
             "incorrect length of input"
         );
 
-        for (mut digest, input) in self.column_digests.iter_mut().zip(input) {
-            input.digest_update(digest);
+        match self.columns_to_care_about {
+            ColumnsToCareAbout::All => {
+                for (mut digest, input) in self.column_digests.iter_mut().zip(encoded_row) {
+                    input.digest_update(digest);
+                }
+            }
+            ColumnsToCareAbout::Only(ref columns) => {
+                for columns_index in columns.iter() {
+                    encoded_row[columns_index.clone()]
+                        .digest_update(&mut self.column_digests[*columns_index]);
+                }
+            }
         }
 
         Ok(())
@@ -49,7 +88,13 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
         hashes
     }
 
+    /// Only works if ColumnsToCareAbout is All
     pub fn finalize_to_commit(self) -> Result<Output<D>> {
+        ensure!(
+            self.columns_to_care_about == ColumnsToCareAbout::All,
+            "cannot commit to a root if not all columns have been tracked"
+        );
+
         let leaves: Vec<Output<D>> = self.get_column_digests();
 
         let mut nodes_of_tree: Vec<Output<D>> = vec![Output::<D>::default(); leaves.len() - 1];
