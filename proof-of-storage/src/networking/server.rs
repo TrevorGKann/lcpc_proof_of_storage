@@ -1,4 +1,5 @@
 use std::cmp::min;
+use std::collections::HashMap;
 use std::env;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::RocksDb;
 use surrealdb::engine::local::{Db, Mem};
+use surrealdb::key::index::bl::Bl;
 use surrealdb::Surreal;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -30,6 +32,7 @@ use crate::fields::{
     convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, is_power_of_two,
     read_file_to_field_elements_vec,
 };
+use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
 use crate::lcpc_online::{
     convert_file_data_to_commit, form_side_vectors_for_polynomial_evaluation_from_point,
     get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation,
@@ -43,6 +46,34 @@ use crate::networking::shared::ServerMessages::ErrorResponse;
 use crate::{fields, PoSColumn, PoSCommit};
 
 type InternalServerMessage = ServerMessages;
+type ServerField = WriteableFt63;
+type ServerEncoding = LigeroEncoding<ServerField>;
+type ServerHasher = Blake3;
+
+pub enum ClientLoginStatus {
+    NotLoggedIn,
+    LoggedIn { username: String },
+}
+pub struct ServerState {
+    client_login_status: ClientLoginStatus,
+    open_files: HashMap<
+        Ulid,
+        (
+            File,
+            ServerEncoding,
+            ColumnDigestAccumulator<Blake3, ServerField>,
+        ),
+    >,
+    // todo: database_connection: Arc<db>
+}
+impl ServerState {
+    pub fn new() -> Self {
+        ServerState {
+            client_login_status: ClientLoginStatus::NotLoggedIn,
+            open_files: Default::default(),
+        }
+    }
+}
 
 // static DB: Lazy<Surreal<Db>> = Lazy::new(Surreal::init);
 
@@ -78,6 +109,7 @@ pub async fn server_main(port: u16, verbosity: u8) -> Result<()> {
 #[tracing::instrument(skip_all)]
 pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
     let (mut stream, mut sink) = wrap_stream::<InternalServerMessage, ClientMessages>(stream);
+    let mut server_state = ServerState::new();
 
     while let Some(Ok(transmission)) = stream.next().await {
         // tracing::info!("Server received: {:?}", transmission);
@@ -101,14 +133,25 @@ pub(crate) async fn handle_client_loop(mut stream: TcpStream) {
                 filename,
                 columns,
                 encoded_columns,
+                total_file_size,
             } => {
-                handle_client_start_upload_file_by_chunks(filename, columns, encoded_columns).await
+                handle_client_start_upload_file_by_chunks(
+                    &mut server_state,
+                    filename,
+                    columns,
+                    encoded_columns,
+                    total_file_size,
+                )
+                .await
             }
             ClientMessages::UploadFileChunk {
                 file_ulid,
                 chunk,
                 last_chunk,
-            } => handle_client_upload_file_chunk(file_ulid, chunk, last_chunk).await,
+            } => {
+                handle_client_upload_file_chunk(&mut server_state, file_ulid, chunk, last_chunk)
+                    .await
+            }
             ClientMessages::RequestFileRow { file_metadata, row } => {
                 handle_client_request_file_row(file_metadata, row).await
             }
@@ -237,7 +280,7 @@ async fn handle_client_new_user(
     username: String,
     password: String,
 ) -> Result<InternalServerMessage> {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = ServerHasher::new();
     hasher.update(password.as_bytes());
     let hashed_password = hasher.finalize();
 
@@ -368,19 +411,43 @@ async fn handle_client_upload_new_file(
 
 #[tracing::instrument(skip_all)]
 async fn handle_client_start_upload_file_by_chunks(
+    server_state: &mut ServerState,
     filename: String,
     pre_encoded_columns: usize,
     encoded_columns: usize,
+    total_size: usize,
 ) -> Result<InternalServerMessage> {
-    todo!()
+    let new_file_ulid = Ulid::new();
+    let new_file_handle = File::options()
+        .write(true)
+        .create(true)
+        .open(get_file_location_from_id(&new_file_ulid))
+        .await?;
+    let new_file_encoding =
+        LigeroEncoding::<ServerField>::new_from_dims(pre_encoded_columns, encoded_columns);
+    let new_file_digests = ColumnDigestAccumulator::new(encoded_columns, ColumnsToCareAbout::All);
+    let new_file_encoding = server_state.open_files.insert(
+        new_file_ulid.clone(),
+        (new_file_handle, new_file_encoding, new_file_digests),
+    );
+
+    Ok(ServerMessages::UploadingFileChunkIdentifier {
+        file_ulid: new_file_ulid,
+    })
 }
 
-#[tracing::instrument(skip(chunk))]
+#[tracing::instrument(skip(server_state, chunk))]
 async fn handle_client_upload_file_chunk(
+    server_state: &mut ServerState,
     file_ulid: Ulid,
     chunk: Vec<u8>,
     last_chunk: bool,
 ) -> Result<InternalServerMessage> {
+    let Some((file_handle, file_encoding, file_digests)) = server_state.open_files.get(&file_ulid)
+    else {
+        bail!("File does not exist, start an chunked upload first before uploading chunks");
+    };
+
     todo!()
 }
 
