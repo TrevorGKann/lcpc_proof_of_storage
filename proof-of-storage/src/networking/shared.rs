@@ -52,6 +52,7 @@ pub enum ClientMessages {
         filename: String,
         columns: usize,
         encoded_columns: usize,
+        total_file_size: usize,
     },
     UploadFileChunk {
         file_ulid: Ulid,
