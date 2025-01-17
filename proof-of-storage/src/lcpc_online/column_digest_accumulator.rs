@@ -56,7 +56,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
         self.column_digests.len()
     }
 
-    pub fn update(&mut self, encoded_row: Vec<F>) -> Result<()> {
+    pub fn update(&mut self, encoded_row: &[F]) -> Result<()> {
         ensure!(
             encoded_row.len() == self.column_digests.len(),
             "incorrect length of input"
