@@ -16,12 +16,15 @@ use lcpc_2d::{
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::databases::FileMetadata;
+use crate::fields::data_field::DataField;
 use crate::fields::WriteableFt63;
 use crate::fields::{is_power_of_two, vector_multiply};
 use crate::networking::server::get_aspect_ratio_default_from_field_len;
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 
 pub mod column_digest_accumulator;
+mod encoded_file_reader;
+mod encoded_file_writer;
 pub mod row_generator_iter;
 
 pub type FldT<E> = <E as LcEncoding>::F;
@@ -534,11 +537,11 @@ where
     )
 }
 
-pub fn decode_row(
-    mut row: Vec<PoSField>,
+pub fn decode_row<F: PrimeField>(
+    mut row: Vec<F>,
     //todo need to know the expected len of the output vector to trim ending zeros
-) -> Result<Vec<FldT<PoSEncoding>>, ErrT<PoSEncoding>> {
-    <PoSField as FieldFFT>::ifft_oi(<Vec<PoSField> as AsMut<[PoSField]>>::as_mut(&mut row))?;
+) -> Result<Vec<FldT<LigeroEncoding<F>>>, ErrT<LigeroEncoding<F>>> {
+    <F as FieldFFT>::ifft_oi(<Vec<F> as AsMut<[F]>>::as_mut(&mut row))?;
     Ok(row)
 }
 
