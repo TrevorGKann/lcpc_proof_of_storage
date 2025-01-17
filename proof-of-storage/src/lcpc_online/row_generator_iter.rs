@@ -37,7 +37,7 @@ where
             ColumnDigestAccumulator::new(self.coefs_buffer.len(), ColumnsToCareAbout::All);
 
         while let Some(row) = self.next() {
-            digests.update(row).unwrap() // should never panic because the size is fixed
+            digests.update(&row).unwrap() // should never panic because the size is fixed
         }
 
         digests.get_column_digests()
