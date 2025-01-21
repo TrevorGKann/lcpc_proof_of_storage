@@ -132,6 +132,6 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         if self.incoming_byte_buffer.len() > 0 {
             self.process_current_row().await?
         }
-        Ok(self.column_digest_accumulator.finalize_to_commit().unwrap()) //unwrap won't panic because we are using Columns::All
+        self.column_digest_accumulator.finalize_to_commit() //unwrap won't panic because we are using Columns::All
     }
 }

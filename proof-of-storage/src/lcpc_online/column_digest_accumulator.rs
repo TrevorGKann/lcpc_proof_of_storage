@@ -95,10 +95,22 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
             "cannot commit to a root if not all columns have been tracked"
         );
 
-        let leaves: Vec<Output<D>> = self.get_column_digests();
+        let tree = self.finalize_to_tree()?;
+        Ok(tree.last().unwrap().to_owned())
+    }
+
+    pub fn finalize_to_tree(self) -> Result<Vec<Output<D>>> {
+        ensure!(
+            self.columns_to_care_about == ColumnsToCareAbout::All,
+            "cannot commit to a tree if not all columns have been tracked"
+        );
+
+        let mut leaves: Vec<Output<D>> = self.get_column_digests();
 
         let mut nodes_of_tree: Vec<Output<D>> = vec![Output::<D>::default(); leaves.len() - 1];
         merkle_tree::<D>(&leaves, &mut nodes_of_tree);
-        Ok(nodes_of_tree.last().unwrap().to_owned())
+
+        leaves.extend_from_slice(&nodes_of_tree);
+        Ok(leaves)
     }
 }

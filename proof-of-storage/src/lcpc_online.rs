@@ -25,8 +25,9 @@ use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 pub mod column_digest_accumulator;
 pub mod encoded_file_reader;
 pub mod encoded_file_writer;
-pub mod row_generator_iter;
 pub mod file_formatter;
+mod file_handler;
+pub mod row_generator_iter;
 
 pub type FldT<E> = <E as LcEncoding>::F;
 pub type ErrT<E> = <E as LcEncoding>::Err;
