@@ -13,6 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub struct UnProcessedState;
 pub struct ProcessedState;
+pub struct EditedState;
 
 pub struct EncodedFileReader<
     F: DataField,
@@ -40,11 +41,10 @@ impl<F: DataField, D: Digest + FixedOutputReset>
         file_to_read: File,
         pre_encoded_size: usize,
         encoded_size: usize,
-        columns_to_care_about: ColumnsToCareAbout,
+        num_rows: usize,
     ) -> Self {
         let encoding = LigeroEncoding::<F>::new_from_dims(pre_encoded_size, encoded_size);
         let total_file_size = file_to_read.metadata().await.unwrap().len() as usize;
-        let num_rows = total_file_size / (encoded_size * F::DATA_BYTE_CAPACITY as usize);
 
         Self {
             encoding,
@@ -113,6 +113,15 @@ impl<F: DataField, D: Digest + FixedOutputReset, AnyState>
         }
 
         new_encoded_file_writer.finalize_to_commit().await
+    }
+
+    /// returns an edited state as well as the original data that was replaced in the unencoded file
+    pub async fn edit_row(
+        mut self,
+        unencoded_start_byte: usize,
+        new_unencoded_data: Vec<u8>,
+    ) -> Result<(EncodedFileReader<F, D, LigeroEncoding<F>, EditedState>, Vec<u8>)> {
+        todo!()
     }
 }
 

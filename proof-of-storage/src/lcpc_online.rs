@@ -23,9 +23,10 @@ use crate::networking::server::get_aspect_ratio_default_from_field_len;
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 
 pub mod column_digest_accumulator;
-mod encoded_file_reader;
-mod encoded_file_writer;
+pub mod encoded_file_reader;
+pub mod encoded_file_writer;
 pub mod row_generator_iter;
+pub mod file_formatter;
 
 pub type FldT<E> = <E as LcEncoding>::F;
 pub type ErrT<E> = <E as LcEncoding>::Err;

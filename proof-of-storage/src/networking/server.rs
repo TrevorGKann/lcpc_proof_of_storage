@@ -33,11 +33,7 @@ use crate::fields::{
     read_file_to_field_elements_vec,
 };
 use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
-use crate::lcpc_online::{
-    convert_file_data_to_commit, form_side_vectors_for_polynomial_evaluation_from_point,
-    get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation,
-    CommitDimensions, CommitOrLeavesOutput, CommitRequestType,
-};
+use crate::lcpc_online::{convert_file_data_to_commit, file_formatter, form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation, CommitDimensions, CommitOrLeavesOutput, CommitRequestType};
 use crate::networking::shared;
 use crate::networking::shared::wrap_stream;
 use crate::networking::shared::ClientMessages;
@@ -352,6 +348,7 @@ async fn handle_client_upload_new_file(
     use crate::databases::FileMetadata;
     use crate::lcpc_online;
     use std::path::Path;
+    use crate::lcpc_online::file_formatter;
 
     let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
     let CommitOrLeavesOutput::Commit(commit) = convert_file_data_to_commit(
@@ -367,7 +364,7 @@ async fn handle_client_upload_new_file(
     };
 
     let new_upload_id = Ulid::new();
-    let local_file_location = get_file_location_from_id(&new_upload_id);
+    let local_file_location = file_formatter::get_unencoded_file_location_from_id(&new_upload_id);
     tracing::debug!("Writing new file to {}", local_file_location.display());
     tokio::fs::write(&local_file_location, &file_data)
         .await
@@ -421,7 +418,7 @@ async fn handle_client_start_upload_file_by_chunks(
     let new_file_handle = File::options()
         .write(true)
         .create(true)
-        .open(get_file_location_from_id(&new_file_ulid))
+        .open(file_formatter::get_unencoded_file_location_from_id(&new_file_ulid))
         .await?;
     let new_file_encoding =
         LigeroEncoding::<ServerField>::new_from_dims(pre_encoded_columns, encoded_columns);
@@ -458,7 +455,7 @@ async fn handle_client_request_file(file_metadata: FileMetadata) -> Result<Inter
 
     check_file_metadata(&file_metadata)?;
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&file_metadata);
 
     let file = tokio::fs::read(&file_handle).await?;
 
@@ -475,7 +472,7 @@ async fn handle_client_request_file_row(
 
     check_file_metadata(&file_metadata)?;
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&file_metadata);
     let mut file = tokio::fs::File::open(&file_handle).await?;
 
     let seek_pointer = file_metadata.num_columns * row;
@@ -500,9 +497,9 @@ async fn handle_client_edit_file_bytes(
 
     // ensure!(new_file_data.len() == file_metadata.num_columns, "new file data is not the correct length".to_string());
 
-    let old_file_handle = get_file_handle_from_metadata(&file_metadata);
+    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&file_metadata);
     let new_id = Ulid::new();
-    let new_file_handle = get_file_location_from_id(&new_id);
+    let new_file_handle = file_formatter::get_unencoded_file_location_from_id(&new_id);
 
     //scope for file editing
     {
@@ -568,9 +565,9 @@ async fn handle_client_append_to_file(
 
     check_file_metadata(&file_metadata)?;
 
-    let old_file_handle = get_file_handle_from_metadata(&file_metadata);
+    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&file_metadata);
     let new_id = Ulid::new();
-    let new_file_handle = get_file_location_from_id(&new_id);
+    let new_file_handle = file_formatter::get_unencoded_file_location_from_id(&new_id);
 
     tracing::debug!(
         "server: appending new data to file: {:?} bytes -> {:?}",
@@ -657,7 +654,7 @@ async fn handle_client_request_proof(
     );
     check_file_metadata(&file_metadata)?;
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&file_metadata);
     tracing::trace!(
         "reading file for proof at {}",
         file_handle.to_str().unwrap()
@@ -701,7 +698,7 @@ async fn handle_client_request_polynomial_evaluation(
     );
     check_file_metadata(&file_metadata)?;
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&file_metadata);
     let file_data = tokio::fs::read(&file_handle).await?;
     let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
     let CommitOrLeavesOutput::Commit(commit) = convert_file_data_to_commit(
@@ -739,7 +736,7 @@ async fn handle_client_delete_file(file_metadata: FileMetadata) -> Result<Server
     );
     check_file_metadata(&file_metadata)?;
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&file_metadata);
     let db_delete_result: Option<FileMetadata> = {
         //database scope
         tracing::debug!(
@@ -793,7 +790,7 @@ async fn handle_client_request_file_reshape(
 ) -> Result<ServerMessages> {
     check_file_metadata(&file_metadata)?;
 
-    let file_handle = get_file_handle_from_metadata(&file_metadata);
+    let file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&file_metadata);
     let file_data = tokio::fs::read(&file_handle).await?;
     let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
     let CommitOrLeavesOutput::Commit(updated_commit) = convert_file_data_to_commit(
@@ -836,7 +833,7 @@ async fn handle_client_request_reshape_evaluation(
     check_file_metadata(&new_file_metadata)?;
 
     // Both files have the same stored data at the id of the old metadata, we only need to read it once
-    let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
+    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
     let file_data = tokio::fs::read(&old_file_handle).await?;
     let fielded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
 
@@ -914,8 +911,8 @@ async fn handle_client_reshape_response(
     check_file_metadata(&old_file_metadata)?;
     check_file_metadata(&new_file_metadata)?;
 
-    let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
-    let new_file_handle = get_file_handle_from_metadata(&new_file_metadata);
+    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
 
     // we now have two database entries for the same file, the new one has a bad ID, so we'll have to
     // change the filename and delete the old entry if it's accepted and only have to delete the new
@@ -962,8 +959,8 @@ async fn handle_client_append_or_edit_eval_request(
     check_file_metadata(&old_file_metadata)?;
     check_file_metadata(&new_file_metadata)?;
 
-    let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
-    let new_file_handle = get_file_handle_from_metadata(&new_file_metadata);
+    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
 
     tracing::debug!("reading old file from {:?}", &old_file_handle);
     let old_file_data = tokio::fs::read(&old_file_handle).await?;
@@ -1081,8 +1078,8 @@ async fn handle_client_append_or_edit_response(
     check_file_metadata(&old_file_metadata)?;
     check_file_metadata(&new_file_metadata)?;
 
-    let old_file_handle = get_file_handle_from_metadata(&old_file_metadata);
-    let new_file_handle = get_file_handle_from_metadata(&new_file_metadata);
+    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
 
     // we now have two database entries for the same file, the new one has a bad ID, so we'll have to
     // change the filename and delete the old entry if it's accepted and only have to delete the new
@@ -1179,20 +1176,3 @@ fn check_file_metadata(file_metadata: &FileMetadata) -> Result<()> {
     Ok(())
 }
 
-fn get_file_handle_from_metadata(file_metadata: &FileMetadata) -> PathBuf {
-    // format!("PoS_server_files/{}", file_metadata.id)
-    get_file_location_from_id(&file_metadata.id_ulid)
-}
-
-fn get_file_location_from_id(id: &Ulid) -> PathBuf {
-    let mut path = env::current_dir().unwrap();
-    path.push(constants::SERVER_FILE_FOLDER);
-
-    //check that directory folder exists
-    if !path.exists() {
-        std::fs::create_dir(&path).unwrap();
-    }
-
-    path.push(format!("{}.{}", id.to_string(), constants::FILE_EXTENSION));
-    path
-}

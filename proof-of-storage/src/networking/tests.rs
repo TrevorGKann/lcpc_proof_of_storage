@@ -751,7 +751,7 @@ pub mod network_tests {
             path.push(format!(
                 "{}.{}",
                 metadata.id_ulid.to_string(),
-                constants::FILE_EXTENSION
+                constants::UNENCODED_FILE_EXTENSION
             ));
 
             let mut servers_file = OpenOptions::new().write(true).open(&path).await.unwrap();
