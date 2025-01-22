@@ -56,7 +56,6 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
 
         while self.incoming_byte_buffer.len() >= self.pre_encoded_size {
             self.process_current_row().await?;
-            todo!()
         }
         Ok(())
     }
@@ -93,7 +92,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         row_to_encode
             .extend(std::iter::repeat(F::ZERO).take(self.encoded_size - row_to_encode.len()));
 
-        self.encoding.encode(&mut row_to_encode);
+        self.encoding.encode(&mut row_to_encode).unwrap();
 
         row_to_encode
     }
