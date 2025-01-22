@@ -1,20 +1,14 @@
 use crate::fields::data_field::DataField;
 use crate::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
 use anyhow::Result;
-use blake3::traits::digest::{Digest, Output};
+use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::{LcColumn, LcEncoding};
 use lcpc_ligero_pc::LigeroEncoding;
 use std::marker::PhantomData;
 use tokio::fs::File;
 use ulid::Ulid;
 
-enum CurrentState {
-    Initialized,
-    Verified,
-    OutOfSync,
-}
-
-pub struct FileHandler<D: Digest, F: DataField, E: LcEncoding<F = F>> {
+pub struct FileHandler<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> {
     file_ulid: Ulid,
     pre_encoded_size: usize,
     encoded_size: usize,
@@ -29,7 +23,7 @@ pub struct FileHandler<D: Digest, F: DataField, E: LcEncoding<F = F>> {
     _encoding: PhantomData<E>,
 }
 
-impl<D: Digest, F: DataField> FileHandler<D, F, LigeroEncoding<F>> {
+impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncoding<F>> {
     pub fn new(ulid: Ulid) -> Result<Self> {
         todo!()
     }
@@ -39,7 +33,7 @@ impl<D: Digest, F: DataField> FileHandler<D, F, LigeroEncoding<F>> {
     pub fn edit_bytes(
         &mut self,
         byte_start: usize,
-        bytes_to_add: Vec<u8>,
+        unencoded_bytes_to_add: Vec<u8>,
     ) -> Result<Self, Vec<u8>> {
         todo!()
     }
@@ -53,7 +47,11 @@ impl<D: Digest, F: DataField> FileHandler<D, F, LigeroEncoding<F>> {
     }
 }
 
-impl<D: Digest, F: DataField, E: LcEncoding<F = F>> FileHandler<D, F, E> {
+impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandler<D, F, E> {
+    pub async fn verify_all_files_agree(&mut self) -> Result<()> {
+        todo!()
+    }
+
     pub async fn read_full_columns(
         &mut self,
         columns_to_care_about: ColumnsToCareAbout,
