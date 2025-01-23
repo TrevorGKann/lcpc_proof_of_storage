@@ -847,7 +847,7 @@ where
     Ok(LcColumn { col, path })
 }
 
-const fn log2(v: usize) -> usize {
+pub const fn log2(v: usize) -> usize {
     (63 - (v.next_power_of_two() as u64).leading_zeros()) as usize
 }
 

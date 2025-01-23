@@ -95,11 +95,11 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
             "cannot commit to a root if not all columns have been tracked"
         );
 
-        let tree = self.finalize_to_tree()?;
+        let tree = self.finalize_to_merkle_tree()?;
         Ok(tree.last().unwrap().to_owned())
     }
 
-    pub fn finalize_to_tree(self) -> Result<Vec<Output<D>>> {
+    pub fn finalize_to_merkle_tree(self) -> Result<Vec<Output<D>>> {
         ensure!(
             self.columns_to_care_about == ColumnsToCareAbout::All,
             "cannot commit to a tree if not all columns have been tracked"

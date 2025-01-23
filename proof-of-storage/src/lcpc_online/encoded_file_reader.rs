@@ -105,8 +105,8 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroE
     }
 
     /// returns the original data that was replaced in the unencoded file
-    async fn edit_row(
-        mut self,
+    pub async fn edit_row(
+        &mut self,
         unencoded_start_byte: usize,
         new_unencoded_data: Vec<u8>,
     ) -> Result<Vec<u8>> {

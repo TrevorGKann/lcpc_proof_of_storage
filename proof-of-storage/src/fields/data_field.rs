@@ -6,7 +6,7 @@ use num_traits::ops::bytes::NumBytes;
 /// for native CPU efficiency).
 ///
 /// Users have to assign how bytes get stored within and retrieved from the field without loss. i.e,
-/// if your field natively represents as `[u64; 1]` you have to tell which bytes of that u64 to 
+/// if your field natively represents as `[u64; 1]` you have to tell which bytes of that u64 to
 /// fill and take from.   
 pub trait DataField: PrimeField {
     /// Specifies the total bytes that can be stored in the field elements without loss.
@@ -50,12 +50,12 @@ pub trait DataField: PrimeField {
     /// In other words, if ending zero padding matters, the user must keep track of the
     /// total byte count.
     fn field_vec_to_byte_vec(field_vec: &[Self]) -> Vec<u8> {
-        field_vec.iter()
+        field_vec
+            .iter()
             .flat_map(|field_element| field_element.to_data_bytes().as_ref().to_owned())
             .collect::<Vec<u8>>()
     }
 }
-
 
 pub enum ByteOrder {
     BigEndian,

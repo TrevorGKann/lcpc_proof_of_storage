@@ -1,7 +1,7 @@
 use crate::fields::data_field::DataField;
 use crate::fields::field_generator_iter::FieldGeneratorIter;
 use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use itertools::Itertools;
 use lcpc_2d::LcEncoding;
@@ -52,10 +52,31 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
     }
 
     pub async fn push_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        self.bytes_received += bytes.len();
+        ensure!(
+            self.bytes_received >= self.total_file_size,
+            "too many bytes attempted to be writter!"
+        );
+
         self.incoming_byte_buffer.extend(bytes);
 
         while self.incoming_byte_buffer.len() >= self.pre_encoded_size {
             self.process_current_row().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn consume_byte_iterator(
+        &mut self,
+        byte_iterator: &mut impl Iterator<Item = u8>,
+    ) -> Result<()> {
+        while let Some(byte) = byte_iterator.next() {
+            self.incoming_byte_buffer.push_back(byte);
+            self.bytes_received += 1;
+
+            while self.incoming_byte_buffer.len() >= self.pre_encoded_size {
+                self.process_current_row().await?;
+            }
         }
         Ok(())
     }
@@ -109,15 +130,19 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
                 (field_elements_written / self.encoded_size) as u64,
             ))
             .await?;
+
         for byte_of_field_elements in bytes_to_write_iterator.into_iter() {
             self.file_to_write_to
                 .write_all(&byte_of_field_elements.cloned().collect::<Vec<u8>>())
                 .await?;
+
             self.file_to_write_to
                 .seek(SeekFrom::Current(
                     F::DATA_BYTE_CAPACITY as i64 * self.num_rows as i64,
                 ))
                 .await?;
+
+            self.bytes_written += F::DATA_BYTE_CAPACITY as usize;
         }
         Ok(())
     }
@@ -132,5 +157,12 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             self.process_current_row().await?
         }
         self.column_digest_accumulator.finalize_to_commit() //unwrap won't panic because we are using Columns::All
+    }
+
+    pub async fn finalize_to_merkle_tree(mut self) -> Result<Vec<Output<D>>> {
+        if self.incoming_byte_buffer.len() > 0 {
+            self.process_current_row().await?
+        }
+        self.column_digest_accumulator.finalize_to_merkle_tree()
     }
 }
