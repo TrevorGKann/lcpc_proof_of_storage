@@ -41,16 +41,16 @@ pub fn read_file_to_field_elements_vec<F: DataField>(file: &mut File) -> (usize,
 pub async fn stream_file_to_field_elements_vec<F: DataField>(
     file: &mut tokio::fs::File,
 ) -> Result<(usize, Vec<F>)> {
-    // BUF_SIZE has to be a multiple of DATA_BYTE_CAPACITY since the buf reader will not cyclically
+    // buf_size has to be a multiple of DATA_BYTE_CAPACITY since the buf reader will not cyclically
     //  fill but instead will fill a partial one at the end of the buffer.
     const BUF_MULT: usize = 1000;
-    let BUF_SIZE: usize = BUF_MULT * F::DATA_BYTE_CAPACITY as usize;
+    let buf_size: usize = BUF_MULT * F::DATA_BYTE_CAPACITY as usize;
 
     let file_size = file.metadata().await?.len();
     let total_elems = file_size.div_ceil(F::DATA_BYTE_CAPACITY as u64);
     let mut field_vec: Vec<F> = Vec::with_capacity(total_elems as usize);
 
-    let mut reader = BufReader::with_capacity(BUF_SIZE, file);
+    let mut reader = BufReader::with_capacity(buf_size, file);
     let mut buffer = F::DataBytes::default();
 
     loop {

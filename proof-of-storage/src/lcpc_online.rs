@@ -27,6 +27,7 @@ pub mod encoded_file_reader;
 pub mod encoded_file_writer;
 pub mod file_formatter;
 mod file_handler;
+mod merkle_tree;
 pub mod row_generator_iter;
 
 pub type FldT<E> = <E as LcEncoding>::F;

@@ -1,6 +1,8 @@
 use crate::fields::data_field::DataField;
 use crate::fields::field_generator_iter::FieldGeneratorIter;
 use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
+use crate::lcpc_online::file_handler::write_tree_to_file;
+use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use itertools::Itertools;
@@ -8,9 +10,9 @@ use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::LigeroEncoding;
 use std::cmp::min;
 use std::collections::VecDeque;
-use std::io::SeekFrom;
-use tokio::fs::File;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use std::path::PathBuf;
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 pub struct EncodedFileWriter<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding> {
     encoding: E,
@@ -49,6 +51,46 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             encoded_size: num_encoded_columns,
             num_rows: total_file_size / num_encoded_columns,
         }
+    }
+
+    pub async fn convert_unencoded_file(
+        unencoded_file: &mut File,
+        target_encoded_file: &PathBuf,
+        target_digest_file: Option<&mut File>,
+        num_pre_encoded_columns: usize,
+        num_encoded_columns: usize,
+    ) -> Result<MerkleTree<D>> {
+        let total_size = unencoded_file.metadata().await?.len() as usize;
+        // let buffered_reader = BufReader::new(unencoded_file);
+        unencoded_file.seek(SeekFrom::Start(0)).await?;
+        let target_file = OpenOptions::default()
+            .create(true)
+            .write(true)
+            .open(&target_encoded_file)
+            .await?;
+
+        let mut encoded_writer = Self::new(
+            num_pre_encoded_columns,
+            num_encoded_columns,
+            total_size,
+            target_file,
+        );
+
+        let mut read_buf = [0u8; 4098];
+        loop {
+            let bytes_read = unencoded_file.read(&mut read_buf).await?;
+            if bytes_read == 0 {
+                break;
+            }
+            encoded_writer.push_bytes(&read_buf).await?;
+        }
+
+        let tree = encoded_writer.finalize_to_merkle_tree().await?;
+
+        if let Some(digest_file) = target_digest_file {
+            write_tree_to_file::<D>(digest_file, &tree).await?;
+        }
+        Ok(tree)
     }
 
     pub async fn push_bytes(&mut self, bytes: &[u8]) -> Result<()> {
@@ -159,7 +201,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         self.column_digest_accumulator.finalize_to_commit() //unwrap won't panic because we are using Columns::All
     }
 
-    pub async fn finalize_to_merkle_tree(mut self) -> Result<Vec<Output<D>>> {
+    pub async fn finalize_to_merkle_tree(mut self) -> Result<MerkleTree<D>> {
         if self.incoming_byte_buffer.len() > 0 {
             self.process_current_row().await?
         }

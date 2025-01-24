@@ -1,7 +1,8 @@
 use crate::fields::data_field::DataField;
+use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use lcpc_2d::{merkle_tree, FieldHash};
+use lcpc_2d::FieldHash;
 use std::marker::PhantomData;
 
 #[derive(Debug, PartialEq)]
@@ -96,21 +97,16 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
         );
 
         let tree = self.finalize_to_merkle_tree()?;
-        Ok(tree.last().unwrap().to_owned())
+        Ok(tree.root())
     }
 
-    pub fn finalize_to_merkle_tree(self) -> Result<Vec<Output<D>>> {
+    pub fn finalize_to_merkle_tree(self) -> Result<MerkleTree<D>> {
         ensure!(
             self.columns_to_care_about == ColumnsToCareAbout::All,
             "cannot commit to a tree if not all columns have been tracked"
         );
 
-        let mut leaves: Vec<Output<D>> = self.get_column_digests();
-
-        let mut nodes_of_tree: Vec<Output<D>> = vec![Output::<D>::default(); leaves.len() - 1];
-        merkle_tree::<D>(&leaves, &mut nodes_of_tree);
-
-        leaves.extend_from_slice(&nodes_of_tree);
-        Ok(leaves)
+        let leaves: Vec<Output<D>> = self.get_column_digests();
+        MerkleTree::new(&leaves)
     }
 }

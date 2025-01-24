@@ -1,9 +1,10 @@
 use crate::fields::data_field::DataField;
 use crate::lcpc_online::decode_row;
 use crate::lcpc_online::encoded_file_writer::EncodedFileWriter;
+use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use lcpc_2d::{merkle_tree, FieldHash, LcEncoding};
+use lcpc_2d::{FieldHash, LcEncoding};
 use lcpc_ligero_pc::LigeroEncoding;
 use std::cmp::{max, min};
 use std::io::SeekFrom;
@@ -197,7 +198,8 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
 
         for element in data_to_write {
             self.file_to_read
-                .write_all(&F::to_data_bytes(&element).as_ref());
+                .write_all(&F::to_data_bytes(&element).as_ref())
+                .await?;
             self.file_to_read
                 .seek(SeekFrom::Current(
                     (self.num_rows - 1) as i64 * F::DATA_BYTE_CAPACITY as i64,
@@ -215,12 +217,12 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
             ))
             .await?;
         let mut column_bytes = vec![0u8; self.encoded_size * F::DATA_BYTE_CAPACITY as usize];
-        self.file_to_read.read_exact(&mut column_bytes);
+        self.file_to_read.read_exact(&mut column_bytes).await?;
 
         Ok(F::from_byte_vec(&column_bytes))
     }
 
-    pub async fn process_file_to_merkle_tree(mut self) -> Result<Vec<Output<D>>> {
+    pub async fn process_file_to_merkle_tree(mut self) -> Result<MerkleTree<D>> {
         let mut column_digests: Vec<Output<D>> = Vec::with_capacity(self.encoded_size);
         for i in 0..self.encoded_size {
             // column hashes start with a block of 0's
@@ -235,10 +237,6 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
             column_digests.push(digest.finalize());
         }
 
-        let mut path_digests: Vec<Output<D>> = Vec::with_capacity(self.encoded_size - 1);
-        merkle_tree::<D>(&column_digests, &mut path_digests);
-
-        column_digests.append(&mut path_digests);
-        Ok(column_digests)
+        MerkleTree::new(&column_digests)
     }
 }

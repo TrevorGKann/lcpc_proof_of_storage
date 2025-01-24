@@ -3,10 +3,16 @@ use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, Col
 use crate::lcpc_online::decode_row;
 use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
 use crate::lcpc_online::encoded_file_writer::EncodedFileWriter;
+use crate::lcpc_online::file_formatter::{
+    get_encoded_file_location_from_id, get_merkle_file_location_from_id,
+    get_unencoded_file_location_from_id,
+};
+use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{bail, ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use lcpc_2d::{log2, LcColumn, LcEncoding};
+use lcpc_2d::{LcColumn, LcEncoding};
 use lcpc_ligero_pc::LigeroEncoding;
+use std::fs::rename;
 use std::io::SeekFrom;
 use std::marker::PhantomData;
 use std::path::PathBuf;
@@ -21,7 +27,7 @@ pub enum CurrentState<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<
     },
     FilesAlreadyCreated {
         encoded_file_read_writer: EncodedFileReader<F, D, E>,
-        merkle_tree: Vec<Output<D>>,
+        merkle_tree: MerkleTree<D>,
     },
     OnlyUnencodedFilesCreated {
         unencoded_file_writer: BufWriter<File>,
@@ -47,28 +53,61 @@ pub struct FileHandler<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding
 }
 
 impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncoding<F>> {
-    pub fn new_create_new_encoded_files(
+    // pub fn new_create_new_encoded_files(
+    //     ulid: Ulid,
+    //     pre_encoded_size: usize,
+    //     encoded_size: usize,
+    //     total_data_bytes: usize,
+    // ) -> Result<Self> {
+    //     todo!()
+    // }
+
+    pub fn new_attach_to_existing_ulid(
         ulid: Ulid,
         pre_encoded_size: usize,
         encoded_size: usize,
-        total_data_bytes: usize,
     ) -> Result<Self> {
         todo!()
     }
 
     pub fn new_attach_to_existing_files(
-        ulis: Ulid,
+        ulid: Ulid,
+        unencoded_file_handle: PathBuf,
+        encoded_file_handle: PathBuf,
+        digest_file_handle: PathBuf,
         pre_encoded_size: usize,
         encoded_size: usize,
     ) -> Result<Self> {
         todo!()
     }
 
-    pub fn create_from_unencoded_file(
+    pub async fn create_from_unencoded_file(
         ulid: Ulid,
+        file_handle_thats_not_already_ulid: Option<&PathBuf>,
         pre_encoded_size: usize,
         encoded_size: usize,
     ) -> Result<Self> {
+        let unencoded_path = get_unencoded_file_location_from_id(&ulid);
+        let encoded_path = get_encoded_file_location_from_id(&ulid);
+        let digest_path = get_merkle_file_location_from_id(&ulid);
+        if let Some(file_handle) = file_handle_thats_not_already_ulid {
+            rename(file_handle, &unencoded_path)?;
+        }
+
+        let mut unencoded_file = File::open(unencoded_path).await?;
+        let mut digest_file = OpenOptions::default()
+            .create(true)
+            .write(true)
+            .open(digest_path)
+            .await?;
+        EncodedFileWriter::<F, D, LigeroEncoding<F>>::convert_unencoded_file(
+            &mut unencoded_file,
+            &encoded_path,
+            Some(&mut digest_file),
+            pre_encoded_size,
+            encoded_size,
+        )
+        .await?;
         todo!()
     }
 
@@ -81,7 +120,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         &mut self,
         byte_start: usize,
         unencoded_bytes_to_add: Vec<u8>,
-    ) -> Result<(Vec<u8>, Vec<Output<D>>)> {
+    ) -> Result<(Vec<u8>, MerkleTree<D>)> {
         ensure!(
             self.unencoded_file_handle.is_file(),
             "no unencoded file found!"
@@ -142,13 +181,13 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         }
     }
 
-    pub async fn append_bytes(&mut self, bytes_to_add: Vec<u8>) -> Result<Vec<Output<D>>> {
+    pub async fn append_bytes(&mut self, bytes_to_add: Vec<u8>) -> Result<MerkleTree<D>> {
         let mut unencoded_file_writer = OpenOptions::new()
             .append(true)
             .open(&self.unencoded_file_handle)
             .await?;
 
-        unencoded_file_writer.write_all(&bytes_to_add);
+        unencoded_file_writer.write_all(&bytes_to_add).await?;
 
         self.reencode_unencoded_file().await?;
 
@@ -219,7 +258,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         Ok(())
     }
 
-    pub async fn recalculate_merkle_file(&mut self) -> Result<Vec<Output<D>>> {
+    pub async fn recalculate_merkle_file(&mut self) -> Result<MerkleTree<D>> {
         let mut opened_encoded_file = File::open(&self.encoded_file_handle).await?;
         let mut encoded_file_reader: EncodedFileReader<F, D, LigeroEncoding<F>> =
             EncodedFileReader::new_ligero(
@@ -232,21 +271,18 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         Ok(tree)
     }
 
-    pub async fn write_tree(&mut self, tree: &Vec<Output<D>>) -> Result<()> {
+    pub async fn write_tree(&mut self, tree: &MerkleTree<D>) -> Result<()> {
         ensure!(
             tree.len() == self.encoded_size * 2 - 1,
             "this Merkle tree is the incorrect size"
         );
-
-        let tree_bytes: Vec<u8> = tree.iter().flat_map(|d| d.clone()).collect();
-
         let mut digest_file_writer = OpenOptions::new()
             .write(true)
             .create(true)
             .open(&self.merkle_tree_file_handle)
             .await?;
 
-        digest_file_writer.write_all(&tree_bytes).await?;
+        write_tree_to_file::<D>(&mut digest_file_writer, tree).await?;
         Ok(())
     }
 
@@ -277,8 +313,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         let mut encoded_file_reader: EncodedFileReader<F, D, LigeroEncoding<F>> =
             EncodedFileReader::new_ligero(encoded_file, self.pre_encoded_size, self.encoded_size)
                 .await;
-        let recalculated_encoded_tree: Vec<Output<D>> =
-            encoded_file_reader.process_file_to_merkle_tree().await?;
+        let recalculated_encoded_tree = encoded_file_reader.process_file_to_merkle_tree().await?;
 
         let mut unencoded_file = File::open(&self.unencoded_file_handle).await?;
         let mut buffer = vec![0u8; F::DATA_BYTE_CAPACITY as usize * self.pre_encoded_size];
@@ -297,8 +332,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
             self.encoding.encode(&mut row_to_encode)?;
             digest_accumulator.update(&row_to_encode)?;
         }
-        let recalculated_unencoded_tree: Vec<Output<D>> =
-            digest_accumulator.finalize_to_merkle_tree()?;
+        let recalculated_unencoded_tree = digest_accumulator.finalize_to_merkle_tree()?;
 
         ensure!(recalculated_unencoded_tree == recalculated_encoded_tree);
         ensure!(recalculated_unencoded_tree == *merkle_tree);
@@ -373,22 +407,25 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
         // Ok(gathered_bytes)
     }
 
-    pub fn get_merkle_tree(&mut self) -> Result<Vec<Output<D>>> {
+    pub fn get_merkle_tree(&mut self) -> Result<MerkleTree<D>> {
         let CurrentState::FilesAlreadyCreated {
-            merkle_tree: ref tree,
-            ..
+            merkle_tree: tree, ..
         } = &mut self.current_state
         else {
             bail!("must be in a finished state")
         };
 
-        Ok(tree.clone())
+        Ok(tree.to_owned())
     }
 
     async fn internal_get_merkle_path_for_column(
         &mut self,
         column_index: usize,
     ) -> Result<Vec<Output<D>>> {
+        ensure!(
+            column_index < self.encoded_size,
+            "column index out of bounds"
+        );
         let CurrentState::FilesAlreadyCreated {
             merkle_tree: ref tree,
             ..
@@ -397,21 +434,9 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
             bail!("must be in a finished state")
         };
 
-        let mut tree = &tree.clone()[..];
-
-        // Merkle path
-        let path_len = log2(self.encoded_size);
-        let mut path = Vec::with_capacity(path_len);
-        let mut column_index = column_index;
-        for _ in 0..path_len {
-            let other = (column_index & !1) | (!column_index & 1);
-            assert_eq!(other ^ column_index, 1);
-            path.push(tree[other].clone());
-            let (_, hashes_new) = tree.split_at((tree.len() + 1) / 2);
-            tree = hashes_new;
-            column_index >>= 1;
-        }
-        assert_eq!(column_index, 0);
+        let Some(path) = tree.get_path(column_index) else {
+            bail!("no path found for such an index")
+        };
 
         Ok(path)
     }
@@ -440,4 +465,23 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
                 .await?,
         })
     }
+}
+
+pub async fn read_tree<D: Digest + FixedOutputReset>(
+    tree_file: &mut File,
+) -> Result<MerkleTree<D>> {
+    let mut tree_bytes = vec![0u8; tree_file.metadata().await?.len() as usize];
+    tree_file.seek(SeekFrom::Start(0)).await?;
+    tree_file.read(&mut tree_bytes).await?;
+    MerkleTree::from_bytes(&tree_bytes)
+}
+
+pub async fn write_tree_to_file<D: Digest + FixedOutputReset>(
+    tree_file: &mut File,
+    tree: &MerkleTree<D>,
+) -> Result<()> {
+    let tree_bytes = tree.to_bytes();
+
+    tree_file.write_all(&tree_bytes).await?;
+    Ok(())
 }
