@@ -184,9 +184,8 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
                     .await?;
             }
         }
-        println!("{:?}", encoded_row_bytes); //debug: delete me later
         let encoded_row = F::raw_bytes_to_field_vec(&encoded_row_bytes);
-        println!("encoded_row: {:?}", encoded_row); //debug: delete me later
+
         ensure!(encoded_row.len() == self.encoded_size);
         Ok(encoded_row)
     }

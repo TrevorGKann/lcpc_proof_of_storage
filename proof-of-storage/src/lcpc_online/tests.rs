@@ -69,6 +69,7 @@ async fn encode_then_decode_file() {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(true)
         .open(&file_path_decoded)
         .await
         .expect("couldn't open decode target");

@@ -70,6 +70,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         let mut target_file = OpenOptions::default()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(&target_encoded_file)
             .await?;
 
@@ -142,9 +143,6 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
 
         // write sparse file
         self.write_row(&encoded_row).await?;
-        println!("{:?}", &encoded_row);
-
-        // self.drain_current_row();
 
         Ok(())
     }
@@ -197,7 +195,6 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             row_bytes.len() == self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize,
             "wrong number of bytes to write to file"
         );
-        println!("{:?}", row_bytes); //debug: delete me later
 
         let bytes_to_write_iterator = row_bytes.chunks(F::WRITTEN_BYTES_WIDTH as usize);
         let field_elements_written = self.bytes_written / F::WRITTEN_BYTES_WIDTH as usize;
