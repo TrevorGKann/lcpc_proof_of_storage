@@ -96,6 +96,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         digest_file_handle: PathBuf,
         pre_encoded_size: usize,
         encoded_size: usize,
+        num_rows: usize,
     ) -> Result<Self> {
         let unencoded_file = OpenOptions::default()
             .read(true)
@@ -105,13 +106,14 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
             .context("couldn't open unencoded file!")?;
 
         let total_data_bytes = unencoded_file.metadata().await?.len() as usize;
-        let num_rows = total_data_bytes.div_ceil(pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
+        // let num_rows = total_data_bytes.div_ceil(pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
         let encoded_file_reader = EncodedFileReader::new_ligero(
             OpenOptions::default()
                 .read(true)
                 .write(true)
                 .open(&encoded_file_handle)
                 .await?,
+            num_rows,
             pre_encoded_size,
             encoded_size,
         )
@@ -403,6 +405,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         let mut encoded_file_reader: EncodedFileReader<F, D, LigeroEncoding<F>> =
             EncodedFileReader::new_ligero(
                 opened_encoded_file,
+                self.num_rows,
                 self.pre_encoded_size,
                 self.encoded_size,
             )
@@ -455,8 +458,13 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
             .open(&self.encoded_file_handle)
             .await?;
         let mut encoded_file_reader: EncodedFileReader<F, D, LigeroEncoding<F>> =
-            EncodedFileReader::new_ligero(encoded_file, self.pre_encoded_size, self.encoded_size)
-                .await;
+            EncodedFileReader::new_ligero(
+                encoded_file,
+                self.num_rows,
+                self.pre_encoded_size,
+                self.encoded_size,
+            )
+            .await;
         let recalculated_encoded_tree = encoded_file_reader.process_file_to_merkle_tree().await?;
 
         let mut unencoded_file = OpenOptions::default()

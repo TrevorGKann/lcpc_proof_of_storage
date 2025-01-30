@@ -31,12 +31,14 @@ async fn encode_then_decode_file() {
         .unwrap()
         .len() as usize;
 
-    let expected_size = original_file_len.div_ceil(WriteableFt63::DATA_BYTE_CAPACITY as usize)
+    let expected_size = original_file_len
+        .div_ceil(WriteableFt63::DATA_BYTE_CAPACITY as usize)
+        .div_ceil(pre_encoded_len)
         * WriteableFt63::WRITTEN_BYTES_WIDTH as usize
-        * (encoded_len / pre_encoded_len);
+        * encoded_len;
     println!(
         "Encoded file len: {}; expected {}",
-        encoded_len, expected_size
+        encoded_file_len, expected_size
     );
     // assert_eq!(
     //     encoded_file_len, expected_size,
@@ -53,6 +55,7 @@ async fn encode_then_decode_file() {
     let mut reader =
         EncodedFileReader::<WriteableFt63, Blake3, LigeroEncoding<WriteableFt63>>::new_ligero(
             encoded_file,
+            22,
             4,
             8,
         )
