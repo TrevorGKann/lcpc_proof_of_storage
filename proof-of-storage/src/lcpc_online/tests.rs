@@ -11,9 +11,15 @@ async fn encode_then_decode_file() {
     let file_path_encoded = PathBuf::from("test_files/test_encoded.txt");
     let file_path_decoded = PathBuf::from("test_files/test_decoded.txt");
 
+    println!(
+        "current dir: {:}",
+        std::env::current_dir().unwrap().display()
+    );
+    println!("test file: {:}", file_path.display());
+
     let original_file_len = File::open(&file_path).unwrap().metadata().unwrap().len() as usize;
-    let pre_encoded_len = 4usize;
-    let encoded_len = 8usize;
+    let pre_encoded_len = 8usize;
+    let encoded_len = 16usize;
 
     let encoded_tree = EncodedFileWriter::<WriteableFt63, Blake3, LigeroEncoding<WriteableFt63>>::convert_unencoded_file(
         &mut tokio::fs::File::open(&file_path).await.expect("couldn't open test file"),
@@ -40,11 +46,11 @@ async fn encode_then_decode_file() {
         "Encoded file len: {}; expected {}",
         encoded_file_len, expected_size
     );
-    // assert_eq!(
-    //     encoded_file_len, expected_size,
-    //     "expected a file of size {} to be encoded into size {}",
-    //     original_file_len, expected_size
-    // );
+    assert_eq!(
+        encoded_file_len, expected_size,
+        "expected a file of size {} to be encoded into size {}",
+        original_file_len, expected_size
+    );
 
     let encoded_file = tokio::fs::OpenOptions::default()
         .read(true)
@@ -55,9 +61,8 @@ async fn encode_then_decode_file() {
     let mut reader =
         EncodedFileReader::<WriteableFt63, Blake3, LigeroEncoding<WriteableFt63>>::new_ligero(
             encoded_file,
-            22,
-            4,
-            8,
+            pre_encoded_len,
+            encoded_len,
         )
         .await;
     let mut decode_target = tokio::fs::OpenOptions::default()
@@ -75,5 +80,8 @@ async fn encode_then_decode_file() {
     // check that file_path and file_path_decoded are equal
     let file_path_contents = tokio::fs::read(&file_path).await.unwrap();
     let file_path_decoded_contents = tokio::fs::read(&file_path_decoded).await.unwrap();
-    assert_eq!(file_path_contents, file_path_decoded_contents);
+    assert_eq!(
+        file_path_contents[..],
+        file_path_decoded_contents[..file_path_contents.len()]
+    );
 }

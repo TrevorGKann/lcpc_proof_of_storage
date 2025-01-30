@@ -67,7 +67,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         let total_size = unencoded_file.metadata().await?.len() as usize;
 
         unencoded_file.seek(SeekFrom::Start(0)).await?;
-        let target_file = OpenOptions::default()
+        let mut target_file = OpenOptions::default()
             .create(true)
             .write(true)
             .open(&target_encoded_file)
@@ -142,6 +142,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
 
         // write sparse file
         self.write_row(&encoded_row).await?;
+        println!("{:?}", &encoded_row);
 
         // self.drain_current_row();
 
@@ -192,10 +193,21 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         //     .incoming_byte_buffer
         //     .range(0..min(self.pre_encoded_size, self.incoming_byte_buffer.len()));
         let row_bytes: Vec<u8> = F::field_vec_to_raw_bytes(encoded_row);
+        ensure!(
+            row_bytes.len() == self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize,
+            "wrong number of bytes to write to file"
+        );
+        println!("{:?}", row_bytes); //debug: delete me later
 
         let bytes_to_write_iterator = row_bytes.chunks(F::WRITTEN_BYTES_WIDTH as usize);
         let field_elements_written = self.bytes_written / F::WRITTEN_BYTES_WIDTH as usize;
         let rows_written = field_elements_written / self.encoded_size;
+        ensure!(
+            rows_written < self.num_rows,
+            "attempting to write more rows than expected"
+        );
+        // todo: probably will remove this upon optimization
+
         self.file_to_write_to
             .seek(SeekFrom::Start(
                 (rows_written * F::WRITTEN_BYTES_WIDTH as usize) as u64,
@@ -228,6 +240,10 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
+
+        self.file_to_write_to.flush().await?;
+        self.file_to_write_to.sync_all().await?;
+
         Ok(self.column_digest_accumulator.get_column_digests())
     }
 
@@ -239,6 +255,10 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
+
+        self.file_to_write_to.flush().await?;
+        self.file_to_write_to.sync_all().await?;
+
         self.column_digest_accumulator.finalize_to_commit() //unwrap won't panic because we are using Columns::All
     }
 
@@ -250,7 +270,10 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
-        println!("{} total bytes written", self.bytes_written);
+
+        self.file_to_write_to.flush().await?;
+        self.file_to_write_to.sync_all().await?;
+
         self.column_digest_accumulator.finalize_to_merkle_tree()
     }
 }

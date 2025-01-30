@@ -14,7 +14,7 @@ impl<D: Digest + FixedOutputReset> MerkleTree<D> {
     pub fn new(children_leaves: &[Output<D>]) -> Result<Self> {
         let width = children_leaves.len();
         ensure!(width.is_power_of_two(), "Input needs to be a power of two.");
-        ensure!(width > 2, "input needs to be at least two.");
+        ensure!(width >= 2, "input needs to be at least two.");
         let mut parent_leaves = vec![Output::<D>::default(); width - 1];
         merkle_tree::<D>(&children_leaves, &mut parent_leaves);
 

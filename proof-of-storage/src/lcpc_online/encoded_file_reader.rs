@@ -28,7 +28,6 @@ pub struct EncodedFileReader<F: DataField, D: Digest + FixedOutputReset, E: LcEn
 impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroEncoding<F>> {
     pub async fn new_ligero(
         file_to_read: File,
-        num_rows: usize,
         pre_encoded_size: usize,
         encoded_size: usize,
         // num_rows: usize,
@@ -57,16 +56,17 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroE
         );
 
         let encoded_row = self.get_encoded_row(target_row).await?;
+        let mut decoded_row = decode_row(encoded_row)?;
+        decoded_row.drain(self.pre_encoded_size..);
 
-        let decoded_row = decode_row(encoded_row)?;
-
+        ensure!(decoded_row.len() == self.pre_encoded_size);
         Ok(decoded_row)
     }
 
     pub async fn get_unencoded_row_bytes(&mut self, target_row: usize) -> Result<Vec<u8>> {
-        Ok(F::field_vec_to_byte_vec(
-            &self.get_unencoded_row(target_row).await?,
-        ))
+        let row_bytes = F::field_vec_to_byte_vec(&self.get_unencoded_row(target_row).await?);
+        ensure!(row_bytes.len() == self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
+        Ok(row_bytes)
     }
 
     pub async fn decode_to_target_file(&mut self, target_file: &mut File) -> Result<()> {
@@ -160,10 +160,10 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
     pub async fn get_encoded_row(&mut self, target_row: usize) -> Result<Vec<F>> {
         // let mut row_start_byte = target_row * self.num_rows * F::WRITTEN_BYTES_WIDTH as usize;
         let row_start_byte = target_row * F::WRITTEN_BYTES_WIDTH as usize;
-        let bytes_to_skip_per_element = self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize;
+        let bytes_per_row = self.num_rows * F::WRITTEN_BYTES_WIDTH as usize;
         let mut encoded_row_bytes: Vec<u8> =
-            vec![0; self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize];
-
+            Vec::with_capacity(self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize);
+        // vec![0; self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize];
         self.file_to_read
             .seek(SeekFrom::Start(row_start_byte as u64))
             .await?;
@@ -176,12 +176,19 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
             // read exactly bytes_to_read into encoded_row_bytes
             encoded_row_bytes.extend_from_slice(&bytes_to_read);
 
-            self.file_to_read
-                .seek(SeekFrom::Current(bytes_to_skip_per_element as i64))
-                .await?;
+            if i < self.encoded_size - 1 {
+                self.file_to_read
+                    .seek(SeekFrom::Current(
+                        bytes_per_row as i64 - F::WRITTEN_BYTES_WIDTH as i64,
+                    ))
+                    .await?;
+            }
         }
-
-        Ok(F::raw_bytes_to_field_vec(&encoded_row_bytes))
+        println!("{:?}", encoded_row_bytes); //debug: delete me later
+        let encoded_row = F::raw_bytes_to_field_vec(&encoded_row_bytes);
+        println!("encoded_row: {:?}", encoded_row); //debug: delete me later
+        ensure!(encoded_row.len() == self.encoded_size);
+        Ok(encoded_row)
     }
 
     pub async fn replace_encoded_row(

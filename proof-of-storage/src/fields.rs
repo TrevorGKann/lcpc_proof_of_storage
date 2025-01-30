@@ -367,3 +367,16 @@ fn are_fields_the_same() {
         DataField::field_vec_to_byte_vec(&writeable253_elements)[..bytes.len()]
     );
 }
+
+#[test]
+fn are_raw_bytes_okay_for_fields() {
+    let random_field_elems = random_writeable_field_vec::<WriteableFt63>(15);
+    let raw_field_bytes = WriteableFt63::field_vec_to_raw_bytes(&random_field_elems);
+    let renewed_field_elems = WriteableFt63::raw_bytes_to_field_vec(&raw_field_bytes);
+    assert_eq!(renewed_field_elems, random_field_elems);
+
+    let random_field_elems = random_writeable_field_vec::<Ft253_192>(15);
+    let raw_field_bytes = Ft253_192::field_vec_to_raw_bytes(&random_field_elems);
+    let renewed_field_elems = Ft253_192::raw_bytes_to_field_vec(&raw_field_bytes);
+    assert_eq!(renewed_field_elems, random_field_elems);
+}

@@ -61,7 +61,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
         ensure!(
             encoded_row.len() == self.column_digests.len(),
             "incorrect length of input"
-        );
+        ); // error: this is not suitable for if columns_to_care_about != all
 
         match self.columns_to_care_about {
             ColumnsToCareAbout::All => {
