@@ -48,5 +48,7 @@ impl DataField for WriteableFt63 {
 
 #[test]
 fn test_type_sizes_are_correct() {
+    println!("{:?}", WriteableFt63::WRITTEN_BYTES_WIDTH);
+    println!("{:?}", WriteableFt63::DATA_BYTE_CAPACITY);
     assert!(WriteableFt63::test_type_sizes_are_correct())
 }

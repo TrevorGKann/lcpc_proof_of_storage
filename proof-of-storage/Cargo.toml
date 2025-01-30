@@ -68,5 +68,9 @@ harness = false
 name = "buffer_vs_stream_file"
 harness = false
 
+[[bench]]
+name = "edits_on_different_shapes"
+harness = false
+
 [features]
 benchmark = []

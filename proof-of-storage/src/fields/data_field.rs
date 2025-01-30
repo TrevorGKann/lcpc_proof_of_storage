@@ -19,6 +19,7 @@ pub trait DataField: PrimeField {
     ///         - `<Self as PrimeField>::CAPACITY / 8`
     ///         - std::mem::size_of::<DataBytes>()
     const DATA_BYTE_CAPACITY: u32 = <Self as PrimeField>::CAPACITY / 8;
+    const WRITTEN_BYTES_WIDTH: u32 = <Self as PrimeField>::CAPACITY.div_ceil(8);
 
     fn test_type_sizes_are_correct() -> bool {
         (<Self as PrimeField>::CAPACITY / 8) as usize == std::mem::size_of::<Self::DataBytes>()
@@ -54,6 +55,25 @@ pub trait DataField: PrimeField {
             .iter()
             .flat_map(|field_element| field_element.to_data_bytes().as_ref().to_owned())
             .collect::<Vec<u8>>()
+    }
+
+    fn field_vec_to_raw_bytes(field_vec: &[Self]) -> Vec<u8> {
+        field_vec
+            .iter()
+            .flat_map(|f| f.to_repr().as_ref().to_owned())
+            .collect()
+    }
+
+    fn raw_bytes_to_field_vec(raw_bytes: &[u8]) -> Vec<Self> {
+        raw_bytes
+            .chunks(Self::WRITTEN_BYTES_WIDTH as usize)
+            .map(|byte_chunk| {
+                let mut byte_array: <Self as PrimeField>::Repr =
+                    <Self as PrimeField>::Repr::default();
+                byte_array.as_mut()[..byte_chunk.len()].clone_from_slice(byte_chunk);
+                <Self as PrimeField>::from_repr(byte_array).unwrap()
+            })
+            .collect::<Vec<Self>>()
     }
 }
 

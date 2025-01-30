@@ -34,7 +34,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroE
     ) -> Self {
         let encoding = LigeroEncoding::<F>::new_from_dims(pre_encoded_size, encoded_size);
         let total_file_size = file_to_read.metadata().await.unwrap().len() as usize;
-        let num_rows = total_file_size / (encoded_size * F::DATA_BYTE_CAPACITY as usize);
+        let num_rows = total_file_size.div_ceil(encoded_size * F::WRITTEN_BYTES_WIDTH as usize);
 
         Self {
             encoding,
@@ -63,12 +63,12 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroE
     }
 
     pub async fn get_unencoded_row_bytes(&mut self, target_row: usize) -> Result<Vec<u8>> {
-        Ok(F::field_vec_to_byte_vec(
+        Ok(F::field_vec_to_raw_bytes(
             &self.get_unencoded_row(target_row).await?,
         ))
     }
 
-    pub async fn unencode_to_target_file(&mut self, target_file: &mut File) -> Result<()> {
+    pub async fn decode_to_target_file(&mut self, target_file: &mut File) -> Result<()> {
         for row_i in 0..self.num_rows {
             target_file
                 .write_all(self.get_unencoded_row_bytes(row_i).await?.as_slice())
@@ -102,14 +102,14 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroE
                 .await?;
         }
 
-        Ok(new_encoded_file_writer.finalize_to_column_digest())
+        new_encoded_file_writer.finalize_to_column_digest().await
     }
 
     /// returns the original data that was replaced in the unencoded file
     pub async fn edit_row(
         &mut self,
         unencoded_start_byte: usize,
-        new_unencoded_data: Vec<u8>,
+        new_unencoded_data: &[u8],
     ) -> Result<Vec<u8>> {
         let unencoded_start_field_element = unencoded_start_byte / F::DATA_BYTE_CAPACITY as usize;
         let unencoded_end_field_element =
@@ -158,23 +158,18 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroE
 // generic over all encodings
 impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFileReader<F, D, E> {
     pub async fn get_encoded_row(&mut self, target_row: usize) -> Result<Vec<F>> {
-        let mut current_byte = target_row * self.num_rows * F::DATA_BYTE_CAPACITY as usize;
-        let mut encoded_row: Vec<F> = Vec::with_capacity(self.encoded_size);
+        // let mut row_start_byte = target_row * self.num_rows * F::WRITTEN_BYTES_WIDTH as usize;
+        let mut row_start_byte = target_row * F::WRITTEN_BYTES_WIDTH as usize;
+        let mut encoded_row_bytes: Vec<u8> =
+            vec![0; self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize];
 
         self.file_to_read
-            .seek(SeekFrom::Start(current_byte as u64))
+            .seek(SeekFrom::Start(row_start_byte as u64))
             .await?;
 
-        for i in 0..self.encoded_size {
-            // read F::DATA_BYTE_CAPACITY bytes
-            let mut read_bytes = F::DataBytes::default();
-            self.file_to_read
-                .read_exact(&mut read_bytes.as_mut())
-                .await?;
-            encoded_row.push(F::from_data_bytes(&read_bytes));
-        }
+        self.file_to_read.read_exact(&mut encoded_row_bytes).await?;
 
-        Ok(encoded_row)
+        Ok(F::raw_bytes_to_field_vec(&encoded_row_bytes))
     }
 
     pub async fn replace_encoded_row(
@@ -187,11 +182,11 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
             "target row index is out of bounds"
         );
         ensure!(
-            data_to_write.len() == self.pre_encoded_size,
+            data_to_write.len() == self.encoded_size,
             "row is insufficient in size"
         );
 
-        let start_byte = target_row * self.num_rows * F::DATA_BYTE_CAPACITY as usize;
+        let start_byte = target_row * self.num_rows * F::WRITTEN_BYTES_WIDTH as usize;
         self.file_to_read
             .seek(SeekFrom::Start(start_byte as u64))
             .await?;
@@ -202,7 +197,7 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
                 .await?;
             self.file_to_read
                 .seek(SeekFrom::Current(
-                    (self.num_rows - 1) as i64 * F::DATA_BYTE_CAPACITY as i64,
+                    (self.num_rows - 1) as i64 * F::WRITTEN_BYTES_WIDTH as i64,
                 ))
                 .await?;
         }
@@ -213,13 +208,15 @@ impl<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding<F = F>> EncodedFi
     pub async fn get_encoded_column_without_path(&mut self, target_col: usize) -> Result<Vec<F>> {
         self.file_to_read
             .seek(SeekFrom::Start(
-                (target_col * self.num_rows) as u64 * F::DATA_BYTE_CAPACITY as u64,
+                (target_col * self.num_rows) as u64 * F::WRITTEN_BYTES_WIDTH as u64,
             ))
             .await?;
-        let mut column_bytes = vec![0u8; self.encoded_size * F::DATA_BYTE_CAPACITY as usize];
+        let mut column_bytes: Vec<u8> =
+            vec![0u8; self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize];
         self.file_to_read.read_exact(&mut column_bytes).await?;
 
-        Ok(F::from_byte_vec(&column_bytes))
+        let column: Vec<F> = F::raw_bytes_to_field_vec(&column_bytes);
+        Ok(column)
     }
 
     pub async fn process_file_to_merkle_tree(mut self) -> Result<MerkleTree<D>> {

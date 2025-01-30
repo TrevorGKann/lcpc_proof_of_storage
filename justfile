@@ -6,6 +6,8 @@ default:
 test:
     cargo nextest run -p proof-of-storage
 
+clean: clean-db clean-bench
+
 # clean database
 clean-db:
     -rm -rf {{ source_directory() }}/proof-of-storage/PoR_Database/**
@@ -29,5 +31,8 @@ bench:
 bench-report:
     cd {{ source_directory() }}/target/
     zip -qr report.zip target/criterion/
+
+clean-bench:
+    -rm -rf {{ source_directory() }}/proof-of-storage/bench_files/**
 
 #    mv report.zip ../

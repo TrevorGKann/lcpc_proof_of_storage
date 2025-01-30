@@ -29,6 +29,7 @@ pub mod file_formatter;
 pub mod file_handler;
 pub mod merkle_tree;
 pub mod row_generator_iter;
+mod tests;
 
 pub type FldT<E> = <E as LcEncoding>::F;
 pub type ErrT<E> = <E as LcEncoding>::Err;
