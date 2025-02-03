@@ -53,15 +53,6 @@ pub struct FileHandler<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding
 }
 
 impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncoding<F>> {
-    // pub fn new_create_new_encoded_files(
-    //     ulid: Ulid,
-    //     pre_encoded_size: usize,
-    //     encoded_size: usize,
-    //     total_data_bytes: usize,
-    // ) -> Result<Self> {
-    //     todo!()
-    // }
-
     pub async fn new_attach_to_existing_ulid(
         file_directory: &PathBuf,
         ulid: &Ulid,
@@ -146,7 +137,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
     }
 
     pub async fn create_from_unencoded_file(
-        ulid: Ulid,
+        ulid: &Ulid,
         file_handle_thats_not_already_ulid: Option<&PathBuf>,
         pre_encoded_size: usize,
         encoded_size: usize,
@@ -198,6 +189,19 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
 
         todo!()
     }
+
+    pub fn get_encoded_file_handle(&self) -> PathBuf {
+        self.encoded_file_handle.clone()
+    }
+
+    pub fn get_raw_file_handle(&self) -> PathBuf {
+        self.unencoded_file_handle.clone()
+    }
+
+    pub fn get_merkle_file_handle(&self) -> PathBuf {
+        self.merkle_tree_file_handle.clone()
+    }
+
     pub async fn reshape(
         &mut self,
         new_pre_encoded_columns: usize,
@@ -261,14 +265,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
             .open(&self.unencoded_file_handle)
             .await?;
 
-        // let CurrentState::FilesAlreadyCreated {
-        //     encoded_file_read_writer: mut read_writer,
-        //     ..
-        // } = &mut self.current_state
-        // else {
-        //     unreachable!()
-        // };
-
+        // read and replace the original bytes
         let mut original_bytes = vec![0u8; unencoded_bytes_to_add.len()];
         original_file
             .seek(SeekFrom::Start(byte_start as u64))
@@ -281,22 +278,17 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         original_file.write_all(unencoded_bytes_to_add).await?;
 
         match &mut self.current_state {
-            CurrentState::StreamingToFileCreation {
-                ref encoded_file_writer,
-                ref unencoded_file_writer,
-            } => {
+            CurrentState::StreamingToFileCreation { .. } => {
                 unreachable!()
             }
             CurrentState::FilesAlreadyCreated {
-                encoded_file_read_writer: ref mut read_writer,
+                encoded_file_read_writer: read_writer,
                 ..
             } => {
                 // now edit piecewise the rows in place, this is cheaper than recreating the entire encoded file
                 read_writer
-                    .edit_row(byte_start, unencoded_bytes_to_add)
+                    .edit_decoded_bytes(byte_start, unencoded_bytes_to_add)
                     .await?;
-                let tree = self.recalculate_merkle_file().await?;
-                return Ok((original_bytes, tree));
             }
             CurrentState::OnlyUnencodedFilesCreated { .. } => {
                 self.reencode_unencoded_file().await?;
@@ -307,6 +299,22 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
                 return Ok((original_bytes, merkle_tree.clone()));
             }
         }
+
+        let new_tree = self.recalculate_merkle_file().await?;
+        self.current_state = CurrentState::FilesAlreadyCreated {
+            encoded_file_read_writer: EncodedFileReader::new_ligero(
+                OpenOptions::default()
+                    .read(true)
+                    .write(true)
+                    .open(&self.encoded_file_handle)
+                    .await?,
+                self.pre_encoded_size,
+                self.encoded_size,
+            )
+            .await,
+            merkle_tree: new_tree.clone(),
+        };
+        Ok((original_bytes, new_tree.clone()))
     }
 
     pub async fn append_bytes(&mut self, bytes_to_add: Vec<u8>) -> Result<MerkleTree<D>> {
