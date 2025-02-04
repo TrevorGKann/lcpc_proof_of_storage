@@ -1,4 +1,4 @@
-#![feature(generic_const_exprs)]
+// #![feature(generic_const_exprs)]
 #![feature(associated_type_defaults)]
 #![feature(iter_array_chunks)]
 extern crate core;
@@ -9,10 +9,10 @@ use fields::WriteableFt63;
 use lcpc_2d::{LcColumn, LcCommit, LcEvalProof, LcRoot};
 use lcpc_ligero_pc::LigeroEncoding;
 
-pub mod fields;
-pub mod networking;
 pub mod databases;
+pub mod fields;
 pub mod lcpc_online;
+pub mod networking;
 mod tests;
 
 pub type PoSField = WriteableFt63;

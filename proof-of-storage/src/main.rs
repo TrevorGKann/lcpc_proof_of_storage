@@ -1,4 +1,3 @@
-#![feature(core_intrinsics)]
 use blake3::Hasher as Blake3;
 use ff::Field;
 use fffft::FieldFFT;
@@ -19,7 +18,8 @@ fn main() {
 
     println!("TestField::S = {:?}", <TestField as FieldFFT>::S);
 
-    let data: Vec<TestField> = fields::read_file_path_to_field_elements_vec("proof-of-storage/test_file.txt");
+    let data: Vec<TestField> =
+        fields::read_file_path_to_field_elements_vec("proof-of-storage/test_file.txt");
     let data_min_width = (data.len() as f32).sqrt().ceil() as usize;
     let data_realized_width = data_min_width.next_power_of_two();
     let matrix_colums = (data_realized_width + 1).next_power_of_two();
@@ -46,18 +46,25 @@ fn main() {
 
     let mut transcript = Transcript::new(b"test");
     transcript.append_message(b"polycommit", root.as_ref());
-    transcript.append_message(b"ncols", &(encoding.get_n_col_opens() as u64).to_be_bytes()[..]);
+    transcript.append_message(
+        b"ncols",
+        &(encoding.get_n_col_opens() as u64).to_be_bytes()[..],
+    );
 
-    let proof = commit.prove(&outer_tensor, &encoding, &mut transcript).unwrap();
-    let verification = proof.verify(root.as_ref(), &outer_tensor, &inner_tensor, &encoding, &mut transcript);
-
+    let proof = commit
+        .prove(&outer_tensor, &encoding, &mut transcript)
+        .unwrap();
+    let verification = proof.verify(
+        root.as_ref(),
+        &outer_tensor,
+        &inner_tensor,
+        &encoding,
+        &mut transcript,
+    );
 
     println!("verification: {:?}\n", verification);
-
 
     // let bit_width = ft253_192::Ft253_192::CAPACITY;
     // let vec_of_field_elements_from_file = fields::read_file_to_field_elements_vec::<ft253_192::Ft253_192>("proof-of-storage/test_file.txt");
     // println!("vec_of_field_elements_from_file: {:?}", vec_of_field_elements_from_file);
 }
-
-

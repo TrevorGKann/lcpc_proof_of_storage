@@ -35,10 +35,10 @@ pub enum CurrentState<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<
 }
 
 pub struct FileHandler<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> {
-    file_ulid: Ulid,
+    _file_ulid: Ulid,
     pre_encoded_size: usize,
     encoded_size: usize,
-    num_rows: usize,
+    _num_rows: usize,
     total_data_bytes: usize,
     encoding: E,
 
@@ -118,10 +118,10 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         let merkle_tree = MerkleTree::from_bytes(&merkle_bytes)?;
 
         Ok(Self {
-            file_ulid: ulid.clone(),
+            _file_ulid: ulid.clone(),
             pre_encoded_size,
             encoded_size,
-            num_rows,
+            _num_rows: num_rows,
             total_data_bytes,
             encoding: LigeroEncoding::new_from_dims(pre_encoded_size, encoded_size),
             current_state: CurrentState::FilesAlreadyCreated {
@@ -181,10 +181,10 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
 
     pub fn clone_to_new_ulid(
         &self,
-        new_ulid: Ulid,
+        _new_ulid: Ulid,
         target_directory: Option<PathBuf>,
     ) -> Result<()> {
-        let target_directory =
+        let _target_directory =
             target_directory.unwrap_or(self.unencoded_file_handle.parent().unwrap().to_path_buf());
 
         todo!()
@@ -403,12 +403,12 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
     }
 
     pub async fn recalculate_merkle_file(&mut self) -> Result<MerkleTree<D>> {
-        let mut opened_encoded_file = OpenOptions::default()
+        let opened_encoded_file = OpenOptions::default()
             .read(true)
             .write(true)
             .open(&self.encoded_file_handle)
             .await?;
-        let mut encoded_file_reader: EncodedFileReader<F, D, LigeroEncoding<F>> =
+        let encoded_file_reader: EncodedFileReader<F, D, LigeroEncoding<F>> =
             EncodedFileReader::new_ligero(
                 opened_encoded_file,
                 self.pre_encoded_size,
@@ -440,7 +440,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         }
         let CurrentState::FilesAlreadyCreated {
             ref mut encoded_file_read_writer,
-            merkle_tree,
+            ..
         } = &mut self.current_state
         else {
             bail!("error recalculating files from unencoded file")
@@ -457,12 +457,12 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
             unreachable!()
         };
 
-        let mut encoded_file = OpenOptions::default()
+        let encoded_file = OpenOptions::default()
             .read(true)
             .write(true)
             .open(&self.encoded_file_handle)
             .await?;
-        let mut encoded_file_reader: EncodedFileReader<F, D, LigeroEncoding<F>> =
+        let encoded_file_reader: EncodedFileReader<F, D, LigeroEncoding<F>> =
             EncodedFileReader::new_ligero(encoded_file, self.pre_encoded_size, self.encoded_size)
                 .await;
         let recalculated_encoded_tree = encoded_file_reader.process_file_to_merkle_tree().await?;
@@ -480,7 +480,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
             if bytes_read == 0 {
                 break;
             }
-            let mut bytes_as_field = F::from_byte_vec(&buffer[..bytes_read]);
+            let bytes_as_field = F::from_byte_vec(&buffer[..bytes_read]);
             let mut row_to_encode = vec![F::ZERO; self.encoded_size];
             for (i, field_from_bytes) in bytes_as_field.iter().enumerate() {
                 row_to_encode[i] = *field_from_bytes;

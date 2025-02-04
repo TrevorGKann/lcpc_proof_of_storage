@@ -1,11 +1,8 @@
-// use digest::{Digest, FixedOutputReset, Output};
 use crate::fields::data_field::DataField;
 use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
-use anyhow::Context;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::{merkle_tree, FieldHash, LcEncoding};
 use lcpc_ligero_pc::LigeroEncoding;
-use std::io::Read;
 use std::iter::Iterator;
 
 #[derive(Clone)]
@@ -19,7 +16,7 @@ where
     coefs_buffer: Vec<F>, // fft done in place
     coef_buffer_position: usize,
     unencoded_len: usize,
-    encoded_len: usize,
+    _encoded_len: usize,
     encoding: E,
 }
 
@@ -94,7 +91,7 @@ where
             coefs_buffer: vec![F::ZERO; num_encoded],
             coef_buffer_position: 0,
             unencoded_len: num_pre_encoded,
-            encoded_len: num_encoded,
+            _encoded_len: num_encoded,
             encoding,
         }
     }
@@ -127,10 +124,11 @@ where
         let return_val = self.coefs_buffer.clone();
 
         // reset internal values
-        for item in self.coefs_buffer.iter_mut() {
-            *item = F::ZERO;
-        }
+        // for item in self.coefs_buffer.iter_mut() {
+        //     *item = F::ZERO;
+        // }
         self.coef_buffer_position = 0;
+        self.coefs_buffer.fill(F::ZERO);
 
         Some(return_val)
     }
@@ -150,7 +148,7 @@ mod tests {
     use crate::lcpc_online::{
         convert_file_data_to_commit, CommitDimensions, CommitOrLeavesOutput, CommitRequestType,
     };
-    use blake3::traits::digest::Digest;
+    // use blake3::traits::digest::Digest;
     use blake3::Hasher as Blake3;
     use itertools::Itertools;
     use lcpc_2d::LcCommit;
@@ -170,7 +168,7 @@ mod tests {
         const ENCODED_LEN: usize = 8;
 
         println!("making original style commit");
-        let mut regular_commit: LcCommit<Blake3, LigeroEncoding<WriteableFt63>> = {
+        let regular_commit: LcCommit<Blake3, LigeroEncoding<WriteableFt63>> = {
             let field_elements = convert_byte_vec_to_field_elements_vec(&bytes);
             let commit_result = convert_file_data_to_commit::<Blake3, WriteableFt63>(
                 &field_elements,
@@ -268,7 +266,7 @@ mod tests {
         const ENCODED_LEN: usize = 8;
 
         println!("making original style commit");
-        let mut regular_commit: LcCommit<Blake3, LigeroEncoding<WriteableFt63>> = {
+        let regular_commit: LcCommit<Blake3, LigeroEncoding<WriteableFt63>> = {
             let field_elements = convert_byte_vec_to_field_elements_vec(&bytes);
             let commit_result = convert_file_data_to_commit::<Blake3, WriteableFt63>(
                 &field_elements,

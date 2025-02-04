@@ -3,23 +3,21 @@ use std::cmp::min;
 use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use blake3::Hasher as Blake3;
-use ff::{Field, PrimeField};
+use ff::PrimeField;
 use fffft::FieldFFT;
-use num_traits::{One, Zero};
-use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
-
 use lcpc_2d::{
     open_column, verify_column_path, FieldHash, LcColumn, LcCommit, LcEncoding, VerifierError,
     VerifierResult,
 };
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
+use num_traits::{One, Zero};
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+// use surrealdb::iam::ResourceKind::Field;
 
 use crate::databases::FileMetadata;
-use crate::fields::data_field::DataField;
 use crate::fields::WriteableFt63;
 use crate::fields::{is_power_of_two, vector_multiply};
-use crate::networking::server::get_aspect_ratio_default_from_field_len;
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 
 pub mod column_digest_accumulator;
@@ -343,12 +341,14 @@ pub fn client_online_verify_column_leaves(
 
 #[allow(non_snake_case)]
 pub fn get_PoS_soudness_n_cols(file_metadata: &FileMetadata) -> usize {
-    let denominator: f64 = ((1f64
-        + (file_metadata.num_columns as f64 / file_metadata.num_encoded_columns as f64))
-        / 2f64)
-        .log2();
+    _get_POS_soundness_n_cols(file_metadata.num_columns, file_metadata.num_encoded_columns)
+}
+#[allow(non_snake_case)]
+pub fn _get_POS_soundness_n_cols(pre_encoded_columns: usize, encoded_columns: usize) -> usize {
+    let denominator: f64 =
+        ((1f64 + (pre_encoded_columns as f64 / encoded_columns as f64)) / 2f64).log2();
     let theoretical_min = (-128f64 / denominator).ceil() as usize;
-    min(theoretical_min, file_metadata.num_encoded_columns)
+    min(theoretical_min, encoded_columns)
 }
 
 pub fn client_verify_commitment(
@@ -592,6 +592,8 @@ pub fn form_side_vectors_for_polynomial_evaluation_from_point(
 
 #[test]
 fn verify_polynomial_eval() {
+    use crate::networking::server::get_aspect_ratio_default_from_field_len;
+    use ff::Field;
     let coefs = fields::random_writeable_field_vec(10);
 
     //todo: ought to make customizable sizes for this

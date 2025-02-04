@@ -1,17 +1,23 @@
 use blake3::Hasher as Blake3;
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::measurement::WallTime;
+use criterion::{
+    criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId, Criterion,
+};
 use lcpc_ligero_pc::LigeroEncoding;
 use proof_of_storage::databases::constants;
 use proof_of_storage::fields::WriteableFt63;
+use proof_of_storage::lcpc_online::_get_POS_soundness_n_cols;
+use proof_of_storage::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
 use proof_of_storage::lcpc_online::encoded_file_writer::EncodedFileWriter;
 use proof_of_storage::lcpc_online::file_handler::FileHandler;
+use proof_of_storage::networking::client::get_columns_from_random_seed;
 use rand::Rng;
 use rand_chacha::ChaChaRng;
 use rand_core::{RngCore, SeedableRng};
 use std::env;
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Runtime};
 use ulid::Ulid;
 
 fn edit_file(c: &mut Criterion) {
@@ -118,84 +124,139 @@ fn edit_file(c: &mut Criterion) {
                     format!("couldn't reshape the encoded file to {}", pre_encoded_len).as_str(),
                 )
         });
-        println!("file has been reshaped, starting benchmark now...");
+        println!("file has been reshaped, starting benchmarks now...");
 
-        group.bench_with_input(
-            BenchmarkId::new("editing file with X cols", pre_encoded_len),
-            &pre_encoded_len,
-            |b, &pre_encoded_len| {
-                b.to_async(&rt).iter_batched(
-                    || async {
-                        let mut rand = ChaChaRng::from_entropy();
-                        let mut random_bytes_to_write = [0u8; 1024];
-                        rand.fill_bytes(&mut random_bytes_to_write);
-                        let start_index = rand
-                            .gen_range(0..total_file_bytes as usize - random_bytes_to_write.len());
+        edit_benchmark(
+            &mut rt,
+            &test_ulid,
+            &unencoded_test_file,
+            &encoded_test_file,
+            &merkle_test_file,
+            pre_encoded_len,
+            encoded_len,
+            total_file_bytes,
+            &mut group,
+        );
 
-                        let encoded_file_reader = FileHandler::<
-                            Blake3,
-                            WriteableFt63,
-                            LigeroEncoding<WriteableFt63>,
-                        >::new_attach_to_existing_files(
-                            &test_ulid,
-                            unencoded_test_file.clone(),
-                            encoded_test_file.clone(),
-                            merkle_test_file.clone(),
-                            pre_encoded_len,
-                            encoded_len,
-                        )
-                        .await
-                        .expect("failed setup: couldn't attach to files for file reader");
-                        return (random_bytes_to_write, start_index, encoded_file_reader);
-                    },
-                    |input| async {
-                        let (random_bytes_to_write, start_index, mut encoded_file_reader) =
-                            input.await;
-                        println!("editing at start_byte {}", start_index);
-                        encoded_file_reader
-                            .edit_bytes(start_index, &random_bytes_to_write)
-                            .await
-                            .expect("couldn't edit bytes in the file")
-                    },
-                    BatchSize::SmallInput,
-                )
-            },
+        retrieve_column_benchmark(
+            &mut rt,
+            &test_ulid,
+            &unencoded_test_file,
+            &encoded_test_file,
+            &merkle_test_file,
+            pre_encoded_len,
+            encoded_len,
+            total_file_bytes,
+            &mut group,
         );
     }
 }
-/*
-(
-                    || async {
-                        let mut encoded_file_reader = rt.block_on(async {
-                            FileHandler::<Blake3, WriteableFt63, LigeroEncoding<WriteableFt63>>::new_attach_to_existing_ulid(
-                                &test_dir,
-                                &test_ulid,
-                                pre_encoded_len,
-                                encoded_len,
-                            )
-                                .await
-                                .unwrap()
-                        });
-                        let total_bytes = encoded_file_reader.get_total_unencoded_bytes();
-                        encoded_file_reader
-                            .reshape(pre_encoded_len, encoded_len)
-                            .await
-                            .unwrap();
-                        let mut rand = ChaChaRng::from_entropy();
-                        let mut random_bytes_to_write = [0u8; 1024];
-                        (encoded_file_reader, total_bytes, rand)
-                    },
-                    |(mut encoded_file_reader, total_bytes, mut rand)| async {
-                        rand.fill_bytes(&mut random_bytes_to_write);
-                        let start_byte =
-                            rand.gen_range(0..(total_bytes - random_bytes_to_write.len()));
-                        encoded_file_reader
-                            .edit_bytes(start_byte, &random_bytes_to_write)
-                            .await
-                            .unwrap();
-                    },
-                )
- */
+
+fn edit_benchmark(
+    rt: &mut Runtime,
+    test_ulid: &Ulid,
+    unencoded_test_file: &PathBuf,
+    encoded_test_file: &PathBuf,
+    merkle_test_file: &PathBuf,
+    pre_encoded_len: usize,
+    encoded_len: usize,
+    total_file_bytes: u64,
+    group: &mut BenchmarkGroup<WallTime>,
+) {
+    group.bench_with_input(
+        BenchmarkId::new("editing file with X cols", pre_encoded_len),
+        &pre_encoded_len,
+        |b, &pre_encoded_len| {
+            b.to_async(&*rt).iter_batched(
+                || async {
+                    let mut rand = ChaChaRng::from_entropy();
+                    let mut random_bytes_to_write = [0u8; 1024];
+                    rand.fill_bytes(&mut random_bytes_to_write);
+                    let start_index =
+                        rand.gen_range(0..total_file_bytes as usize - random_bytes_to_write.len());
+
+                    let encoded_file_reader = FileHandler::<
+                        Blake3,
+                        WriteableFt63,
+                        LigeroEncoding<WriteableFt63>,
+                    >::new_attach_to_existing_files(
+                        &test_ulid,
+                        unencoded_test_file.clone(),
+                        encoded_test_file.clone(),
+                        merkle_test_file.clone(),
+                        pre_encoded_len,
+                        encoded_len,
+                    )
+                    .await
+                    .expect("failed setup: couldn't attach to files for file reader");
+                    (random_bytes_to_write, start_index, encoded_file_reader)
+                },
+                |input| async {
+                    let (random_bytes_to_write, start_index, mut encoded_file_reader) = input.await;
+                    let _original_bytes = encoded_file_reader
+                        .edit_bytes(start_index, &random_bytes_to_write)
+                        .await
+                        .expect("couldn't edit bytes in the file");
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+}
+
+fn retrieve_column_benchmark(
+    rt: &mut Runtime,
+    test_ulid: &Ulid,
+    mut unencoded_test_file: &PathBuf,
+    mut encoded_test_file: &PathBuf,
+    mut merkle_test_file: &PathBuf,
+    pre_encoded_len: usize,
+    encoded_len: usize,
+    total_file_bytes: u64,
+    group: &mut BenchmarkGroup<WallTime>,
+) {
+    group.bench_with_input(
+        BenchmarkId::new("retrieving columns with X cols", pre_encoded_len),
+        &pre_encoded_len,
+        |b, &pre_encoded_len| {
+            b.to_async(&*rt).iter_batched(
+                || async {
+                    let mut rand = ChaChaRng::from_entropy();
+                    let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
+                    let columns_to_fetch = get_columns_from_random_seed(
+                        rand.next_u64(),
+                        num_cols_required,
+                        encoded_len,
+                    );
+
+                    let encoded_file_reader = FileHandler::<
+                        Blake3,
+                        WriteableFt63,
+                        LigeroEncoding<WriteableFt63>,
+                    >::new_attach_to_existing_files(
+                        &test_ulid,
+                        unencoded_test_file.clone(),
+                        encoded_test_file.clone(),
+                        merkle_test_file.clone(),
+                        pre_encoded_len,
+                        encoded_len,
+                    )
+                    .await
+                    .expect("failed setup: couldn't attach to files for file reader");
+                    (columns_to_fetch, encoded_file_reader)
+                },
+                |input| async {
+                    let (columns_to_fetch, mut encoded_file_reader) = input.await;
+                    let _columns = encoded_file_reader
+                        .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch))
+                        .await
+                        .expect("couldn't get full columns from file");
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+}
 
 criterion_group!(benches, edit_file);
 criterion_main!(benches);

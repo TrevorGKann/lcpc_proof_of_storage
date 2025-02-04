@@ -26,7 +26,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
         match columns_to_care_about {
             ColumnsToCareAbout::All => {
                 let mut column_digests = Vec::with_capacity(number_of_encoded_columns);
-                for column in 0..number_of_encoded_columns {
+                for _column in 0..number_of_encoded_columns {
                     let mut digest = D::new();
                     Digest::update(&mut digest, <Output<D> as Default>::default());
                     column_digests.push(digest);
@@ -39,7 +39,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
             }
             ColumnsToCareAbout::Only(ref indices) => {
                 let mut column_digests = Vec::with_capacity(indices.len());
-                for column in 0..indices.len() {
+                for _column in 0..indices.len() {
                     let mut digest = D::new();
                     Digest::update(&mut digest, <Output<D> as Default>::default());
                     column_digests.push(digest);
@@ -65,7 +65,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
 
         match self.columns_to_care_about {
             ColumnsToCareAbout::All => {
-                for (mut digest, input) in self.column_digests.iter_mut().zip(encoded_row) {
+                for (digest, input) in self.column_digests.iter_mut().zip(encoded_row) {
                     input.digest_update(digest);
                 }
             }

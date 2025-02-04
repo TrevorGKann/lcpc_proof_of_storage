@@ -5,7 +5,6 @@ use crate::lcpc_online::file_handler::write_tree_to_file;
 use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use itertools::Itertools;
 use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::LigeroEncoding;
 use std::cmp::min;
@@ -67,7 +66,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         let total_size = unencoded_file.metadata().await?.len() as usize;
 
         unencoded_file.seek(SeekFrom::Start(0)).await?;
-        let mut target_file = OpenOptions::default()
+        let target_file = OpenOptions::default()
             .create(true)
             .write(true)
             .truncate(true)
@@ -145,14 +144,6 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         self.write_row(&encoded_row).await?;
 
         Ok(())
-    }
-
-    fn drain_current_row(&mut self) {
-        let drain_target = min(
-            self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize,
-            self.incoming_byte_buffer.len(),
-        );
-        self.incoming_byte_buffer.drain(0..drain_target);
     }
 
     fn encode_current_row(&mut self) -> Result<Vec<F>> {

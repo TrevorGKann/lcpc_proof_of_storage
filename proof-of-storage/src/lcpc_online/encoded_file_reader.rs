@@ -20,7 +20,7 @@ pub struct EncodedFileReader<F: DataField, D: Digest + FixedOutputReset, E: LcEn
     pre_encoded_size: usize,
     encoded_size: usize,
     num_rows: usize,
-    merkle_paths: Vec<Output<D>>,
+    _merkle_paths: Vec<Output<D>>,
     _field_type: PhantomData<F>,
     _digest_type: PhantomData<D>,
 }
@@ -43,7 +43,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroE
             pre_encoded_size,
             encoded_size,
             num_rows,
-            merkle_paths: Vec::new(),
+            _merkle_paths: Vec::new(),
             _field_type: PhantomData,
             _digest_type: PhantomData,
         }

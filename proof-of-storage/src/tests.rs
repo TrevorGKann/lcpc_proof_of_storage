@@ -1,8 +1,8 @@
-#![feature(generic_const_exprs)]
 #[allow(clippy::module_inception)]
 #[cfg(test)]
 #[allow(unused)]
 pub mod tests {
+    // #![feature(generic_const_exprs)]
     use blake3::Hasher as Blake3;
     use ff::{Field, PrimeField};
     use pretty_assertions::assert_eq;
