@@ -8,3 +8,7 @@ serial = { max-threads = 1, backoff = "exponential", delay = "5" }
 [[profile.default.overrides]]
 test-group = "serial"
 filter = "test(networking::tests)"
+
+[[profile.default.overrides]]
+test-group = "serial"
+filter = "test(file_io)"
