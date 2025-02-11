@@ -33,7 +33,7 @@ fn file_to_fields_bench(c: &mut Criterion) {
                                        let mut file = tokio::fs::File::open(&file_name).await
                                            .unwrap();
                                        fields::stream_file_to_field_elements_vec::<WriteableFt63>
-                                           (&mut file).await;
+                                           (&mut file).await.unwrap();
                                    })
                                });
 
@@ -41,7 +41,7 @@ fn file_to_fields_bench(c: &mut Criterion) {
                                |b, &size| {
                                    b.iter(|| {
                                        let mut file = std::fs::File::open(&file_name).unwrap();
-                                       fields::stream_file_to_field_elements_vec_sync::<WriteableFt63>(&mut file);
+                                       fields::stream_file_to_field_elements_vec_sync::<WriteableFt63>(&mut file).unwrap();
                                    })
                                });
     };

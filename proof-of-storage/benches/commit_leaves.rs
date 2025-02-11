@@ -6,7 +6,7 @@ use proof_of_storage::fields::WriteableFt63;
 use proof_of_storage::lcpc_online::{CommitDimensions,
                                     CommitRequestType,
                                     convert_file_data_to_commit};
-use proof_of_storage::networking::client::get_columns_from_random_seed;
+use proof_of_storage::networking::client::get_column_indicies_from_random_seed;
 use proof_of_storage::networking::server::get_aspect_ratio_default_from_field_len;
 
 fn commit_leaves_bench(c: &mut Criterion) {
@@ -22,7 +22,7 @@ fn commit_leaves_bench(c: &mut Criterion) {
             soundness
         ) = get_aspect_ratio_default_from_field_len(size);
 
-        let cols_to_verify = get_columns_from_random_seed(
+        let cols_to_verify = get_column_indicies_from_random_seed(
             1337,
             soundness,
             num_encoded_columns,

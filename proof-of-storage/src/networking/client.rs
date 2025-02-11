@@ -138,7 +138,7 @@ pub async fn upload_file(
             _ => get_aspect_ratio_default_from_file_len::<WriteableFt63>(file_data.len()),
         };
 
-    let cols_to_verify = get_columns_from_random_seed(
+    let cols_to_verify = get_column_indicies_from_random_seed(
         FIXED_RANDOM_SEED_CHANGE_LATER,
         required_columns_to_test,
         num_encoded_columns,
@@ -341,7 +341,7 @@ pub async fn download_file(
     tracing::debug!("client: received file from server");
     // verify that file is the correct, commited to file
     // first derive the columns that we'll request from the server
-    let column_indices_to_verify = get_columns_from_random_seed(
+    let column_indices_to_verify = get_column_indicies_from_random_seed(
         FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(&file_metadata),
         file_metadata.num_encoded_columns,
@@ -440,7 +440,7 @@ pub async fn request_proof(
 }
 
 // #[tracing::instrument]
-pub fn get_columns_from_random_seed(
+pub fn get_column_indicies_from_random_seed(
     random_seed: u64,
     number_of_columns_to_extract: usize,
     max_column_index: usize,
@@ -467,7 +467,7 @@ pub async fn verify_compact_commit(
     );
 
     // pick the random columns
-    let cols_to_verify = get_columns_from_random_seed(
+    let cols_to_verify = get_column_indicies_from_random_seed(
         FIXED_RANDOM_SEED_CHANGE_LATER, // todo: refactor s.t. this is a function arg and not hardcoded
         get_PoS_soudness_n_cols(file_metadata),
         file_metadata.num_encoded_columns,
@@ -592,7 +592,7 @@ where
 
     tracing::debug!("client: received polynomial evaluation from server");
 
-    let cols_to_verify = get_columns_from_random_seed(
+    let cols_to_verify = get_column_indicies_from_random_seed(
         FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(file_metadata),
         file_metadata.num_encoded_columns,
@@ -726,12 +726,12 @@ where
     let mut random_seed = ChaCha8Rng::seed_from_u64(FIXED_RANDOM_SEED_CHANGE_LATER);
     let evaluation_point = WriteableFt63::random(&mut random_seed);
 
-    let requested_original_columns = get_columns_from_random_seed(
+    let requested_original_columns = get_column_indicies_from_random_seed(
         FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(file_metadata),
         file_metadata.num_encoded_columns,
     );
-    let requested_new_columns = get_columns_from_random_seed(
+    let requested_new_columns = get_column_indicies_from_random_seed(
         FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(&new_file_metadata),
         new_file_metadata.num_encoded_columns,
@@ -985,7 +985,7 @@ pub async fn append_to_file(
     let mut random_seed = ChaCha8Rng::seed_from_u64(FIXED_RANDOM_SEED_CHANGE_LATER);
     let evaluation_point = WriteableFt63::random(&mut random_seed);
 
-    let mut requested_columns = get_columns_from_random_seed(
+    let mut requested_columns = get_column_indicies_from_random_seed(
         FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(&file_metadata),
         file_metadata.num_encoded_columns,
@@ -1244,7 +1244,7 @@ pub async fn edit_file(
     let mut random_seed = ChaCha8Rng::seed_from_u64(FIXED_RANDOM_SEED_CHANGE_LATER);
     let evaluation_point = WriteableFt63::random(&mut random_seed);
 
-    let mut requested_columns = get_columns_from_random_seed(
+    let mut requested_columns = get_column_indicies_from_random_seed(
         FIXED_RANDOM_SEED_CHANGE_LATER,
         get_PoS_soudness_n_cols(&file_metadata),
         file_metadata.num_encoded_columns,

@@ -10,12 +10,13 @@ use proof_of_storage::lcpc_online::_get_POS_soundness_n_cols;
 use proof_of_storage::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
 use proof_of_storage::lcpc_online::encoded_file_writer::EncodedFileWriter;
 use proof_of_storage::lcpc_online::file_handler::FileHandler;
-use proof_of_storage::networking::client::get_columns_from_random_seed;
+use proof_of_storage::networking::client::get_column_indicies_from_random_seed;
 use rand::Rng;
 use rand_chacha::ChaChaRng;
 use rand_core::{RngCore, SeedableRng};
 use std::env;
 use std::path::PathBuf;
+use criterion::async_executor::AsyncExecutor;
 use tokio::fs::OpenOptions;
 use tokio::runtime::{Builder, Runtime};
 use ulid::Ulid;
@@ -223,7 +224,7 @@ fn retrieve_column_benchmark(
                 || async {
                     let mut rand = ChaChaRng::from_entropy();
                     let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
-                    let columns_to_fetch = get_columns_from_random_seed(
+                    let columns_to_fetch = get_column_indicies_from_random_seed(
                         rand.next_u64(),
                         num_cols_required,
                         encoded_len,
@@ -246,8 +247,8 @@ fn retrieve_column_benchmark(
                     (columns_to_fetch, encoded_file_reader)
                 },
                 |input| async {
-                    let (columns_to_fetch, mut encoded_file_reader) = input.await;
-                    let _columns = encoded_file_reader
+                    let (columns_to_fetch, mut file_handler) = input.await;
+                    let _columns = file_handler
                         .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch))
                         .await
                         .expect("couldn't get full columns from file");

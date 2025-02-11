@@ -629,6 +629,17 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
                 .await?,
         })
     }
+
+    pub async fn delete_all_files(self) -> Result<()> {
+        match tokio::try_join!(
+            tokio::fs::remove_file(&self.unencoded_file_handle),
+            tokio::fs::remove_file(&self.encoded_file_handle),
+            tokio::fs::remove_file(&self.merkle_tree_file_handle),
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => bail!(e),
+        }
+    }
 }
 
 pub async fn read_tree<D: Digest + FixedOutputReset>(
@@ -637,7 +648,7 @@ pub async fn read_tree<D: Digest + FixedOutputReset>(
     let mut tree_bytes = vec![0u8; tree_file.metadata().await?.len() as usize];
     tree_file.seek(SeekFrom::Start(0)).await?;
     let num_bytes_read = tree_file.read(&mut tree_bytes).await?;
-    ensure!(num_bytes_read > size_of::<Output<D>>(), "not enough bytes");
+    assert!(num_bytes_read > size_of::<Output<D>>(), "not enough bytes");
     MerkleTree::from_bytes(&tree_bytes)
 }
 

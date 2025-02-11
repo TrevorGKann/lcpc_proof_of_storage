@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod encoded_file_io_tests {
+    use std::env;
     use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
     use crate::lcpc_online::encoded_file_reader::{
         get_decoded_file_size_from_rate, get_encoded_file_size_from_rate,
@@ -12,9 +13,16 @@ mod encoded_file_io_tests {
     use rand_core::{RngCore, SeedableRng};
     use serial_test::serial;
     use std::fs::File;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use num_traits::real::Real;
     use tokio::fs;
     use ulid::Ulid;
+    use lcpc_2d::log2;
+    use crate::fields::data_field::DataField;
+    use crate::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
+    use crate::networking::client::get_column_indicies_from_random_seed;
+
+    type TestField = WriteableFt63;
 
     #[tokio::test]
     #[serial]
@@ -43,9 +51,9 @@ mod encoded_file_io_tests {
 
             // encode the file
             let encoded_tree = EncodedFileWriter::<
-                WriteableFt63,
+                TestField,
                 Blake3,
-                LigeroEncoding<WriteableFt63>,
+                LigeroEncoding<TestField>,
             >::convert_unencoded_file(
                 &mut tokio::fs::File::open(&test_file_path)
                     .await
@@ -67,9 +75,9 @@ mod encoded_file_io_tests {
                 .len() as usize;
 
             let expected_size = original_file_len
-                .div_ceil(WriteableFt63::DATA_BYTE_CAPACITY as usize)
+                .div_ceil(TestField::DATA_BYTE_CAPACITY as usize)
                 .div_ceil(pre_encoded_len)
-                * WriteableFt63::WRITTEN_BYTES_WIDTH as usize
+                * TestField::WRITTEN_BYTES_WIDTH as usize
                 * encoded_len;
             println!(
                 "Encoded file len: {}; expected {}",
@@ -89,9 +97,9 @@ mod encoded_file_io_tests {
                 .await
                 .expect("couldn't open encoded test file");
             let mut reader = EncodedFileReader::<
-                WriteableFt63,
+                TestField,
                 Blake3,
-                LigeroEncoding<WriteableFt63>,
+                LigeroEncoding<TestField>,
             >::new_ligero(encoded_file, pre_encoded_len, encoded_len)
             .await;
             let mut decode_target = tokio::fs::OpenOptions::default()
@@ -164,8 +172,8 @@ mod encoded_file_io_tests {
 
             let mut file_handler = FileHandler::<
                 Blake3,
-                WriteableFt63,
-                LigeroEncoding<WriteableFt63>,
+                TestField,
+                LigeroEncoding<TestField>,
             >::create_from_unencoded_file(
                 &test_ulid,
                 Some(&test_file_path),
@@ -203,9 +211,9 @@ mod encoded_file_io_tests {
                 // check that the file is correct and correctly decodes to what we expect
                 file_handler.verify_all_files_agree().await.unwrap();
                 let mut reader = EncodedFileReader::<
-                    WriteableFt63,
+                    TestField,
                     Blake3,
-                    LigeroEncoding<WriteableFt63>,
+                    LigeroEncoding<TestField>,
                 >::new_ligero(
                     tokio::fs::File::open(file_handler.get_encoded_file_handle())
                         .await
@@ -235,17 +243,86 @@ mod encoded_file_io_tests {
                     original_file_contents
                 );
             }
+            file_handler.delete_all_files().await.unwrap()
         }
 
         // cleanup
-        if test_file_path.exists() {
-            tokio::fs::remove_file(test_file_path).await.unwrap();
-        }
-        if file_path_encoded.exists() {
-            tokio::fs::remove_file(file_path_encoded).await.unwrap();
-        }
-        if file_path_decoded.exists() {
-            tokio::fs::remove_file(file_path_decoded).await.unwrap();
+        _safe_delete_file(&test_file_path).await;
+        _safe_delete_file(&file_path_encoded).await;
+        _safe_delete_file(&file_path_decoded).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn verify_columns_are_correct() {
+        let mut random = ChaCha8Rng::from_entropy();
+
+
+        println!("current dir {}", env::current_dir().unwrap().display());
+        let test_file_path_origin = PathBuf::from("test_files/test.txt");
+        let test_file_path = PathBuf::from("test_files/edit_test.txt");
+        let test_ulid = Ulid::new();
+        let original_file_len = File::open(&test_file_path_origin).unwrap().metadata().unwrap().len() as usize;
+        let max_columns = original_file_len.div_ceil(TestField::DATA_BYTE_CAPACITY as usize);
+
+        // for pre_encoded_len in (1..log2(max_columns))
+        for pre_encoded_len in (5..13)
+            .map(|x| 2usize.pow(x as u32))
+            .collect::<Vec<usize>>()
+            .into_iter()
+        {
+            let encoded_len = (pre_encoded_len + 1).next_power_of_two();
+            let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
+            let expected_column_len = original_file_len.div_ceil(TestField::DATA_BYTE_CAPACITY as usize).div_ceil(pre_encoded_len);
+            println!(
+                "testing with a coding of rate {}/{}; soundness requires fetching {} columns of len {}",
+                pre_encoded_len, encoded_len,
+                num_cols_required, expected_column_len,
+            );
+
+            // copy origin to test
+            tokio::fs::copy(&test_file_path_origin, &test_file_path)
+                .await
+                .unwrap();
+
+            let mut file_handler = FileHandler::<
+                Blake3,
+                TestField,
+                LigeroEncoding<TestField>,
+            >::create_from_unencoded_file(
+                &test_ulid,
+                Some(&test_file_path),
+                pre_encoded_len,
+                encoded_len,
+            )
+                .await
+                .unwrap();
+
+            file_handler.verify_all_files_agree().await.unwrap();
+
+            for _i in 0..100 {
+
+                let columns_to_fetch = get_column_indicies_from_random_seed(
+                    random.next_u64(),
+                    num_cols_required,
+                    encoded_len,
+                );
+                let columns = file_handler
+                    .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch))
+                    .await
+                    .expect("couldn't get full columns from file");
+                assert_eq!(columns.len(), num_cols_required);
+
+                let sample_column = columns.first().unwrap();
+                assert_eq!(sample_column.col.len(), expected_column_len);
+                if _i == 1 {
+                    println!("merkle length is {}", sample_column.path.len())
+                }
+                assert_eq!(sample_column.path.len(), log2(encoded_len));
+                // todo: verify columns are correct, but right now I only care about their length
+            }
+
+            file_handler.delete_all_files().await.unwrap()
         }
     }
 
@@ -266,19 +343,19 @@ mod encoded_file_io_tests {
             );
             for _ in 0..100 {
                 let random_file_len = random.gen_range(1..10000);
-                let encoded_file_size = get_encoded_file_size_from_rate::<WriteableFt63>(
+                let encoded_file_size = get_encoded_file_size_from_rate::<TestField>(
                     random_file_len,
                     pre_encoded_len,
                     encoded_len,
                 );
-                let decoded_file_size = get_decoded_file_size_from_rate::<WriteableFt63>(
+                let decoded_file_size = get_decoded_file_size_from_rate::<TestField>(
                     encoded_file_size,
                     pre_encoded_len,
                     encoded_len,
                 );
                 assert_eq!(
                     random_file_len.next_multiple_of(
-                        WriteableFt63::DATA_BYTE_CAPACITY as usize * pre_encoded_len
+                        TestField::DATA_BYTE_CAPACITY as usize * pre_encoded_len
                     ),
                     decoded_file_size,
                     "failed with an input file size of {}; for reference the encoded size was {}",
@@ -286,6 +363,12 @@ mod encoded_file_io_tests {
                     encoded_file_size
                 );
             }
+        }
+    }
+
+    async fn _safe_delete_file(target: &impl AsRef<Path>) {
+        if target.as_ref().exists() {
+            tokio::fs::remove_file(target).await.unwrap();
         }
     }
 }
