@@ -40,7 +40,7 @@ impl<D: Digest + FixedOutputReset> MerkleTree<D> {
         }
         let path_len = log2(self.width);
         let mut path = Vec::with_capacity(path_len);
-        let mut digests: &[Output<D>] = &*self.digests.clone();
+        let mut digests: &[Output<D>] = &self.digests.clone();
         for _ in 0..path_len {
             let other = (index & !1) | (!index & 1);
             assert_eq!(other ^ index, 1);
@@ -50,6 +50,26 @@ impl<D: Digest + FixedOutputReset> MerkleTree<D> {
             index >>= 1;
         }
         assert_eq!(index, 0);
+        Some(path)
+    }
+
+    pub fn get_path_no_clone(&self, mut index: usize) -> Option<Vec<Output<D>>> {
+        if index >= self.width {
+            return None;
+        }
+        let path_len = log2(self.width);
+        let mut path = Vec::with_capacity(path_len);
+
+        // let mut layer_width = self.width;
+        // let mut layer_index = (index & !1) | (!index & 1);
+
+        let mut other = (index & !1) | (!index & 1);
+        for _ in 0..path_len {
+            path.push(self.digests[other].clone());
+            other >>= 1;
+            other |= self.width.ilog2() as usize;
+        }
+        assert_eq!(path.len(), path_len);
         Some(path)
     }
 
