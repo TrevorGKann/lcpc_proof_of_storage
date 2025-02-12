@@ -1,9 +1,9 @@
+use crate::flamegraph_profiler::FlamegraphProfiler;
 use blake3::Hasher as Blake3;
 use criterion::async_executor::AsyncExecutor;
 use criterion::measurement::WallTime;
 use criterion::{
-    criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId,
-    Criterion,
+    criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId, Criterion,
 };
 use lcpc_ligero_pc::LigeroEncoding;
 use proof_of_storage::databases::constants;
@@ -22,6 +22,8 @@ use tokio::fs::OpenOptions;
 use tokio::runtime::{Builder, Runtime};
 use tracing_subscriber::EnvFilter;
 use ulid::Ulid;
+
+mod flamegraph_profiler;
 
 fn edit_file(c: &mut Criterion) {
     let env_filter: EnvFilter = EnvFilter::builder()
@@ -53,7 +55,7 @@ fn edit_file(c: &mut Criterion) {
         env::current_dir().unwrap().display()
     );
     let mut test_file_path = env::current_dir().unwrap();
-    test_file_path.push("test_files/10000000_byte_file.bytes");
+    test_file_path.push("test_files/100000_byte_file.bytes");
 
     let test_dir = PathBuf::from(format!("bench_files/{}_test", test_ulid.to_string()));
     std::fs::create_dir_all(&test_dir).expect("couldn't create test directory");
@@ -276,5 +278,12 @@ fn retrieve_column_benchmark(
     );
 }
 
-criterion_group!(benches, edit_file);
+fn custom_criterion() -> Criterion {
+    Criterion::default().with_profiler(FlamegraphProfiler::new(100))
+}
+
+criterion_group! {
+name = benches;
+config = custom_criterion();
+targets = edit_file}
 criterion_main!(benches);
