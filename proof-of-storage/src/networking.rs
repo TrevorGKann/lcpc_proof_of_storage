@@ -3,4 +3,4 @@
 pub mod client;
 pub mod server;
 pub mod shared;
-mod tests;
+pub mod tests;

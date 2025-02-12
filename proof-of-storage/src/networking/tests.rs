@@ -77,7 +77,7 @@ pub mod network_tests {
         }
     }
 
-    fn start_tracing_for_tests() -> Result<()> {
+    pub fn start_tracing_for_tests() -> Result<()> {
         let env_filter: EnvFilter = EnvFilter::builder()
             .parse("surrealdb_core=warn,surrealdb=warn,trace")
             .unwrap();

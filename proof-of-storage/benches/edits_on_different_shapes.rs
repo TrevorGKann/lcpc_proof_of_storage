@@ -1,7 +1,9 @@
 use blake3::Hasher as Blake3;
+use criterion::async_executor::AsyncExecutor;
 use criterion::measurement::WallTime;
 use criterion::{
-    criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId, Criterion,
+    criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId,
+    Criterion,
 };
 use lcpc_ligero_pc::LigeroEncoding;
 use proof_of_storage::databases::constants;
@@ -16,12 +18,29 @@ use rand_chacha::ChaChaRng;
 use rand_core::{RngCore, SeedableRng};
 use std::env;
 use std::path::PathBuf;
-use criterion::async_executor::AsyncExecutor;
 use tokio::fs::OpenOptions;
 use tokio::runtime::{Builder, Runtime};
+use tracing_subscriber::EnvFilter;
 use ulid::Ulid;
 
 fn edit_file(c: &mut Criterion) {
+    let env_filter: EnvFilter = EnvFilter::builder()
+        .parse("surrealdb_core=warn,surrealdb=warn,trace")
+        .unwrap();
+
+    let subscriber = tracing_subscriber::fmt()
+        .pretty()
+        .compact()
+        .with_file(true)
+        .with_line_number(true)
+        .with_max_level(tracing::Level::TRACE)
+        .with_env_filter(env_filter)
+        // .with_span_events(FmtSpan::FULL)
+        .finish();
+
+    // use that subscriber to process traces emitted after this point
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
     let mut rt = Builder::new_multi_thread()
         .enable_all()
         .worker_threads(8)
@@ -34,7 +53,7 @@ fn edit_file(c: &mut Criterion) {
         env::current_dir().unwrap().display()
     );
     let mut test_file_path = env::current_dir().unwrap();
-    test_file_path.push("test_files/100000_byte_file.bytes");
+    test_file_path.push("test_files/10000000_byte_file.bytes");
 
     let test_dir = PathBuf::from(format!("bench_files/{}_test", test_ulid.to_string()));
     std::fs::create_dir_all(&test_dir).expect("couldn't create test directory");
@@ -147,7 +166,6 @@ fn edit_file(c: &mut Criterion) {
             &merkle_test_file,
             pre_encoded_len,
             encoded_len,
-            total_file_bytes,
             &mut group,
         );
     }
@@ -208,12 +226,11 @@ fn edit_benchmark(
 fn retrieve_column_benchmark(
     rt: &mut Runtime,
     test_ulid: &Ulid,
-    mut unencoded_test_file: &PathBuf,
-    mut encoded_test_file: &PathBuf,
-    mut merkle_test_file: &PathBuf,
+    unencoded_test_file: &PathBuf,
+    encoded_test_file: &PathBuf,
+    merkle_test_file: &PathBuf,
     pre_encoded_len: usize,
     encoded_len: usize,
-    total_file_bytes: u64,
     group: &mut BenchmarkGroup<WallTime>,
 ) {
     group.bench_with_input(

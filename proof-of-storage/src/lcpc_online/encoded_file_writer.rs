@@ -80,13 +80,23 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             target_file,
         );
 
-        let mut read_buf = [0u8; 4098];
+        let mut read_buf = [0u8; 2usize.pow(15u32)];
+        let mut _total_bytes_read = 0;
+        let mut _previous_print_multiple_of_5 = 1.0;
         loop {
             let bytes_read = unencoded_file.read(&mut read_buf).await?;
             if bytes_read == 0 {
                 break;
             }
+
             encoded_writer.push_bytes(&read_buf[..bytes_read]).await?;
+
+            _total_bytes_read += bytes_read;
+            let _percent_done = _total_bytes_read as f64 / total_size as f64;
+            if _percent_done / 5.0 > _previous_print_multiple_of_5 {
+                tracing::trace!("encoding file: raw file is {}% read", _percent_done);
+                _previous_print_multiple_of_5 += 1.0;
+            }
         }
 
         let tree = encoded_writer.finalize_to_merkle_tree().await?;
@@ -106,11 +116,23 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
 
         self.incoming_byte_buffer.extend(bytes);
 
+        let mut rows_written =
+            self.bytes_written / (F::WRITTEN_BYTES_WIDTH as usize * self.encoded_size);
         // process bytes whenever at least a full row has been given
         while self.incoming_byte_buffer.len()
             >= (self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize)
         {
             self.process_current_row().await?;
+            rows_written += 1;
+            const PERCENT_VALUES: f64 = 25.0;
+            if (rows_written as f64 / self.num_rows as f64).floor() % PERCENT_VALUES
+                > ((rows_written + 1) as f64 / self.num_rows as f64).floor() % PERCENT_VALUES
+            {
+                tracing::trace!(
+                    "Encoding file: file is {}% written",
+                    rows_written as f32 / self.num_rows as f32
+                );
+            }
         }
         Ok(())
     }

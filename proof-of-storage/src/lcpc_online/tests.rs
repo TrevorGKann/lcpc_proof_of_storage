@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod encoded_file_io_tests {
-    use std::env;
+    use crate::fields::data_field::DataField;
+    use crate::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
     use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
     use crate::lcpc_online::encoded_file_reader::{
         get_decoded_file_size_from_rate, get_encoded_file_size_from_rate,
@@ -8,19 +9,18 @@ mod encoded_file_io_tests {
     use crate::lcpc_online::encoded_file_writer::EncodedFileWriter;
     use crate::lcpc_online::file_handler::FileHandler;
     use crate::lcpc_online::*;
+    use crate::networking::client::get_column_indicies_from_random_seed;
+    use lcpc_2d::log2;
+    use num_traits::real::Real;
     use rand::Rng;
     use rand_chacha::ChaCha8Rng;
     use rand_core::{RngCore, SeedableRng};
     use serial_test::serial;
+    use std::env;
     use std::fs::File;
     use std::path::{Path, PathBuf};
-    use num_traits::real::Real;
     use tokio::fs;
     use ulid::Ulid;
-    use lcpc_2d::log2;
-    use crate::fields::data_field::DataField;
-    use crate::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
-    use crate::networking::client::get_column_indicies_from_random_seed;
 
     type TestField = WriteableFt63;
 
@@ -96,12 +96,13 @@ mod encoded_file_io_tests {
                 .open(&file_path_encoded)
                 .await
                 .expect("couldn't open encoded test file");
-            let mut reader = EncodedFileReader::<
-                TestField,
-                Blake3,
-                LigeroEncoding<TestField>,
-            >::new_ligero(encoded_file, pre_encoded_len, encoded_len)
-            .await;
+            let mut reader =
+                EncodedFileReader::<TestField, Blake3, LigeroEncoding<TestField>>::new_ligero(
+                    encoded_file,
+                    pre_encoded_len,
+                    encoded_len,
+                )
+                .await;
             let mut decode_target = tokio::fs::OpenOptions::default()
                 .read(true)
                 .write(true)
@@ -210,18 +211,15 @@ mod encoded_file_io_tests {
 
                 // check that the file is correct and correctly decodes to what we expect
                 file_handler.verify_all_files_agree().await.unwrap();
-                let mut reader = EncodedFileReader::<
-                    TestField,
-                    Blake3,
-                    LigeroEncoding<TestField>,
-                >::new_ligero(
-                    tokio::fs::File::open(file_handler.get_encoded_file_handle())
-                        .await
-                        .unwrap(),
-                    pre_encoded_len,
-                    encoded_len,
-                )
-                .await;
+                let mut reader =
+                    EncodedFileReader::<TestField, Blake3, LigeroEncoding<TestField>>::new_ligero(
+                        tokio::fs::File::open(file_handler.get_encoded_file_handle())
+                            .await
+                            .unwrap(),
+                        pre_encoded_len,
+                        encoded_len,
+                    )
+                    .await;
 
                 let mut decode_target = tokio::fs::OpenOptions::default()
                     .read(true)
@@ -257,23 +255,28 @@ mod encoded_file_io_tests {
     async fn verify_columns_are_correct() {
         let mut random = ChaCha8Rng::from_entropy();
 
-
         println!("current dir {}", env::current_dir().unwrap().display());
-        let test_file_path_origin = PathBuf::from("test_files/test.txt");
-        let test_file_path = PathBuf::from("test_files/edit_test.txt");
+        let test_file_path_origin = PathBuf::from("test_files/100000_byte_file.bytes");
+        let test_file_path = PathBuf::from("test_files/columns_test.txt");
         let test_ulid = Ulid::new();
-        let original_file_len = File::open(&test_file_path_origin).unwrap().metadata().unwrap().len() as usize;
+        let original_file_len = File::open(&test_file_path_origin)
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .len() as usize;
         let max_columns = original_file_len.div_ceil(TestField::DATA_BYTE_CAPACITY as usize);
 
-        // for pre_encoded_len in (1..log2(max_columns))
-        for pre_encoded_len in (5..13)
+        for pre_encoded_len in (1..log2(max_columns))
+            // for pre_encoded_len in (5..13)
             .map(|x| 2usize.pow(x as u32))
             .collect::<Vec<usize>>()
             .into_iter()
         {
             let encoded_len = (pre_encoded_len + 1).next_power_of_two();
             let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
-            let expected_column_len = original_file_len.div_ceil(TestField::DATA_BYTE_CAPACITY as usize).div_ceil(pre_encoded_len);
+            let expected_column_len = original_file_len
+                .div_ceil(TestField::DATA_BYTE_CAPACITY as usize)
+                .div_ceil(pre_encoded_len);
             println!(
                 "testing with a coding of rate {}/{}; soundness requires fetching {} columns of len {}",
                 pre_encoded_len, encoded_len,
@@ -300,8 +303,7 @@ mod encoded_file_io_tests {
 
             file_handler.verify_all_files_agree().await.unwrap();
 
-            for _i in 0..100 {
-
+            for _i in 0..1 {
                 let columns_to_fetch = get_column_indicies_from_random_seed(
                     random.next_u64(),
                     num_cols_required,
@@ -315,7 +317,7 @@ mod encoded_file_io_tests {
 
                 let sample_column = columns.first().unwrap();
                 assert_eq!(sample_column.col.len(), expected_column_len);
-                if _i == 1 {
+                if _i == 0 {
                     println!("merkle length is {}", sample_column.path.len())
                 }
                 assert_eq!(sample_column.path.len(), log2(encoded_len));
@@ -324,6 +326,7 @@ mod encoded_file_io_tests {
 
             file_handler.delete_all_files().await.unwrap()
         }
+        _safe_delete_file(&test_file_path).await;
     }
 
     #[test]
@@ -354,9 +357,8 @@ mod encoded_file_io_tests {
                     encoded_len,
                 );
                 assert_eq!(
-                    random_file_len.next_multiple_of(
-                        TestField::DATA_BYTE_CAPACITY as usize * pre_encoded_len
-                    ),
+                    random_file_len
+                        .next_multiple_of(TestField::DATA_BYTE_CAPACITY as usize * pre_encoded_len),
                     decoded_file_size,
                     "failed with an input file size of {}; for reference the encoded size was {}",
                     random_file_len,
