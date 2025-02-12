@@ -597,15 +597,10 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
         else {
             bail!("must be in a finished state")
         };
-        //
-        // let Some(path) = tree.get_path(column_index) else {
-        //     bail!("no path found for such an index")
-        // };
 
         let Some(path) = tree.get_path(column_index) else {
             bail!("no path found for such an index")
         };
-        // assert_eq!(path, path_retry);
 
         Ok(path)
     }
