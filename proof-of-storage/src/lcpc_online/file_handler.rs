@@ -629,6 +629,14 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
             Err(e) => bail!(e),
         }
     }
+
+    pub fn get_dimensions(&self) -> Result<(usize, usize, usize)> {
+        ensure!(
+            matches!(self.current_state, CurrentState::FilesAlreadyCreated { .. }),
+            "uninitialized file"
+        );
+        Ok((self.pre_encoded_size, self.encoded_size, self._num_rows))
+    }
 }
 
 pub async fn read_tree<D: Digest + FixedOutputReset>(
