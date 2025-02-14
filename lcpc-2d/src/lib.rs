@@ -353,6 +353,13 @@ where
     pub fn into_raw(self) -> Output<D> {
         self.root
     }
+
+    pub fn new_from_root_digest(root: Output<D>) -> Self {
+        Self {
+            root,
+            _p: Default::default(),
+        }
+    }
 }
 
 impl<D, E> AsRef<Output<D>> for LcRoot<D, E>

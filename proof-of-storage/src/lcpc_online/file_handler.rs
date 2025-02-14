@@ -10,7 +10,7 @@ use crate::lcpc_online::file_formatter::{
 use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{bail, ensure, Context, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use lcpc_2d::{LcColumn, LcEncoding};
+use lcpc_2d::{LcColumn, LcEncoding, LcRoot};
 use lcpc_ligero_pc::LigeroEncoding;
 use std::fs::rename;
 use std::io::SeekFrom;
@@ -547,24 +547,6 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
             .read_exact(&mut original_byte_buffer)
             .await?;
         Ok(original_byte_buffer)
-
-        // // I forgot I just have the original file available. Keeping this just in case I need it for
-        // // some obscure case where I only have the encoded file
-        // let start_byte_in_row =
-        //     byte_start % (self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
-        // let start_row = byte_start / (self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
-        // let end_row = byte_end / (self.encoded_size * F::DATA_BYTE_CAPACITY as usize);
-        // let total_bytes = byte_end - byte_start;
-        // let mut gathered_bytes = Vec::with_capacity(total_bytes);
-        //
-        // for row in start_row..=end_row {
-        //     let decoded_row_bytes = self.get_decoded_row_bytes(row).await?;
-        //     gathered_bytes.extend_from_slice(&decoded_row_bytes);
-        // }
-        //
-        // gathered_bytes.drain(..start_byte_in_row);
-        // gathered_bytes.drain(total_bytes..);
-        // Ok(gathered_bytes)
     }
 
     pub fn get_total_unencoded_bytes(&self) -> usize {
@@ -580,6 +562,11 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
         };
 
         Ok(tree.to_owned())
+    }
+
+    pub fn get_commit_root(&mut self) -> Result<LcRoot<D, E>> {
+        let root = self.get_merkle_tree()?.root();
+        Ok(LcRoot::<D, E>::new_from_root_digest(root))
     }
 
     async fn internal_get_merkle_path_for_column(
