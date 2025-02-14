@@ -43,19 +43,8 @@ fn different_shape_benchmark_main(c: &mut Criterion) {
         test_ulid.to_string(),
         constants::UNENCODED_FILE_EXTENSION
     ));
-    let encoded_test_file = test_dir.join(format!(
-        "{}.{}",
-        test_ulid.to_string(),
-        constants::ENCODED_FILE_EXTENSION
-    ));
-    let merkle_test_file = test_dir.join(format!(
-        "{}.{}",
-        test_ulid.to_string(),
-        constants::MERKLE_FILE_EXTENSION
-    ));
 
     std::fs::copy(&test_file_path, &unencoded_test_file).expect("couldn't copy test file");
-    let total_file_bytes = std::fs::metadata(&unencoded_test_file).unwrap().len();
 
     let powers_of_two_for_pre_encoded_columns: Vec<u32> = (10..17).collect();
 
@@ -195,7 +184,7 @@ fn verify_column_benchmark(
         &columns_fetched,
         |b, columns_fetched| {
             b.to_async(&*rt).iter(|| async {
-                client_online_verify_column_paths(&root, &columns_to_fetch, &columns_fetched)
+                client_online_verify_column_paths(&root, &columns_to_fetch, columns_fetched)
             })
         },
     );
