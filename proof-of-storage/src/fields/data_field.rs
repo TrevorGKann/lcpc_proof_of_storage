@@ -19,7 +19,8 @@ pub trait DataField: PrimeField {
     ///         - `<Self as PrimeField>::CAPACITY / 8`
     ///         - std::mem::size_of::<DataBytes>()
     const DATA_BYTE_CAPACITY: u32 = <Self as PrimeField>::CAPACITY / 8;
-    const WRITTEN_BYTES_WIDTH: u32 = <Self as PrimeField>::CAPACITY.div_ceil(8);
+    // const WRITTEN_BYTES_WIDTH: u32 = <Self as PrimeField>::CAPACITY.div_ceil(8);
+    const WRITTEN_BYTES_WIDTH: u32 = std::mem::size_of::<Self>() as u32;
 
     fn test_type_sizes_are_correct() -> bool {
         (<Self as PrimeField>::CAPACITY / 8) as usize == std::mem::size_of::<Self::DataBytes>()
