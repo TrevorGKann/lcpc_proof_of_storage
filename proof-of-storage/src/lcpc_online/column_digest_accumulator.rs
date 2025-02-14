@@ -10,6 +10,7 @@ pub enum ColumnsToCareAbout {
     All,
     Only(Vec<usize>),
     // there are no guarantees on what happens if the columns to care about are not unique.
+    // todo: make Only() take a reference to a [usize] instead of an owned vec
 }
 
 pub struct ColumnDigestAccumulator<D: Digest + FixedOutputReset, F: DataField> {

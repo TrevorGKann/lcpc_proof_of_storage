@@ -8,10 +8,10 @@ use criterion::{
 use lcpc_ligero_pc::LigeroEncoding;
 use proof_of_storage::databases::constants;
 use proof_of_storage::fields::WriteableFt63;
-use proof_of_storage::lcpc_online::_get_POS_soundness_n_cols;
 use proof_of_storage::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
 use proof_of_storage::lcpc_online::encoded_file_writer::EncodedFileWriter;
 use proof_of_storage::lcpc_online::file_handler::FileHandler;
+use proof_of_storage::lcpc_online::{_get_POS_soundness_n_cols, client_online_verify_column_paths};
 use proof_of_storage::networking::client::get_column_indicies_from_random_seed;
 use rand::Rng;
 use rand_chacha::ChaChaRng;
@@ -25,7 +25,7 @@ use ulid::Ulid;
 
 mod flamegraph_profiler;
 
-fn edit_file(c: &mut Criterion) {
+fn different_shape_benchmark_main(c: &mut Criterion) {
     let env_filter: EnvFilter = EnvFilter::builder()
         .parse("surrealdb_core=warn,surrealdb=warn,trace")
         .unwrap();
@@ -55,7 +55,8 @@ fn edit_file(c: &mut Criterion) {
         env::current_dir().unwrap().display()
     );
     let mut test_file_path = env::current_dir().unwrap();
-    test_file_path.push("test_files/100000_byte_file.bytes");
+    test_file_path.push("test_files/1000000000_byte_file.bytes");
+    // test_file_path.push("test_files/10000_byte_file.bytes");
 
     let test_dir = PathBuf::from(format!("bench_files/{}_test", test_ulid.to_string()));
     std::fs::create_dir_all(&test_dir).expect("couldn't create test directory");
@@ -161,6 +162,17 @@ fn edit_file(c: &mut Criterion) {
         );
 
         retrieve_column_benchmark(
+            &mut rt,
+            &test_ulid,
+            &unencoded_test_file,
+            &encoded_test_file,
+            &merkle_test_file,
+            pre_encoded_len,
+            encoded_len,
+            &mut group,
+        );
+
+        verify_column_benchmark(
             &mut rt,
             &test_ulid,
             &unencoded_test_file,
@@ -278,6 +290,57 @@ fn retrieve_column_benchmark(
     );
 }
 
+fn verify_column_benchmark(
+    rt: &mut Runtime,
+    test_ulid: &Ulid,
+    unencoded_test_file: &PathBuf,
+    encoded_test_file: &PathBuf,
+    merkle_test_file: &PathBuf,
+    pre_encoded_len: usize,
+    encoded_len: usize,
+    group: &mut BenchmarkGroup<WallTime>,
+) {
+    let (root, columns_to_fetch, columns_fetched) = rt.block_on(async {
+        let mut rand = ChaChaRng::from_entropy();
+        let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
+        let columns_to_fetch =
+            get_column_indicies_from_random_seed(rand.next_u64(), num_cols_required, encoded_len);
+
+        let mut file_handler = FileHandler::<
+            Blake3,
+            WriteableFt63,
+            LigeroEncoding<WriteableFt63>,
+        >::new_attach_to_existing_files(
+            &test_ulid,
+            unencoded_test_file.clone(),
+            encoded_test_file.clone(),
+            merkle_test_file.clone(),
+            pre_encoded_len,
+            encoded_len,
+        )
+            .await
+            .expect("failed setup: couldn't attach to files for file reader");
+
+        let root = file_handler.get_commit_root().unwrap();
+
+        let columns_fetched = file_handler
+            .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch.clone()))
+            .await
+            .expect("couldn't get full columns from file");
+        (root, columns_to_fetch, columns_fetched)
+    });
+
+    group.bench_with_input(
+        BenchmarkId::new("verifying columns with X cols", pre_encoded_len),
+        &columns_fetched,
+        |b, columns_fetched| {
+            b.to_async(&*rt).iter(|| async {
+                client_online_verify_column_paths(&root, &columns_to_fetch, &columns_fetched)
+            })
+        },
+    );
+}
+
 fn custom_criterion() -> Criterion {
     Criterion::default().with_profiler(FlamegraphProfiler::new(100))
 }
@@ -285,5 +348,5 @@ fn custom_criterion() -> Criterion {
 criterion_group! {
 name = benches;
 config = custom_criterion();
-targets = edit_file}
+targets = different_shape_benchmark_main}
 criterion_main!(benches);
