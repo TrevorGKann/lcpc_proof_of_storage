@@ -24,11 +24,10 @@ use ulid::Ulid;
 mod bench_utils;
 mod flamegraph_profiler;
 
-type BenchFileHanlder = FileHandler<Blake3, WriteableFt63, LigeroEncoding<WriteableFt63>>;
+type BenchFileHandler = FileHandler<Blake3, WriteableFt63, LigeroEncoding<WriteableFt63>>;
 
 fn different_shape_benchmark_main(c: &mut Criterion) {
     bench_utils::start_bench_subscriber();
-
     let mut rt = bench_utils::get_bench_runtime();
 
     let test_ulid = Ulid::new();
@@ -49,14 +48,16 @@ fn different_shape_benchmark_main(c: &mut Criterion) {
     let powers_of_two_for_pre_encoded_columns: Vec<u32> = (10..17).collect();
 
     let mut group = c.benchmark_group("edit_file");
+    let bench_start_time = std::time::Instant::now();
+
     for power_of_two in powers_of_two_for_pre_encoded_columns {
         let pre_encoded_len = 2usize.pow(power_of_two);
         let encoded_len = 2usize.pow(power_of_two + 1);
 
         let start_time = std::time::Instant::now();
         println!("doing initial encoding of file");
-        let mut file_handler: Arc<Mutex<BenchFileHanlder>> = rt.block_on(async {
-            let file_handler = BenchFileHanlder::create_from_unencoded_file(
+        let file_handler: Arc<Mutex<BenchFileHandler>> = rt.block_on(async {
+            let file_handler = BenchFileHandler::create_from_unencoded_file(
                 &test_ulid,
                 Some(&unencoded_test_file),
                 pre_encoded_len,
@@ -78,14 +79,23 @@ fn different_shape_benchmark_main(c: &mut Criterion) {
         retrieve_column_benchmark(&mut rt, &mut group, pre_encoded_len, file_handler.clone());
 
         verify_column_benchmark(&mut rt, &mut group, pre_encoded_len, file_handler.clone());
+
+        println!(
+            "that round of testing took {}m",
+            start_time.elapsed().as_secs() / 60
+        );
     }
+    println!(
+        "Total test time: {}h",
+        bench_start_time.elapsed().as_secs() / 3600
+    );
 }
 
 fn edit_benchmark(
     rt: &mut Runtime,
     group: &mut BenchmarkGroup<WallTime>,
     pre_encoded_len: usize,
-    file_handler: Arc<Mutex<BenchFileHanlder>>,
+    file_handler: Arc<Mutex<BenchFileHandler>>,
 ) {
     group.bench_with_input(
         BenchmarkId::new("editing file with X cols", pre_encoded_len),
@@ -123,7 +133,7 @@ fn retrieve_column_benchmark(
     rt: &mut Runtime,
     group: &mut BenchmarkGroup<WallTime>,
     pre_encoded_len: usize,
-    file_handler: Arc<Mutex<BenchFileHanlder>>,
+    file_handler: Arc<Mutex<BenchFileHandler>>,
 ) {
     group.bench_with_input(
         BenchmarkId::new("retrieving columns with X cols", pre_encoded_len),
@@ -160,7 +170,7 @@ fn verify_column_benchmark(
     rt: &mut Runtime,
     group: &mut BenchmarkGroup<WallTime>,
     pre_encoded_len: usize,
-    file_handler: Arc<Mutex<BenchFileHanlder>>,
+    file_handler: Arc<Mutex<BenchFileHandler>>,
 ) {
     let (root, columns_to_fetch, columns_fetched) = rt.block_on(async {
         let mut file_handler_lock = file_handler.lock().await;
