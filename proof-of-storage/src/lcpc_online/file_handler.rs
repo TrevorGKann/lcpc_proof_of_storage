@@ -632,10 +632,23 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
 
     pub fn get_dimensions(&self) -> Result<(usize, usize, usize)> {
         ensure!(
-            matches!(self.current_state, CurrentState::FilesAlreadyCreated { .. }),
+            !matches!(
+                self.current_state,
+                CurrentState::StreamingToFileCreation { .. }
+            ),
             "uninitialized file"
         );
         Ok((self.pre_encoded_size, self.encoded_size, self._num_rows))
+    }
+    pub fn get_total_data_bytes(&self) -> Result<usize> {
+        ensure!(
+            !matches!(
+                self.current_state,
+                CurrentState::StreamingToFileCreation { .. }
+            ),
+            "uninitialized file"
+        );
+        Ok(self.total_data_bytes)
     }
 }
 
