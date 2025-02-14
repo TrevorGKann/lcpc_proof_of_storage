@@ -218,11 +218,13 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         let mut unencoded_file = OpenOptions::default()
             .read(true)
             .write(true)
+            .create(true)
             .open(&self.unencoded_file_handle)
             .await?;
         let mut merkle_file = OpenOptions::default()
             .read(true)
             .write(true)
+            .create(true)
             .open(&self.merkle_tree_file_handle)
             .await?;
 
