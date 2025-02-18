@@ -35,7 +35,8 @@ bench-report:
 clean-bench:
     -rm -rf {{ source_directory() }}/proof-of-storage/bench_files/**
 
-rscript target_script:
-    cargo run --bin {{ target_script }}
+[no-cd]
+rscript target_script *args:
+    cargo run --bin {{ target_script }} -- {{ args }}
 
 #    mv report.zip ../
