@@ -13,7 +13,7 @@ pub fn start_bench_subscriber() {
         .compact()
         .with_file(true)
         .with_line_number(true)
-        .with_max_level(tracing::Level::TRACE)
+        .with_max_level(tracing::Level::DEBUG)
         .with_env_filter(env_filter)
         // .with_span_events(FmtSpan::FULL)
         .finish();
