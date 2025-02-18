@@ -14,11 +14,11 @@ use digest::Output;
 use ff::Field;
 use fffft::{FFTError, FFTPrecomp, FieldFFT};
 use itertools::iterate;
+use lcpc_test_fields::ft63::*;
 use merlin::Transcript;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::iter::repeat_with;
-use lcpc_test_fields::ft63::*;
 
 #[derive(Clone, Debug)]
 struct LigeroEncoding<Ft> {
@@ -185,7 +185,7 @@ fn open_column() {
             col_num,
             root.as_ref(),
             &[],
-            &Ft63::zero(),
+            &Ft63::ZERO,
         ));
     }
 }
@@ -203,23 +203,21 @@ fn commit() {
     let eval = comm
         .coeffs
         .iter()
-        .zip(iterate(Ft63::one(), |&v| v * x).take(coeffs.len()))
-        .fold(Ft63::zero(), |acc, (c, r)| acc + *c * r);
+        .zip(iterate(Ft63::ONE, |&v| v * x).take(coeffs.len()))
+        .fold(Ft63::ZERO, |acc, (c, r)| acc + *c * r);
 
-    let roots_lo: Vec<Ft63> = iterate(Ft63::one(), |&v| v * x)
+    let roots_lo: Vec<Ft63> = iterate(Ft63::ONE, |&v| v * x)
         .take(comm.n_per_row)
         .collect();
     let roots_hi: Vec<Ft63> = {
         let xr = x * roots_lo.last().unwrap();
-        iterate(Ft63::one(), |&v| v * xr)
-            .take(comm.n_rows)
-            .collect()
+        iterate(Ft63::ONE, |&v| v * xr).take(comm.n_rows).collect()
     };
     let coeffs_flattened = eval_outer(&comm, &roots_hi[..]).unwrap();
     let eval2 = coeffs_flattened
         .iter()
         .zip(roots_lo.iter())
-        .fold(Ft63::zero(), |acc, (c, r)| acc + *c * r);
+        .fold(Ft63::ZERO, |acc, (c, r)| acc + *c * r);
     assert_eq!(eval, eval2);
 
     let mut poly_fft = eval_outer_fft(&comm, &roots_hi[..]).unwrap();
@@ -227,11 +225,11 @@ fn commit() {
     assert!(poly_fft
         .iter()
         .skip(comm.n_per_row)
-        .all(|&v| v == Ft63::zero()));
+        .all(|&v| v == Ft63::ZERO));
     let eval3 = poly_fft
         .iter()
         .zip(roots_lo.iter())
-        .fold(Ft63::zero(), |acc, (c, r)| acc + *c * r);
+        .fold(Ft63::ZERO, |acc, (c, r)| acc + *c * r);
     assert_eq!(eval2, eval3);
 }
 
@@ -251,21 +249,19 @@ fn end_to_end() {
     let eval = comm
         .coeffs
         .iter()
-        .zip(iterate(Ft63::one(), |&v| v * x).take(coeffs.len()))
-        .fold(Ft63::zero(), |acc, (c, r)| acc + *c * r);
+        .zip(iterate(Ft63::ONE, |&v| v * x).take(coeffs.len()))
+        .fold(Ft63::ZERO, |acc, (c, r)| acc + *c * r);
 
     // compute the outer and inner tensors for powers of x
     // NOTE: we treat coeffs as a univariate polynomial, but it doesn't
     // really matter --- the only difference from a multilinear is the
     // way we compute outer_tensor and inner_tensor from the eval point
-    let inner_tensor: Vec<Ft63> = iterate(Ft63::one(), |&v| v * x)
+    let inner_tensor: Vec<Ft63> = iterate(Ft63::ONE, |&v| v * x)
         .take(comm.n_per_row)
         .collect();
     let outer_tensor: Vec<Ft63> = {
         let xr = x * inner_tensor.last().unwrap();
-        iterate(Ft63::one(), |&v| v * xr)
-            .take(comm.n_rows)
-            .collect()
+        iterate(Ft63::ONE, |&v| v * xr).take(comm.n_rows).collect()
     };
 
     // compute an evaluation proof
@@ -298,8 +294,7 @@ fn end_to_end() {
     )
     .unwrap();
 
-    let root2 =
-        bincode::deserialize::<LcRoot<Blake3, LigeroEncoding<Ft63>>>(&encroot[..]).unwrap();
+    let root2 = bincode::deserialize::<LcRoot<Blake3, LigeroEncoding<Ft63>>>(&encroot[..]).unwrap();
     let pf2: LigeroEvalProof<Blake3, Ft63> = bincode::deserialize(&encoded[..]).unwrap();
     let mut tr3 = Transcript::new(b"test transcript");
     tr3.append_message(b"polycommit", root.as_ref());
@@ -336,21 +331,19 @@ fn end_to_end_two_proofs() {
     let eval = comm
         .coeffs
         .iter()
-        .zip(iterate(Ft63::one(), |&v| v * x).take(coeffs.len()))
-        .fold(Ft63::zero(), |acc, (c, r)| acc + *c * r);
+        .zip(iterate(Ft63::ONE, |&v| v * x).take(coeffs.len()))
+        .fold(Ft63::ZERO, |acc, (c, r)| acc + *c * r);
 
     // compute the outer and inner tensors for powers of x
     // NOTE: we treat coeffs as a univariate polynomial, but it doesn't
     // really matter --- the only difference from a multilinear is the
     // way we compute outer_tensor and inner_tensor from the eval point
-    let inner_tensor: Vec<Ft63> = iterate(Ft63::one(), |&v| v * x)
+    let inner_tensor: Vec<Ft63> = iterate(Ft63::ONE, |&v| v * x)
         .take(comm.n_per_row)
         .collect();
     let outer_tensor: Vec<Ft63> = {
         let xr = x * inner_tensor.last().unwrap();
-        iterate(Ft63::one(), |&v| v * xr)
-            .take(comm.n_rows)
-            .collect()
+        iterate(Ft63::ONE, |&v| v * xr).take(comm.n_rows).collect()
     };
 
     // compute an evaluation proof
@@ -446,7 +439,7 @@ fn random_comm() -> LigeroCommit<Blake3, Ft63> {
         let mut tmp = repeat_with(|| Ft63::random(&mut rng))
             .take(coeffs_len)
             .collect::<Vec<Ft63>>();
-        tmp.resize(n_per_row * n_rows, Ft63::zero());
+        tmp.resize(n_per_row * n_rows, Ft63::ZERO);
         tmp
     };
 

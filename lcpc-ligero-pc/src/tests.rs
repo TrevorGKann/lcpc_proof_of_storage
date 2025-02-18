@@ -13,11 +13,11 @@ use blake3::Hasher as Blake3;
 use ff::Field;
 use itertools::iterate;
 use lcpc_2d::{LcCommit, LcEncoding};
+use lcpc_test_fields::{ft255::*, ft63::*, random_coeffs};
 use merlin::Transcript;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::iter::repeat_with;
-use lcpc_test_fields::{ft255::*, ft63::*, random_coeffs};
 
 #[test]
 fn get_dims() {
@@ -56,16 +56,16 @@ fn col_opens() {
     );
 }
 
-#[cfg(feature="isz")]
-use typenum::U38 as TLo;
-#[cfg(not(feature="isz"))]
+#[cfg(not(feature = "isz"))]
 use typenum::U1 as TLo;
+#[cfg(feature = "isz")]
+use typenum::U38 as TLo;
 
-#[cfg(feature="isz")]
-use typenum::U39 as THi;
-#[cfg(all(not(feature="isz"), feature="hlf"))]
+#[cfg(all(not(feature = "isz"), feature = "hlf"))]
 use typenum::U2 as THi;
-#[cfg(all(not(feature="isz"),not(feature="hlf")))]
+#[cfg(feature = "isz")]
+use typenum::U39 as THi;
+#[cfg(all(not(feature = "isz"), not(feature = "hlf")))]
 use typenum::U4 as THi;
 
 #[test]
@@ -117,12 +117,12 @@ fn prove_verify_size_bench() {
         // NOTE: we treat coeffs as a univariate polynomial, but it doesn't
         // really matter --- the only difference from a multilinear is the
         // way we compute outer_tensor and inner_tensor from the eval point
-        let inner_tensor: Vec<Ft255> = iterate(Ft255::one(), |&v| v * x)
+        let inner_tensor: Vec<Ft255> = iterate(Ft255::ONE, |&v| v * x)
             .take(comm.get_n_per_row())
             .collect();
         let outer_tensor: Vec<Ft255> = {
             let xr = x * inner_tensor.last().unwrap();
-            iterate(Ft255::one(), |&v| v * xr)
+            iterate(Ft255::ONE, |&v| v * xr)
                 .take(comm.get_n_rows())
                 .collect()
         };
@@ -192,12 +192,12 @@ fn proof_sizes() {
         // NOTE: we treat coeffs as a univariate polynomial, but it doesn't
         // really matter --- the only difference from a multilinear is the
         // way we compute outer_tensor and inner_tensor from the eval point
-        let inner_tensor: Vec<Ft255> = iterate(Ft255::one(), |&v| v * x)
+        let inner_tensor: Vec<Ft255> = iterate(Ft255::ONE, |&v| v * x)
             .take(comm.get_n_per_row())
             .collect();
         let outer_tensor: Vec<Ft255> = {
             let xr = x * inner_tensor.last().unwrap();
-            iterate(Ft255::one(), |&v| v * xr)
+            iterate(Ft255::ONE, |&v| v * xr)
                 .take(comm.get_n_rows())
                 .collect()
         };
@@ -215,6 +215,8 @@ fn proof_sizes() {
 
 #[test]
 fn end_to_end() {
+    type TestField = lcpc_test_fields::ft63::Ft63;
+
     // commit to a random polynomial at a random rate
     let coeffs = get_random_coeffs();
     let enc = LigeroEncoding::new(coeffs.len());
@@ -229,12 +231,12 @@ fn end_to_end() {
     // NOTE: we treat coeffs as a univariate polynomial, but it doesn't
     // really matter --- the only difference from a multilinear is the
     // way we compute outer_tensor and inner_tensor from the eval point
-    let inner_tensor: Vec<Ft63> = iterate(Ft63::one(), |&v| v * x)
+    let inner_tensor: Vec<Ft63> = iterate(TestField::ONE, |&v| v * x)
         .take(comm.get_n_per_row())
         .collect();
     let outer_tensor: Vec<Ft63> = {
         let xr = x * inner_tensor.last().unwrap();
-        iterate(Ft63::one(), |&v| v * xr)
+        iterate(Ft63::ONE, |&v| v * xr)
             .take(comm.get_n_rows())
             .collect()
     };
@@ -280,12 +282,12 @@ fn end_to_end_one_proof_ml() {
     // NOTE: we treat coeffs as a univariate polynomial, but it doesn't
     // really matter --- the only difference from a multilinear is the
     // way we compute outer_tensor and inner_tensor from the eval point
-    let inner_tensor: Vec<Ft63> = iterate(Ft63::one(), |&v| v * x)
+    let inner_tensor: Vec<Ft63> = iterate(Ft63::ONE, |&v| v * x)
         .take(comm.get_n_per_row())
         .collect();
     let outer_tensor: Vec<Ft63> = {
         let xr = x * inner_tensor.last().unwrap();
-        iterate(Ft63::one(), |&v| v * xr)
+        iterate(Ft63::ONE, |&v| v * xr)
             .take(comm.get_n_rows())
             .collect()
     };
@@ -327,12 +329,12 @@ fn end_to_end_two_proofs() {
     // NOTE: we treat coeffs as a univariate polynomial, but it doesn't
     // really matter --- the only difference from a multilinear is the
     // way we compute outer_tensor and inner_tensor from the eval point
-    let inner_tensor: Vec<Ft63> = iterate(Ft63::one(), |&v| v * x)
+    let inner_tensor: Vec<Ft63> = iterate(Ft63::ONE, |&v| v * x)
         .take(comm.get_n_per_row())
         .collect();
     let outer_tensor: Vec<Ft63> = {
         let xr = x * inner_tensor.last().unwrap();
-        iterate(Ft63::one(), |&v| v * xr)
+        iterate(Ft63::ONE, |&v| v * xr)
             .take(comm.get_n_rows())
             .collect()
     };

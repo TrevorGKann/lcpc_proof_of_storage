@@ -98,13 +98,13 @@ fn reed_solomon<F>(xi: &[F], xo: &mut [F])
 where
     F: Field,
 {
-    let mut x = <F as Field>::one();
+    let mut x = <F as Field>::ONE.clone();
     for r in xo.as_mut().iter_mut() {
-        *r = <F as Field>::zero();
+        *r = <F as Field>::ZERO;
         for j in (0..xi.len()).rev() {
             *r *= x;
             *r += xi[j];
         }
-        x += <F as Field>::one();
+        x += <F as Field>::ONE.clone();
     }
 }
