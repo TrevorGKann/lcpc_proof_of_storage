@@ -134,7 +134,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
                 > ((rows_written + 1) as f64 * 100.0 / self.num_rows as f64).floor()
                     % PERCENT_VALUES
             {
-                tracing::trace!(
+                tracing::debug!(
                     "encoding file: file is {}% written",
                     rows_written as f32 * 100.0 / self.num_rows as f32
                 );
