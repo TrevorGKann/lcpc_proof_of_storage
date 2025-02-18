@@ -10,12 +10,13 @@ use crate::lcpc_online::file_formatter::{
 use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{bail, ensure, Context, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
+use itertools::Itertools;
 use lcpc_2d::{LcColumn, LcEncoding, LcRoot};
 use lcpc_ligero_pc::LigeroEncoding;
 use std::fs::rename;
 use std::io::SeekFrom;
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufWriter};
 use ulid::Ulid;
@@ -54,19 +55,16 @@ pub struct FileHandler<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding
 
 impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncoding<F>> {
     pub async fn new_attach_to_existing_ulid(
-        file_directory: &PathBuf,
+        file_directory: &Path,
         ulid: &Ulid,
         pre_encoded_size: usize,
         encoded_size: usize,
     ) -> Result<Self> {
-        let mut encoded_file_handle = file_directory.clone();
-        encoded_file_handle.push(get_encoded_file_location_from_id(&ulid));
+        let encoded_file_handle = file_directory.join(get_encoded_file_location_from_id(ulid));
+        let unencoded_file_handle = file_directory.join(get_unencoded_file_location_from_id(ulid));
+        let merkle_tree_file_handle = file_directory.join(get_merkle_file_location_from_id(ulid));
         ensure!(encoded_file_handle.is_file(), "no encoded file found!");
-        let mut unencoded_file_handle = file_directory.clone();
-        unencoded_file_handle.push(get_unencoded_file_location_from_id(&ulid));
         ensure!(unencoded_file_handle.is_file(), "no unencoded file found!");
-        let mut merkle_tree_file_handle = file_directory.clone();
-        merkle_tree_file_handle.push(get_merkle_file_location_from_id(&ulid));
         ensure!(merkle_tree_file_handle.is_file(), "no merkle file found!");
 
         Self::new_attach_to_existing_files(
