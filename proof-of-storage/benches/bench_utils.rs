@@ -15,7 +15,6 @@ pub fn start_bench_subscriber() {
         .with_line_number(true)
         .with_max_level(tracing::Level::DEBUG)
         .with_env_filter(env_filter)
-        // .with_span_events(FmtSpan::FULL)
         .finish();
 
     // use that subscriber to process traces emitted after this point
