@@ -57,20 +57,11 @@ path = "src/bin/pos.rs"
 debug = true
 
 [[bench]]
-name = "commit"
-harness = false
-
-[[bench]]
-name = "file_to_commit_root"
-harness = false
-
-
-[[bench]]
-name = "buffer_vs_stream_file"
-harness = false
-
-[[bench]]
 name = "edits_on_different_shapes"
+harness = false
+
+[[bench]]
+name = "commit_to_different_shapes"
 harness = false
 
 [features]

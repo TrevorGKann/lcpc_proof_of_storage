@@ -48,7 +48,7 @@ struct PremadeFiles {
 
 // const save_state_location: PathBuf = PathBuf.from();
 
-fn different_shape_benchmark_main(c: &mut Criterion) {
+fn edit_different_shape_benchmark_main(c: &mut Criterion) {
     bench_utils::start_bench_subscriber();
     let mut rt = bench_utils::get_bench_runtime();
 
@@ -422,5 +422,5 @@ fn custom_criterion() -> Criterion {
 criterion_group! {
 name = benches;
 config = custom_criterion();
-targets = different_shape_benchmark_main}
+targets = edit_different_shape_benchmark_main}
 criterion_main!(benches);
