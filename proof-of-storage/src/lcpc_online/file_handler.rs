@@ -140,6 +140,11 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         pre_encoded_size: usize,
         encoded_size: usize,
     ) -> Result<Self> {
+        ensure!(
+            encoded_size.is_power_of_two(),
+            "encoded file size must be a power of two!"
+        );
+
         let unencoded_path = get_unencoded_file_location_from_id(&ulid);
         let encoded_path = get_encoded_file_location_from_id(&ulid);
         let digest_path = get_merkle_file_location_from_id(&ulid);
@@ -623,9 +628,20 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
             tokio::fs::remove_file(&self.encoded_file_handle),
             tokio::fs::remove_file(&self.merkle_tree_file_handle),
         ) {
-            Ok(_) => Ok(()),
+            Ok(_) => {}
             Err(e) => bail!(e),
+        };
+        if self
+            .unencoded_file_handle
+            .parent()
+            .unwrap()
+            .read_dir()?
+            .next()
+            .is_none()
+        {
+            tokio::fs::remove_dir(&self.unencoded_file_handle.parent().unwrap()).await?
         }
+        Ok(())
     }
 
     pub fn get_dimensions(&self) -> Result<(usize, usize, usize)> {

@@ -97,12 +97,16 @@ where
             // ensure!(num_pre_encoded_columns <= data_len,
             //     "Number of pre-encoded columns must be less than or equal to the number of rows");
             ensure!(
-                num_pre_encoded_columns >= 1 && num_encoded_columns >= 2,
-                "Number of columns and encoded columns must be greater than 0"
+                num_pre_encoded_columns >= 1,
+                "Number of pre-encoded columns must be greater than 0, instead got {num_pre_encoded_columns}"
+            );
+            ensure!(
+                num_encoded_columns >= 2,
+                "Number of pencoded columns must be greater than 0, instead got {num_encoded_columns}"
             );
             ensure!(
                 num_encoded_columns.is_power_of_two(),
-                "Number of encoded columns must be a power of 2"
+                "Number of encoded columns must be a power of 2, instead got ratio of {num_pre_encoded_columns}/{num_encoded_columns}"
             );
             ensure!(
                 num_encoded_columns >= 2 * num_pre_encoded_columns,

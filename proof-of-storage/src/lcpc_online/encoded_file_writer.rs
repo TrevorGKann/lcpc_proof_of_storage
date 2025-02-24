@@ -63,6 +63,23 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         num_pre_encoded_columns: usize,
         num_encoded_columns: usize,
     ) -> Result<MerkleTree<D>> {
+        ensure!(
+                num_pre_encoded_columns >= 1,
+                "Number of pre-encoded columns must be greater than 0, instead got {num_pre_encoded_columns}"
+            );
+        ensure!(
+            num_encoded_columns >= 2,
+            "Number of pencoded columns must be greater than 0, instead got {num_encoded_columns}"
+        );
+        ensure!(
+                num_encoded_columns.is_power_of_two(),
+                "Number of encoded columns must be a power of 2, instead got ratio of {num_pre_encoded_columns}/{num_encoded_columns}"
+            );
+        ensure!(
+            num_encoded_columns >= 2 * num_pre_encoded_columns,
+            "Number of encoded columns must be greater than 2 * number of columns"
+        );
+
         let total_size = unencoded_file.metadata().await?.len() as usize;
 
         unencoded_file.seek(SeekFrom::Start(0)).await?;
@@ -184,8 +201,8 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         row_to_encode.extend(FieldGeneratorIter::<_, F>::new(
             bytes_to_encode_iterator, // optimization: shouldn't have to be cloned but it is atm
         ));
-        ensure!(!row_to_encode.is_empty(), "should not encode empty row");
-        ensure!(
+        assert!(!row_to_encode.is_empty(), "should not encode empty row");
+        assert!(
             row_to_encode.len() <= self.pre_encoded_size,
             "too many elements were taken to encode"
         );
@@ -193,13 +210,15 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         row_to_encode
             .extend(std::iter::repeat(F::ZERO).take(self.encoded_size - row_to_encode.len()));
 
-        ensure!(
-            row_to_encode.len() == self.encoded_size,
+        assert_eq!(
+            row_to_encode.len(),
+            self.encoded_size,
             "encoded row setup is not the correct size to encode"
         );
         self.encoding.encode(&mut row_to_encode).unwrap();
-        ensure!(
-            row_to_encode.len() == self.encoded_size,
+        assert_eq!(
+            row_to_encode.len(),
+            self.encoded_size,
             "encoded row is not the correct size"
         );
         Ok(row_to_encode)
@@ -210,7 +229,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         //     .incoming_byte_buffer
         //     .range(0..min(self.pre_encoded_size, self.incoming_byte_buffer.len()));
         let row_bytes: Vec<u8> = F::field_vec_to_raw_bytes(encoded_row);
-        ensure!(
+        assert!(
             row_bytes.len() == self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize,
             "wrong number of bytes to write to file"
         );
@@ -252,7 +271,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         while !self.incoming_byte_buffer.is_empty() {
             self.process_current_row().await?
         }
-        ensure!(
+        assert!(
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
@@ -267,7 +286,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         while !self.incoming_byte_buffer.is_empty() {
             self.process_current_row().await?
         }
-        ensure!(
+        assert!(
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
@@ -282,7 +301,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         while !self.incoming_byte_buffer.is_empty() {
             self.process_current_row().await?
         }
-        ensure!(
+        assert!(
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
