@@ -2,7 +2,6 @@ use crate::flamegraph_profiler::FlamegraphProfiler;
 use anyhow::{bail, ensure, Result};
 use blake3::traits::digest::Output;
 use blake3::Hasher as Blake3;
-use criterion::async_executor::AsyncExecutor;
 use criterion::measurement::WallTime;
 use criterion::{
     criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
@@ -26,9 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::runtime::Runtime;
-use tokio::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use ulid::Ulid;
 
 mod bench_utils;
@@ -50,7 +47,6 @@ struct PremadeFiles {
 
 fn edit_different_shape_benchmark_main(c: &mut Criterion) {
     bench_utils::start_bench_subscriber();
-    let mut rt = bench_utils::get_bench_runtime();
 
     let test_ulid = Ulid::new();
     let test_file_path = PathBuf::from("test_files/1000000000_byte_file.bytes");
@@ -70,7 +66,6 @@ fn edit_different_shape_benchmark_main(c: &mut Criterion) {
         let encoded_len = 2usize.pow(power_of_two + 1);
 
         let file_handler = open_file_handler_optimistic_from_prior(
-            &mut rt,
             &test_ulid,
             &test_file_path,
             &mut previous_run,
@@ -81,13 +76,13 @@ fn edit_different_shape_benchmark_main(c: &mut Criterion) {
         let start_time = std::time::Instant::now();
         tracing::info!("Working with {} pre-encoded columns", pre_encoded_len);
 
-        onetime_column_bytes(&mut rt, pre_encoded_len, file_handler.clone());
+        onetime_column_bytes(pre_encoded_len, file_handler.clone());
 
-        edit_benchmark(&mut rt, &mut group, pre_encoded_len, file_handler.clone());
+        edit_benchmark(&mut group, pre_encoded_len, file_handler.clone());
 
-        retrieve_column_benchmark(&mut rt, &mut group, pre_encoded_len, file_handler.clone());
+        retrieve_column_benchmark(&mut group, pre_encoded_len, file_handler.clone());
 
-        verify_column_benchmark(&mut rt, &mut group, pre_encoded_len, file_handler.clone());
+        verify_column_benchmark(&mut group, pre_encoded_len, file_handler.clone());
 
         tracing::info!(
             "that round of testing took {}m",
@@ -101,7 +96,6 @@ fn edit_different_shape_benchmark_main(c: &mut Criterion) {
 }
 
 fn open_file_handler_optimistic_from_prior(
-    rt: &Runtime,
     test_ulid: &Ulid,
     test_file_path: &PathBuf,
     previous_run: &mut Vec<PremadeFiles>,
@@ -115,32 +109,29 @@ fn open_file_handler_optimistic_from_prior(
     });
     let file_handler: Option<Arc<Mutex<BenchFileHandler>>> = if index.is_some() {
         let premade_file = previous_run[index.unwrap()].clone();
-        rt.block_on(async {
-            let file_handler = BenchFileHandler::new_attach_to_existing_ulid(
-                &env::current_dir()
-                    .unwrap()
-                    .join(constants::SERVER_FILE_FOLDER),
-                &premade_file.ulid,
-                pre_encoded_len,
-                encoded_len,
-            )
-            .await;
-            if file_handler.is_ok() {
-                tracing::debug!("save state found, extracing old save data");
-                Some(Arc::new(Mutex::new(file_handler.unwrap())))
-            } else {
-                tracing::warn!("bad save state encountered, purging and re-encoding");
-                previous_run.remove(index.unwrap());
-                write_state(previous_run).unwrap();
-                None
-            }
-        })
+        let file_handler = BenchFileHandler::new_attach_to_existing_ulid(
+            &env::current_dir()
+                .unwrap()
+                .join(constants::SERVER_FILE_FOLDER),
+            &premade_file.ulid,
+            pre_encoded_len,
+            encoded_len,
+        );
+        if file_handler.is_ok() {
+            tracing::debug!("save state found, extracing old save data");
+            Some(Arc::new(Mutex::new(file_handler.unwrap())))
+        } else {
+            tracing::warn!("bad save state encountered, purging and re-encoding");
+            previous_run.remove(index.unwrap());
+            write_state(previous_run).unwrap();
+            None
+        }
     } else {
         None
     };
     // For some reason `unwrap_or` is always going into the or state
-    if file_handler.is_some() {
-        file_handler.unwrap()
+    if let Some(file_handler) = file_handler {
+        file_handler
     } else {
         // default case, if no save state is found **or** if save state is corrupt
         tracing::warn!("No save state found, doing initial encoding of file");
@@ -155,17 +146,16 @@ fn open_file_handler_optimistic_from_prior(
         std::fs::copy(&test_file_path, &unencoded_test_file).expect("couldn't copy test file");
 
         let start_time = std::time::Instant::now();
-        let file_handler = rt.block_on(async {
+        let file_handler = {
             let file_handler = BenchFileHandler::create_from_unencoded_file(
                 test_ulid,
                 Some(&unencoded_test_file),
                 pre_encoded_len,
                 encoded_len,
             )
-            .await
             .expect("couldn't open the encoded file");
             Arc::new(Mutex::new(file_handler))
-        });
+        };
         tracing::debug!(
             "Done encoding file, that took {}ms",
             start_time.elapsed().as_millis()
@@ -229,7 +219,6 @@ fn write_state(state: &Vec<PremadeFiles>) -> Result<()> {
 }
 
 fn edit_benchmark(
-    rt: &mut Runtime,
     group: &mut BenchmarkGroup<WallTime>,
     pre_encoded_len: usize,
     file_handler: Arc<Mutex<BenchFileHandler>>,
@@ -238,9 +227,9 @@ fn edit_benchmark(
         BenchmarkId::new("editing file with X cols", pre_encoded_len),
         &pre_encoded_len,
         |b, &pre_encoded_len| {
-            b.to_async(&*rt).iter_batched(
-                || async {
-                    let file_handler_lock = file_handler.lock().await;
+            b.iter_batched(
+                || {
+                    let file_handler_lock = file_handler.lock().unwrap();
                     let total_file_bytes = file_handler_lock
                         .get_total_data_bytes()
                         .expect("couldn't get total data bytes");
@@ -252,12 +241,10 @@ fn edit_benchmark(
                         rand.gen_range(0..total_file_bytes as usize - random_bytes_to_write.len());
                     (random_bytes_to_write, start_index, file_handler_lock)
                 },
-                |input| async {
-                    let (random_bytes_to_write, start_index, mut encoded_file_reader_lock) =
-                        input.await;
+                |input| {
+                    let (random_bytes_to_write, start_index, mut encoded_file_reader_lock) = input;
                     let _original_bytes = encoded_file_reader_lock
                         .edit_bytes(start_index, &random_bytes_to_write)
-                        .await
                         .expect("couldn't edit bytes in the file");
                 },
                 BatchSize::SmallInput,
@@ -266,19 +253,14 @@ fn edit_benchmark(
     );
 }
 
-fn onetime_column_bytes(
-    rt: &mut Runtime,
-    pre_encoded_len: usize,
-    file_handler: Arc<Mutex<BenchFileHandler>>,
-) {
-    let columns = rt.block_on(async {
+fn onetime_column_bytes(pre_encoded_len: usize, file_handler: Arc<Mutex<BenchFileHandler>>) {
+    let columns = {
         let (columns_to_fetch, mut file_handler) =
-            retrieve_column_setup(&file_handler, pre_encoded_len).await;
+            retrieve_column_setup(&file_handler, pre_encoded_len);
         file_handler
             .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch))
-            .await
             .expect("couldn't get full columns from file")
-    });
+    };
     let merkle_bytes = columns
         .iter()
         .map(|col| col.path.len() * size_of::<Output<BenchDigest>>())
@@ -300,7 +282,6 @@ fn onetime_column_bytes(
 }
 
 fn retrieve_column_benchmark(
-    rt: &mut Runtime,
     group: &mut BenchmarkGroup<WallTime>,
     pre_encoded_len: usize,
     file_handler: Arc<Mutex<BenchFileHandler>>,
@@ -309,13 +290,12 @@ fn retrieve_column_benchmark(
         BenchmarkId::new("retrieving columns with X cols", pre_encoded_len),
         &pre_encoded_len,
         |b, &pre_encoded_len| {
-            b.to_async(&*rt).iter_batched(
+            b.iter_batched(
                 || retrieve_column_setup(&file_handler, pre_encoded_len),
-                |input| async {
-                    let (columns_to_fetch, mut file_handler) = input.await;
+                |input| {
+                    let (columns_to_fetch, mut file_handler) = input;
                     let _columns = file_handler
                         .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch))
-                        .await
                         .expect("couldn't get full columns from file");
                 },
                 BatchSize::SmallInput,
@@ -324,11 +304,11 @@ fn retrieve_column_benchmark(
     );
 }
 
-async fn retrieve_column_setup(
+fn retrieve_column_setup(
     file_handler: &Arc<Mutex<BenchFileHandler>>,
     pre_encoded_len: usize,
 ) -> (Vec<usize>, MutexGuard<BenchFileHandler>) {
-    let file_handler_lock = file_handler.lock().await;
+    let file_handler_lock = file_handler.lock().unwrap();
     let (_, encoded_len, _) = file_handler_lock.get_dimensions().unwrap();
     let mut rand = ChaChaRng::from_entropy();
     let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
@@ -339,13 +319,12 @@ async fn retrieve_column_setup(
 }
 
 fn verify_column_benchmark(
-    rt: &mut Runtime,
     group: &mut BenchmarkGroup<WallTime>,
     pre_encoded_len: usize,
     file_handler: Arc<Mutex<BenchFileHandler>>,
 ) {
-    let (root, columns_to_fetch, columns_fetched) = rt.block_on(async {
-        let mut file_handler_lock = file_handler.lock().await;
+    let (root, columns_to_fetch, columns_fetched) = {
+        let mut file_handler_lock = file_handler.lock().unwrap();
         let (_, encoded_len, _) = file_handler_lock.get_dimensions().unwrap();
         let mut rand = ChaChaRng::from_entropy();
         let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
@@ -356,18 +335,15 @@ fn verify_column_benchmark(
 
         let columns_fetched = file_handler_lock
             .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch.clone()))
-            .await
             .expect("couldn't get full columns from file");
         (root, columns_to_fetch, columns_fetched)
-    });
+    };
 
     group.bench_with_input(
         BenchmarkId::new("verifying columns with X cols", pre_encoded_len),
         &columns_fetched,
         |b, columns_fetched| {
-            b.to_async(&*rt).iter(|| async {
-                client_online_verify_column_paths(&root, &columns_to_fetch, columns_fetched)
-            })
+            b.iter(|| client_online_verify_column_paths(&root, &columns_to_fetch, columns_fetched))
         },
     );
 }
@@ -377,8 +353,8 @@ fn verify_column_benchmark(
     pre_encoded_len: usize,
     file_handler: Arc<Mutex<BenchFileHandler>>,
 ) {
-    let (root, columns_to_fetch, columns_fetched) = rt.block_on(async {
-        let mut file_handler_lock = file_handler.lock().await;
+    let (root, columns_to_fetch, columns_fetched) = rt.block_on( {
+        let mut file_handler_lock = file_handler.lock();
         let (_, encoded_len, _) = file_handler_lock.get_dimensions().unwrap();
         let mut rand = ChaChaRng::from_entropy();
         let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
@@ -389,7 +365,7 @@ fn verify_column_benchmark(
 
         let columns_fetched = file_handler_lock
             .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch.clone()))
-            .await
+
             .expect("couldn't get full columns from file");
         (root, columns_to_fetch, columns_fetched)
     });
@@ -397,7 +373,7 @@ fn verify_column_benchmark(
         BenchmarkId::new("verifying leaves with X cols", pre_encoded_len),
         &columns_fetched,
         |b, columns_fetched| {
-            b.to_async(&*rt).iter(|| async {
+            b.to_(&*rt).iter(||  {
                 client_online_verify_column_leaves(
                     locally_derived_column_leaves,
                     requested_columns,
