@@ -9,9 +9,10 @@ use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::LigeroEncoding;
 use std::cmp::min;
 use std::collections::VecDeque;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 pub struct EncodedFileWriter<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding> {
     encoding: E,
@@ -56,7 +57,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         }
     }
 
-    pub async fn convert_unencoded_file(
+    pub fn convert_unencoded_file(
         unencoded_file: &mut File,
         target_encoded_file: &PathBuf,
         target_digest_file: Option<&mut File>,
@@ -80,15 +81,9 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             "Number of encoded columns must be greater than 2 * number of columns"
         );
 
-        let total_size = unencoded_file.metadata().await?.len() as usize;
+        let total_size = unencoded_file.metadata()?.len() as usize;
 
-        unencoded_file.seek(SeekFrom::Start(0)).await?;
-        let target_file = OpenOptions::default()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&target_encoded_file)
-            .await?;
+        let target_file = File::create(target_encoded_file)?;
 
         let mut encoded_writer = Self::new(
             num_pre_encoded_columns,
@@ -106,12 +101,12 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             &target_encoded_file.display()
         );
         loop {
-            let bytes_read = unencoded_file.read(&mut read_buf).await?;
+            let bytes_read = unencoded_file.read(&mut read_buf)?;
             if bytes_read == 0 {
                 break;
             }
 
-            encoded_writer.push_bytes(&read_buf[..bytes_read]).await?;
+            encoded_writer.push_bytes(&read_buf[..bytes_read])?;
 
             _total_bytes_read += bytes_read;
             let _percent_done = _total_bytes_read as f64 * 100.0 / total_size as f64;
@@ -121,15 +116,15 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             }
         }
 
-        let tree = encoded_writer.finalize_to_merkle_tree().await?;
+        let tree = encoded_writer.finalize_to_merkle_tree()?;
 
         if let Some(digest_file) = target_digest_file {
-            write_tree_to_file::<D>(digest_file, &tree).await?;
+            write_tree_to_file::<D>(digest_file, &tree)?;
         }
         Ok(tree)
     }
 
-    pub async fn push_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+    pub fn push_bytes(&mut self, bytes: &[u8]) -> Result<()> {
         self.bytes_received += bytes.len();
         ensure!(
             self.bytes_received <= self.total_file_size,
@@ -144,7 +139,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         while self.incoming_byte_buffer.len()
             >= (self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize)
         {
-            self.process_current_row().await?;
+            self.process_current_row()?;
             rows_written += 1;
             const PERCENT_VALUES: f64 = 25.0;
             if (rows_written as f64 * 100.0 / self.num_rows as f64).floor() % PERCENT_VALUES
@@ -160,7 +155,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         Ok(())
     }
 
-    pub async fn consume_byte_iterator(
+    pub fn consume_byte_iterator(
         &mut self,
         byte_iterator: &mut impl Iterator<Item = u8>,
     ) -> Result<()> {
@@ -171,7 +166,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             while self.incoming_byte_buffer.len()
                 >= (self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize)
             {
-                self.process_current_row().await?;
+                self.process_current_row()?;
             }
         }
         Ok(())
@@ -179,14 +174,14 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
 
     /// Don't call on an unfinished row unless it is the last row that will never be fully filled.
     ///  Otherwise, the file can be corrupted
-    async fn process_current_row(&mut self) -> Result<()> {
+    fn process_current_row(&mut self) -> Result<()> {
         let encoded_row = self.encode_current_row()?;
 
         // update digests
         self.column_digest_accumulator.update(&encoded_row)?;
 
         // write sparse file
-        self.write_row(&encoded_row).await?;
+        self.write_row(&encoded_row)?;
 
         Ok(())
     }
@@ -224,13 +219,14 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         Ok(row_to_encode)
     }
 
-    async fn write_row(&mut self, encoded_row: &[F]) -> Result<()> {
+    fn write_row(&mut self, encoded_row: &[F]) -> Result<()> {
         // let row_bytes = self
         //     .incoming_byte_buffer
         //     .range(0..min(self.pre_encoded_size, self.incoming_byte_buffer.len()));
         let row_bytes: Vec<u8> = F::field_vec_to_raw_bytes(encoded_row);
-        assert!(
-            row_bytes.len() == self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize,
+        assert_eq!(
+            row_bytes.len(),
+            self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize,
             "wrong number of bytes to write to file"
         );
 
@@ -243,71 +239,64 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         );
         // todo: probably will remove this upon optimization
 
-        self.file_to_write_to
-            .seek(SeekFrom::Start(
-                (rows_written * F::WRITTEN_BYTES_WIDTH as usize) as u64,
-            ))
-            .await?;
+        let mut write_location = (rows_written * F::WRITTEN_BYTES_WIDTH as usize) as u64;
+        if !cfg!(unix) {
+            // windows doesn't have `write_at` atomics, so we need to seek around separately
+            self.file_to_write_to
+                .seek(SeekFrom::Start(write_location))?;
+        }
 
         let column_length_in_bytes = self.num_rows as i64 * F::WRITTEN_BYTES_WIDTH as i64;
         for bytes_of_field_element in bytes_to_write_iterator.into_iter() {
-            self.file_to_write_to
-                .write_all(&bytes_of_field_element)
-                .await?;
-            self.file_to_write_to.flush().await?;
-            self.file_to_write_to
-                .seek(SeekFrom::Current(
+            if cfg!(unix) {
+                self.file_to_write_to
+                    .write_at(bytes_of_field_element, write_location)?;
+                write_location += column_length_in_bytes as u64;
+            } else {
+                self.file_to_write_to.write_all(&bytes_of_field_element)?;
+                self.file_to_write_to.flush()?;
+                self.file_to_write_to.seek(SeekFrom::Current(
                     column_length_in_bytes - F::WRITTEN_BYTES_WIDTH as i64,
-                ))
-                .await?;
-
+                ))?;
+            }
             // self.bytes_written += F::WRITTEN_BYTES_WIDTH as usize;
             self.bytes_written += bytes_of_field_element.len();
         }
         Ok(())
     }
 
-    pub async fn finalize_to_column_digest(mut self) -> Result<Vec<Output<D>>> {
+    pub fn finalize_to_column_digest(mut self) -> Result<Vec<Output<D>>> {
         while !self.incoming_byte_buffer.is_empty() {
-            self.process_current_row().await?
+            self.process_current_row()?
         }
         assert!(
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
-
-        self.file_to_write_to.flush().await?;
-        self.file_to_write_to.sync_all().await?;
 
         Ok(self.column_digest_accumulator.get_column_digests())
     }
 
-    pub async fn finalize_to_commit(mut self) -> Result<Output<D>> {
+    pub fn finalize_to_commit(mut self) -> Result<Output<D>> {
         while !self.incoming_byte_buffer.is_empty() {
-            self.process_current_row().await?
+            self.process_current_row()?
         }
         assert!(
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
-
-        self.file_to_write_to.flush().await?;
-        self.file_to_write_to.sync_all().await?;
 
         self.column_digest_accumulator.finalize_to_commit() //unwrap won't panic because we are using Columns::All
     }
 
-    pub async fn finalize_to_merkle_tree(mut self) -> Result<MerkleTree<D>> {
+    pub fn finalize_to_merkle_tree(mut self) -> Result<MerkleTree<D>> {
         while !self.incoming_byte_buffer.is_empty() {
-            self.process_current_row().await?
+            self.process_current_row()?
         }
         assert!(
             self.incoming_byte_buffer.is_empty(),
             "incoming byte buffer is not yet empty, shouldn't be finalizing"
         );
-
-        self.file_to_write_to.flush().await?;
-        self.file_to_write_to.sync_all().await?;
 
         self.column_digest_accumulator.finalize_to_merkle_tree()
     }
