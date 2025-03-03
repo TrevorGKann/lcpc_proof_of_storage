@@ -1,7 +1,7 @@
 use crate::fields::data_field::DataField;
 use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use lcpc_2d::{merkle_tree, FieldHash, LcEncoding};
+use lcpc_2d::{merkle_tree, FieldHash, LcColumn, LcEncoding};
 use lcpc_ligero_pc::LigeroEncoding;
 use std::iter::Iterator;
 
@@ -16,7 +16,7 @@ where
     coefs_buffer: Vec<F>, // fft done in place
     coef_buffer_position: usize,
     unencoded_len: usize,
-    _encoded_len: usize,
+    encoded_len: usize,
     encoding: E,
 }
 
@@ -51,7 +51,7 @@ where
             digests.push(digest);
         }
 
-        while let Some(row) = self.next() {
+        for row in self {
             for (digest_index, column_index) in column_indices.iter().enumerate() {
                 row[*column_index].digest_update(&mut digests[digest_index]);
             }
@@ -75,6 +75,36 @@ where
         merkle_tree::<D>(&leaves, &mut nodes_of_tree);
         nodes_of_tree.last().unwrap().to_owned()
     }
+
+    pub fn get_full_columns<D>(mut self, specified_columns: &[usize]) -> Vec<LcColumn<D, E>>
+    where
+        D: Digest + FixedOutputReset,
+    {
+        let mut digests: ColumnDigestAccumulator<D, F> =
+            ColumnDigestAccumulator::new(self.coefs_buffer.len(), ColumnsToCareAbout::All);
+        let mut column_values: Vec<Vec<F>> = Vec::with_capacity(specified_columns.len());
+        for _ in 0..specified_columns.len() {
+            column_values.push(Vec::new());
+        }
+
+        for row in self {
+            digests.update(&row).unwrap(); // should never panic because the size is fixed
+            for (accumulator_index, column_index) in specified_columns.iter().enumerate() {
+                column_values[accumulator_index].push(row[*column_index]);
+            }
+        }
+
+        let tree = digests.finalize_to_merkle_tree().unwrap();
+
+        let mut result = Vec::with_capacity(specified_columns.len());
+        for i in specified_columns.iter().rev() {
+            let col = column_values.pop().unwrap();
+            let path = tree.get_path(*i).unwrap();
+            result.push(LcColumn { col, path })
+        }
+        assert_eq!(result.len(), specified_columns.len());
+        result
+    }
 }
 
 impl<F, I> RowGeneratorIter<F, I, LigeroEncoding<F>>
@@ -91,7 +121,7 @@ where
             coefs_buffer: vec![F::ZERO; num_encoded],
             coef_buffer_position: 0,
             unencoded_len: num_pre_encoded,
-            _encoded_len: num_encoded,
+            encoded_len: num_encoded,
             encoding,
         }
     }
