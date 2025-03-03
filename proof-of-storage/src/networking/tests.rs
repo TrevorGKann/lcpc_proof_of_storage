@@ -776,47 +776,4 @@ pub mod network_tests {
         assert!(bad_verify_result.is_err());
         tracing::info!("Test passed successfully!");
     }
-
-    #[ignore]
-    #[tokio::test]
-    async fn generate_test_files_of_different_sizes() {
-        use tokio::io::AsyncWriteExt;
-
-        let prefixes = vec![1usize, 4];
-        let orders_of_magnitude: Vec<usize> = (3..=9).collect();
-        let sizes: Vec<usize> = vec![];
-
-        let mut test_files_path = env::current_dir().unwrap();
-        test_files_path.push("test_files");
-
-        let mut rng = rand::thread_rng();
-        let mut buffer = [0u8; 8192];
-
-        for order_mag in orders_of_magnitude.iter() {
-            for prefix in prefixes.iter() {
-                let total_size = pow(10, *order_mag) * prefix;
-
-                let mut file_location = test_files_path.clone();
-                file_location.push(format!("{}_byte_file.bytes", total_size));
-                println!("creating the file {}", file_location.display());
-                let mut file = fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .open(&file_location)
-                    .await
-                    .unwrap();
-
-                let mut bytes_written = 0;
-                let mut bytes_left = total_size;
-
-                while bytes_left > 0 {
-                    let chunk_size = bytes_left.min(buffer.len());
-                    rng.fill_bytes(&mut buffer[0..chunk_size]);
-                    file.write_all(&buffer[..chunk_size]).await.unwrap();
-                    bytes_written += chunk_size;
-                    bytes_left -= chunk_size;
-                }
-            }
-        }
-    }
 }
