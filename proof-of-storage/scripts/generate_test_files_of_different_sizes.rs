@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables)]
 use anyhow::Result;
 use num_traits::pow;
 use rand_core::RngCore;
@@ -38,14 +39,12 @@ fn main() -> Result<()> {
                 .create(true)
                 .open(&file_location)?;
 
-            let mut bytes_written = 0;
             let mut bytes_left = total_size;
 
             while bytes_left > 0 {
                 let chunk_size = bytes_left.min(buffer.len());
                 rng.fill_bytes(&mut buffer[0..chunk_size]);
                 file.write_all(&buffer[..chunk_size])?;
-                bytes_written += chunk_size;
                 bytes_left -= chunk_size;
             }
         }

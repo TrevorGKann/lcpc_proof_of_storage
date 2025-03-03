@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables)]
 use anyhow::Result;
 use blake3::Hasher as Blake3;
 use human_hash::humanize;

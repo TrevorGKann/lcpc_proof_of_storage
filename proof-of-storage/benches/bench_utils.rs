@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::fmt::Display;
 use std::path::PathBuf;
 use tokio::runtime::{Builder, Runtime};
@@ -21,7 +22,6 @@ pub fn start_bench_subscriber() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }
 
-#[allow(dead_code)]
 pub fn get_bench_runtime() -> Runtime {
     Builder::new_multi_thread()
         .enable_all()

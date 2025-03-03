@@ -3,7 +3,7 @@ use std::cmp::min;
 use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use blake3::Hasher as Blake3;
-use ff::{Field, PrimeField};
+use ff::PrimeField;
 use fffft::FieldFFT;
 use lcpc_2d::{
     open_column, verify_column_path, FieldHash, LcColumn, LcCommit, LcEncoding, VerifierError,

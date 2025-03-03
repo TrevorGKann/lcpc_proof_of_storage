@@ -16,7 +16,7 @@ where
     coefs_buffer: Vec<F>, // fft done in place
     coef_buffer_position: usize,
     unencoded_len: usize,
-    encoded_len: usize,
+    _encoded_len: usize,
     encoding: E,
 }
 
@@ -26,21 +26,21 @@ where
     I: Iterator<Item = F>,
     E: LcEncoding<F = F>,
 {
-    pub fn get_column_digests<D>(mut self) -> Vec<Output<D>>
+    pub fn get_column_digests<D>(self) -> Vec<Output<D>>
     where
         D: Digest + FixedOutputReset,
     {
         let mut digests: ColumnDigestAccumulator<D, F> =
             ColumnDigestAccumulator::new(self.coefs_buffer.len(), ColumnsToCareAbout::All);
 
-        while let Some(row) = self.next() {
+        for row in self {
             digests.update(&row).unwrap() // should never panic because the size is fixed
         }
 
         digests.get_column_digests()
     }
 
-    pub fn get_specified_column_digests<D>(mut self, column_indices: &[usize]) -> Vec<Output<D>>
+    pub fn get_specified_column_digests<D>(self, column_indices: &[usize]) -> Vec<Output<D>>
     where
         D: Digest + FixedOutputReset,
     {
@@ -76,7 +76,7 @@ where
         nodes_of_tree.last().unwrap().to_owned()
     }
 
-    pub fn get_full_columns<D>(mut self, specified_columns: &[usize]) -> Vec<LcColumn<D, E>>
+    pub fn get_full_columns<D>(self, specified_columns: &[usize]) -> Vec<LcColumn<D, E>>
     where
         D: Digest + FixedOutputReset,
     {
@@ -121,7 +121,7 @@ where
             coefs_buffer: vec![F::ZERO; num_encoded],
             coef_buffer_position: 0,
             unencoded_len: num_pre_encoded,
-            encoded_len: num_encoded,
+            _encoded_len: num_encoded,
             encoding,
         }
     }
@@ -139,7 +139,7 @@ where
         while self.coef_buffer_position < self.unencoded_len {
             if let Some(field_element) = self.field_iterator.next() {
                 self.coefs_buffer[self.coef_buffer_position] = field_element;
-                self.coef_buffer_position = self.coef_buffer_position + 1;
+                self.coef_buffer_position += 1;
             } else {
                 break;
             }
@@ -342,7 +342,7 @@ mod tests {
             panic!("didn't get commit!")
         };
 
-        let buf_reader = std::io::BufReader::new(std::fs::File::open(&test_file_path).unwrap())
+        let buf_reader = std::io::BufReader::new(std::fs::File::open(test_file_path).unwrap())
             .bytes()
             .map(|b| b.unwrap());
         let field_iterator = FieldGeneratorIter::<_, WriteableFt63>::new(buf_reader);
