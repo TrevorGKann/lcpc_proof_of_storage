@@ -9,7 +9,7 @@ use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::LigeroEncoding;
 use std::cmp::min;
 use std::collections::VecDeque;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;

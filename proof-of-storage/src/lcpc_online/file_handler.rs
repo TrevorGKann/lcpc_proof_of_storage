@@ -10,7 +10,6 @@ use crate::lcpc_online::file_formatter::{
 use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{bail, ensure, Context, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use itertools::Itertools;
 use lcpc_2d::{LcColumn, LcEncoding, LcRoot};
 use lcpc_ligero_pc::LigeroEncoding;
 use std::fs::{remove_dir, remove_file, rename, File, OpenOptions};
@@ -151,8 +150,10 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
             .write(true)
             .open(&unencoded_path)?;
         let mut digest_file = OpenOptions::new()
-            .create(true)
             .write(true)
+            .read(true)
+            .create(true)
+            .truncate(true)
             .open(&digest_path)?;
         EncodedFileWriter::<F, D, LigeroEncoding<F>>::convert_unencoded_file(
             &mut unencoded_file,
