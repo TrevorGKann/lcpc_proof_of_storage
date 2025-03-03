@@ -10,8 +10,8 @@ clean: clean-db clean-bench
 
 # clean database
 clean-db:
-    -rm -rf {{ source_directory() }}/proof-of-storage/PoR_Database/**
-    -rm -rf {{ source_directory() }}/proof-of-storage/PoR_server_files/**
+    -rm -rf {{ source_directory() }}/proof-of-storage/PoR_Database/*
+    -rm -rf {{ source_directory() }}/proof-of-storage/PoR_server_files/*
 
 # get the size of the database on the disk
 db-size:
@@ -33,7 +33,7 @@ bench-report:
     zip -qr report.zip target/criterion/
 
 clean-bench:
-    -rm -rf {{ source_directory() }}/proof-of-storage/bench_files/**
+    -rm -rf {{ source_directory() }}/proof-of-storage/bench_files/*
 
 [no-cd]
 rscript target_script *args:
