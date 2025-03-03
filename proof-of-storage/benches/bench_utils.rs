@@ -21,6 +21,7 @@ pub fn start_bench_subscriber() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }
 
+#[allow(dead_code)]
 pub fn get_bench_runtime() -> Runtime {
     Builder::new_multi_thread()
         .enable_all()
