@@ -5,15 +5,10 @@ use criterion::measurement::WallTime;
 use criterion::{
     criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
 };
-use itertools::Itertools;
 use lcpc_ligero_pc::LigeroEncoding;
 use proof_of_storage::databases::constants;
-use proof_of_storage::fields::data_field::DataField;
-use proof_of_storage::fields::WriteableFt63;
+use proof_of_storage::fields::{Ft253_192, WriteableFt63};
 use proof_of_storage::lcpc_online::file_handler::FileHandler;
-use rand::Rng;
-use rand_core::{RngCore, SeedableRng};
-use serde::{Deserialize, Serialize};
 use std::ops::Add;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -22,7 +17,7 @@ use ulid::Ulid;
 mod bench_utils;
 mod flamegraph_profiler;
 
-type BenchField = WriteableFt63;
+type BenchField = Ft253_192;
 type BenchDigest = Blake3;
 type BenchFileHandler = FileHandler<BenchDigest, BenchField, LigeroEncoding<BenchField>>;
 
