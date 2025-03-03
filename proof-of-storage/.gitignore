@@ -1,2 +1,8 @@
+
+## Local definitions 
 PoR_Database/*
 PoR_server_files/*
+test_files/*
+test_results/*
+src/bin/*
+!src/bin/por.rs
