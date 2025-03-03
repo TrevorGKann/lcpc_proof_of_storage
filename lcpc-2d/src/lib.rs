@@ -11,7 +11,7 @@
 /*!
 lcpc2d is a polynomial commitment scheme based on linear codes
  */
-
+#![allow(non_local_definitions)]
 use std::iter::repeat_with;
 
 use digest::{Digest, FixedOutputReset, Output};
