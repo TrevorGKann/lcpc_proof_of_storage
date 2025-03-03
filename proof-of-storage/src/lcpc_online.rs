@@ -3,7 +3,7 @@ use std::cmp::min;
 use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use blake3::Hasher as Blake3;
-use ff::PrimeField;
+use ff::{Field, PrimeField};
 use fffft::FieldFFT;
 use lcpc_2d::{
     open_column, verify_column_path, FieldHash, LcColumn, LcCommit, LcEncoding, VerifierError,
@@ -372,7 +372,7 @@ pub fn client_verify_commitment(
     // create a vec of just the received leaves
     let received_columns_leaves: Vec<Output<Blake3>> = received_columns
         .iter()
-        .map(hash_column_to_digest::<Blake3>)
+        .map(hash_column_to_digest::<Blake3, _>)
         .collect();
 
     client_online_verify_column_leaves(
@@ -416,13 +416,22 @@ pub fn client_verify_commitment_without_full_columns(
     Ok(())
 }
 
-pub fn hash_column_to_digest<D>(column: &PoSColumn) -> Output<D>
+pub fn hash_column_to_digest<D, E>(column: &LcColumn<D, E>) -> Output<D>
 where
     D: Digest,
+    E: LcEncoding,
+{
+    hash_field_vec_to_digest::<D, FldT<E>>(&column.col)
+}
+
+pub fn hash_field_vec_to_digest<D, F>(column: &[F]) -> Output<D>
+where
+    D: Digest,
+    F: FieldHash,
 {
     let mut hasher = D::new();
     Digest::update(&mut hasher, <Output<D> as Default>::default());
-    for e in &column.col[..] {
+    for e in column {
         e.digest_update(&mut hasher);
     }
 
