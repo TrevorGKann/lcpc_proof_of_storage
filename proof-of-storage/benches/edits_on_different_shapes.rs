@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::flamegraph_profiler::FlamegraphProfiler;
 use anyhow::{bail, ensure, Result};
 use blake3::traits::digest::Output;
@@ -392,7 +393,7 @@ fn verify_column_benchmark(
 */
 
 fn custom_criterion() -> Criterion {
-    Criterion::default().with_profiler(FlamegraphProfiler::new(100))
+    Criterion::default().with_profiler(FlamegraphProfiler::new(1000))
 }
 
 criterion_group! {

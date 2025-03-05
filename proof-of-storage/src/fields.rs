@@ -107,7 +107,6 @@ pub fn stream_file_to_field_elements_vec_sync<F: DataField>(
 
 // #[tracing::instrument]
 pub fn convert_byte_vec_to_field_elements_vec<F: DataField>(byte_vec: &[u8]) -> Vec<F> {
-    // todo: can refactor this entire function as a F::from_byte_vec(byte_vec)
     F::from_byte_vec(byte_vec)
 }
 

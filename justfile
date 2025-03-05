@@ -29,14 +29,15 @@ bench:
     cargo bench -p proof-of-storage
 
 bench-report:
-    cd {{ source_directory() }}/target/
     zip -qr report.zip target/criterion/
 
 clean-bench:
     -rm -rf {{ source_directory() }}/proof-of-storage/bench_files/*
 
-[no-cd]
 rscript target_script *args:
-    cargo run --bin {{ target_script }} -- {{ args }}
+    cd proof-of-storage && RUSTFLAGS="-Awarnings" RUST_BACKTRACE=1 cargo run --bin {{ target_script }} -- {{ args }}
+
+results:
+    cat proof-of-storage/test_results/*/results.json | jq . -S  | jless
 
 #    mv report.zip ../

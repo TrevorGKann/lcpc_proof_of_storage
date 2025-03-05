@@ -7,7 +7,7 @@ use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::LigeroEncoding;
-use std::cmp::min;
+use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -32,7 +32,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         num_pre_encoded_columns: usize,
         num_encoded_columns: usize,
         total_file_size: usize,
-        target_file: File,
+        mut target_file: File,
     ) -> Self {
         let column_digest_accumulator =
             ColumnDigestAccumulator::new(num_encoded_columns, ColumnsToCareAbout::All);
@@ -42,6 +42,9 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         let num_rows = total_file_size
             .div_ceil(F::DATA_BYTE_CAPACITY as usize)
             .div_ceil(num_pre_encoded_columns);
+
+        // target_file.set_len(total_file_size as u64).unwrap();
+        // Self::ensure_file_is_correct_len(&mut target_file, total_file_size as u64);
 
         EncodedFileWriter {
             encoding,
@@ -55,6 +58,29 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             encoded_size: num_encoded_columns,
             num_rows,
         }
+    }
+
+    fn ensure_file_is_correct_len(file: &mut File, desired_len: u64) {
+        let current_len = file.metadata().unwrap().len();
+        match current_len.cmp(&desired_len) {
+            Ordering::Less => {
+                // too big of a set_len crashes my computer. I have to write 0 bytes instead
+                tracing::debug!("Extending the file to necessary size");
+                file.seek(SeekFrom::End(0))
+                    .expect("could not seek to end of file");
+                let write_buff = [0; 2usize.pow(12)];
+                let mut bytes_left = (desired_len - current_len) as usize;
+                while bytes_left > 0 {
+                    file.write_all(&write_buff[..min(write_buff.len(), bytes_left)])
+                        .expect("could not write zero bytes to file");
+                    bytes_left -= min(write_buff.len(), bytes_left)
+                }
+                assert_eq!(file.metadata().unwrap().len(), desired_len);
+            }
+            Ordering::Equal => {}
+            Ordering::Greater => file.set_len(desired_len).unwrap(),
+        }
+        tracing::debug!("Finished extending the file");
     }
 
     pub fn convert_unencoded_file(
@@ -254,7 +280,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
                 write_location += column_length_in_bytes as u64;
             } else {
                 self.file_to_write_to.write_all(&bytes_of_field_element)?;
-                self.file_to_write_to.flush()?;
+                // self.file_to_write_to.flush()?;
                 self.file_to_write_to.seek(SeekFrom::Current(
                     column_length_in_bytes - F::WRITTEN_BYTES_WIDTH as i64,
                 ))?;

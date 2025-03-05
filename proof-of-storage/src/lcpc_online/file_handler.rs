@@ -129,7 +129,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
 
     pub fn create_from_unencoded_file(
         ulid: &Ulid,
-        file_handle_thats_not_already_ulid: Option<&PathBuf>,
+        file_handle_if_not_already_ulid: Option<&PathBuf>,
         pre_encoded_size: usize,
         encoded_size: usize,
     ) -> Result<Self> {
@@ -141,7 +141,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
         let unencoded_path = get_unencoded_file_location_from_id(&ulid);
         let encoded_path = get_encoded_file_location_from_id(&ulid);
         let digest_path = get_merkle_file_location_from_id(&ulid);
-        if let Some(file_handle) = file_handle_thats_not_already_ulid {
+        if let Some(file_handle) = file_handle_if_not_already_ulid {
             rename(file_handle, &unencoded_path)?;
         }
 
@@ -593,7 +593,7 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
             .next()
             .is_none()
         {
-            remove_dir(&self.unencoded_file_handle.parent().unwrap())?
+            remove_dir(self.unencoded_file_handle.parent().unwrap())?
         }
         Ok(())
     }

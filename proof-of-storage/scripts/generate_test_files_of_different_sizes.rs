@@ -1,4 +1,4 @@
-#![allow(unused_imports, unused_variables)]
+#![allow(unused)]
 use anyhow::Result;
 use num_traits::pow;
 use rand_core::RngCore;

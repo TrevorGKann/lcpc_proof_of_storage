@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::flamegraph_profiler::FlamegraphProfiler;
 use blake3::Hasher as Blake3;
 use criterion::async_executor::AsyncExecutor;
@@ -26,8 +27,8 @@ type BenchFileHandler = FileHandler<BenchDigest, BenchField, LigeroEncoding<Benc
 fn commit_different_shape_benchmark_main(c: &mut Criterion) {
     bench_utils::start_bench_subscriber();
 
-    // let test_file_path = PathBuf::from("test_files/1000000000_byte_file.bytes");
-    let test_file_path = PathBuf::from("test_files/10000_byte_file.bytes");
+    let test_file_path = PathBuf::from("test_files/1000000000_byte_file.bytes");
+    // let test_file_path = PathBuf::from("test_files/10000_byte_file.bytes");
     let total_file_bytes = std::fs::metadata(&test_file_path).unwrap().len();
 
     let powers_of_two_for_pre_encoded_columns: Vec<u32> = (13..24).collect();
@@ -97,7 +98,7 @@ fn commit_benchmark(
 }
 
 fn custom_criterion() -> Criterion {
-    Criterion::default().with_profiler(FlamegraphProfiler::new(100))
+    Criterion::default().with_profiler(FlamegraphProfiler::new(1000))
 }
 
 criterion_group! {
