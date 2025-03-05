@@ -31,7 +31,7 @@ fn commit_different_shape_benchmark_main(c: &mut Criterion) {
     // let test_file_path = PathBuf::from("test_files/10000_byte_file.bytes");
     let total_file_bytes = std::fs::metadata(&test_file_path).unwrap().len();
 
-    let powers_of_two_for_pre_encoded_columns: Vec<u32> = (13..24).collect();
+    let powers_of_two_for_pre_encoded_columns: Vec<u32> = (16..20).collect();
 
     let mut group = c.benchmark_group("commit_to_file");
     group.throughput(Throughput::Bytes(total_file_bytes));

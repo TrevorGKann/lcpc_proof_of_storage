@@ -4,9 +4,13 @@ use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, Col
 use crate::lcpc_online::file_handler::write_tree_to_file;
 use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{ensure, Result};
+use bitvec::macros::internal::funty::Unsigned;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::LigeroEncoding;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::ParallelIterator;
+use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator};
 use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
 use std::fs::File;
@@ -18,9 +22,13 @@ pub struct EncodedFileWriter<F: DataField, D: Digest + FixedOutputReset, E: LcEn
     encoding: E,
     column_digest_accumulator: ColumnDigestAccumulator<D, F>,
     incoming_byte_buffer: VecDeque<u8>,
+    outgoing_field_buffer_size: usize,
+    outgoing_field_buffer: Vec<Vec<F>>,
     total_file_size: usize,
     bytes_received: usize,
     bytes_written: usize,
+    rows_processed: usize,
+    rows_written: usize,
     file_to_write_to: File,
     pre_encoded_size: usize,
     encoded_size: usize,
@@ -34,6 +42,19 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         total_file_size: usize,
         mut target_file: File,
     ) -> Self {
+        assert!(
+            num_encoded_columns.is_power_of_two(),
+            "num_encoded_columns must be a power of two"
+        );
+        assert!(
+            num_pre_encoded_columns < num_encoded_columns,
+            "num_pre_encoded_columns must be less than num_encoded_columns"
+        );
+        assert!(
+            num_pre_encoded_columns > 0,
+            "num_pre_encoded_columns must be > 0"
+        );
+
         let column_digest_accumulator =
             ColumnDigestAccumulator::new(num_encoded_columns, ColumnsToCareAbout::All);
         let incoming_byte_buffer =
@@ -43,20 +64,29 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             .div_ceil(F::DATA_BYTE_CAPACITY as usize)
             .div_ceil(num_pre_encoded_columns);
 
-        // target_file.set_len(total_file_size as u64).unwrap();
-        // Self::ensure_file_is_correct_len(&mut target_file, total_file_size as u64);
+        // todo: probably parameterize this at some point in some way
+        let per_column_buffer_size = 10;
+        let outgoing_field_buffer =
+            vec![Vec::with_capacity(per_column_buffer_size); num_encoded_columns];
+
+        // preallocate file as zeros so we don't need to live request more blocks on the fly
+        Self::ensure_file_is_correct_len(&mut target_file, total_file_size as u64);
 
         EncodedFileWriter {
             encoding,
             column_digest_accumulator,
             incoming_byte_buffer,
+            outgoing_field_buffer,
+            outgoing_field_buffer_size: per_column_buffer_size,
             total_file_size,
             bytes_received: 0,
+            rows_processed: 0,
             bytes_written: 0,
             file_to_write_to: target_file,
             pre_encoded_size: num_pre_encoded_columns,
             encoded_size: num_encoded_columns,
             num_rows,
+            rows_written: 0,
         }
     }
 
@@ -159,22 +189,21 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
 
         self.incoming_byte_buffer.extend(bytes);
 
-        let mut rows_written =
-            self.bytes_written / (F::WRITTEN_BYTES_WIDTH as usize * self.encoded_size);
+        // let mut rows_processed =
+        //     self.bytes_written / (F::WRITTEN_BYTES_WIDTH as usize * self.encoded_size);
         // process bytes whenever at least a full row has been given
         while self.incoming_byte_buffer.len()
             >= (self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize)
         {
             self.process_current_row()?;
-            rows_written += 1;
             const PERCENT_VALUES: f64 = 25.0;
-            if (rows_written as f64 * 100.0 / self.num_rows as f64).floor() % PERCENT_VALUES
-                > ((rows_written + 1) as f64 * 100.0 / self.num_rows as f64).floor()
+            if (self.rows_processed as f64 * 100.0 / self.num_rows as f64).floor() % PERCENT_VALUES
+                > ((self.rows_processed + 1) as f64 * 100.0 / self.num_rows as f64).floor()
                     % PERCENT_VALUES
             {
                 tracing::debug!(
-                    "encoding file: file is {}% written",
-                    rows_written as f32 * 100.0 / self.num_rows as f32
+                    "encoding file: file is {}% processed",
+                    self.rows_processed as f32 * 100.0 / self.num_rows as f32
                 );
             }
         }
@@ -207,7 +236,10 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         self.column_digest_accumulator.update(&encoded_row)?;
 
         // write sparse file
-        self.write_row(&encoded_row)?;
+        // self.write_row(encoded_row)?;
+        self.buffered_write_row(encoded_row)?;
+
+        self.rows_processed += 1;
 
         Ok(())
     }
@@ -245,11 +277,62 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         Ok(row_to_encode)
     }
 
-    fn write_row(&mut self, encoded_row: &[F]) -> Result<()> {
-        // let row_bytes = self
-        //     .incoming_byte_buffer
-        //     .range(0..min(self.pre_encoded_size, self.incoming_byte_buffer.len()));
-        let row_bytes: Vec<u8> = F::field_vec_to_raw_bytes(encoded_row);
+    fn buffered_write_row(&mut self, encoded_row: Vec<F>) -> Result<()> {
+        encoded_row.into_iter().enumerate().for_each(|(index, f)| {
+            // optimization: make this a par iter,
+            //   figure out how to do par-slicing of self.outgoing_field_buffer
+            self.outgoing_field_buffer[index].push(f);
+        });
+        let current_buf_size = self.outgoing_field_buffer.first().unwrap().len();
+
+        // if there's no reason to drain the buffer to the file then return
+        if current_buf_size < self.outgoing_field_buffer_size
+            && current_buf_size + self.rows_written < self.num_rows
+        {
+            return Ok(());
+        }
+
+        // otherwise the buffer is full or would complete the file
+        let mut write_location = (self.rows_written * F::WRITTEN_BYTES_WIDTH as usize) as u64;
+        #[cfg(not(unix))]
+        self.file_to_write_to
+            .seek(SeekFrom::Start(write_location))?;
+
+        let column_length_in_bytes = self.num_rows as i64 * F::WRITTEN_BYTES_WIDTH as i64;
+        let bytes_of_columns: Vec<Vec<u8>> = self
+            .outgoing_field_buffer
+            .par_iter_mut()
+            .map(|f| {
+                let bytes = F::field_vec_to_raw_bytes(f);
+                f.clear();
+                bytes
+            })
+            .collect();
+
+        for bytes_from_column_buff_to_write in bytes_of_columns {
+            #[cfg(unix)]
+            {
+                self.file_to_write_to
+                    .write_at(&bytes_from_column_buff_to_write, write_location)?;
+                write_location += column_length_in_bytes as u64;
+                // no matter how many bytes we write, the next location to write
+                // to will always be a column_length away since `write_at` doesn't
+                // affect the file pointer. This is not the case for write
+                // operations other than `write_at`
+            }
+            #[cfg(not(unix))]
+            {
+                todo!() // todo: I can figure this out later
+            }
+            self.bytes_written += bytes_from_column_buff_to_write.len();
+        }
+        self.rows_written += current_buf_size;
+
+        Ok(())
+    }
+
+    fn write_row(&mut self, encoded_row: Vec<F>) -> Result<()> {
+        let row_bytes: Vec<u8> = F::field_vec_to_raw_bytes(&encoded_row);
         assert_eq!(
             row_bytes.len(),
             self.encoded_size * F::WRITTEN_BYTES_WIDTH as usize,

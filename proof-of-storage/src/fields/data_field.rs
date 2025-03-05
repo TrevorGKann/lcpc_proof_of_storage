@@ -59,6 +59,9 @@ pub trait DataField: PrimeField {
     }
 
     fn field_vec_to_raw_bytes(field_vec: &[Self]) -> Vec<u8> {
+        // optimization: can probably just return a reference to the underlying byte sequence here
+        //  most likely using zero_copy crate or something else. This isn't really the bottle neck though
+        //  so it's fine for now
         field_vec
             .iter()
             .flat_map(|f| f.to_repr().as_ref().to_owned())
