@@ -8,6 +8,9 @@ test:
 
 clean: clean-db clean-bench
 
+power_clean: clean
+    sudo fstrim -Av
+
 # clean database
 clean-db:
     -rm -rf {{ source_directory() }}/proof-of-storage/PoR_Database/*
