@@ -6,3 +6,6 @@ test_files/*
 test_results/*
 src/bin/*
 !src/bin/por.rs
+*.porraw
+*.porenc
+*.portree
