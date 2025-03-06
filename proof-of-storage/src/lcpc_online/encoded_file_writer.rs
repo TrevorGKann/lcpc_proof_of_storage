@@ -4,13 +4,11 @@ use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, Col
 use crate::lcpc_online::file_handler::write_tree_to_file;
 use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{ensure, Result};
-use bitvec::macros::internal::funty::Unsigned;
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::LigeroEncoding;
-use rayon::iter::IndexedParallelIterator;
 use rayon::iter::ParallelIterator;
-use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator};
+use rayon::prelude::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator};
 use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
 use std::fs::File;
@@ -251,9 +249,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         );
         let bytes_to_encode_iterator = self.incoming_byte_buffer.drain(0..drain_target);
         let mut row_to_encode: Vec<F> = Vec::with_capacity(self.encoded_size);
-        row_to_encode.extend(FieldGeneratorIter::<_, F>::new(
-            bytes_to_encode_iterator, // optimization: shouldn't have to be cloned but it is atm
-        ));
+        row_to_encode.extend(FieldGeneratorIter::<_, F>::new(bytes_to_encode_iterator));
         assert!(!row_to_encode.is_empty(), "should not encode empty row");
         assert!(
             row_to_encode.len() <= self.pre_encoded_size,
@@ -278,11 +274,11 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
     }
 
     fn buffered_write_row(&mut self, encoded_row: Vec<F>) -> Result<()> {
-        encoded_row.into_iter().enumerate().for_each(|(index, f)| {
-            // optimization: make this a par iter,
-            //   figure out how to do par-slicing of self.outgoing_field_buffer
-            self.outgoing_field_buffer[index].push(f);
-        });
+        (encoded_row, &mut self.outgoing_field_buffer)
+            .into_par_iter()
+            .for_each(|(incoming_field_element, column_buffer)| {
+                column_buffer.push(incoming_field_element)
+            });
         let current_buf_size = self.outgoing_field_buffer.first().unwrap().len();
 
         // if there's no reason to drain the buffer to the file then return
@@ -331,7 +327,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         Ok(())
     }
 
-    fn write_row(&mut self, encoded_row: Vec<F>) -> Result<()> {
+    fn _write_row(&mut self, encoded_row: Vec<F>) -> Result<()> {
         let row_bytes: Vec<u8> = F::field_vec_to_raw_bytes(&encoded_row);
         assert_eq!(
             row_bytes.len(),
