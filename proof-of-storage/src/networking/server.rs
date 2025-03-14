@@ -27,13 +27,19 @@ use lcpc_2d::{LcCommit, LcEncoding, LcRoot};
 use lcpc_ligero_pc::{LigeroCommit, LigeroEncoding};
 
 use crate::databases::{constants, FileMetadata, ServerHost, User};
+use crate::fields::data_field::DataField;
 use crate::fields::WriteableFt63;
 use crate::fields::{
     convert_byte_vec_to_field_elements_vec, evaluate_field_polynomial_at_point, is_power_of_two,
     read_file_to_field_elements_vec,
 };
 use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
-use crate::lcpc_online::{convert_file_data_to_commit, file_formatter, form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols, server_retreive_columns, verifiable_polynomial_evaluation, CommitDimensions, CommitOrLeavesOutput, CommitRequestType};
+use crate::lcpc_online::{
+    convert_file_data_to_commit, file_formatter,
+    form_side_vectors_for_polynomial_evaluation_from_point, get_PoS_soudness_n_cols,
+    server_retreive_columns, verifiable_polynomial_evaluation, CommitDimensions,
+    CommitOrLeavesOutput, CommitRequestType,
+};
 use crate::networking::shared;
 use crate::networking::shared::wrap_stream;
 use crate::networking::shared::ClientMessages;
@@ -347,8 +353,8 @@ async fn handle_client_upload_new_file(
     // parse the filename to remove all leading slashes
     use crate::databases::FileMetadata;
     use crate::lcpc_online;
-    use std::path::Path;
     use crate::lcpc_online::file_formatter;
+    use std::path::Path;
 
     let encoded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
     let CommitOrLeavesOutput::Commit(commit) = convert_file_data_to_commit(
@@ -418,7 +424,9 @@ async fn handle_client_start_upload_file_by_chunks(
     let new_file_handle = File::options()
         .write(true)
         .create(true)
-        .open(file_formatter::get_unencoded_file_location_from_id(&new_file_ulid))
+        .open(file_formatter::get_unencoded_file_location_from_id(
+            &new_file_ulid,
+        ))
         .await?;
     let new_file_encoding =
         LigeroEncoding::<ServerField>::new_from_dims(pre_encoded_columns, encoded_columns);
@@ -833,7 +841,8 @@ async fn handle_client_request_reshape_evaluation(
     check_file_metadata(&new_file_metadata)?;
 
     // Both files have the same stored data at the id of the old metadata, we only need to read it once
-    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
+    let old_file_handle =
+        file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
     let file_data = tokio::fs::read(&old_file_handle).await?;
     let fielded_file_data = convert_byte_vec_to_field_elements_vec(&file_data);
 
@@ -911,8 +920,10 @@ async fn handle_client_reshape_response(
     check_file_metadata(&old_file_metadata)?;
     check_file_metadata(&new_file_metadata)?;
 
-    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
-    let new_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
+    let old_file_handle =
+        file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle =
+        file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
 
     // we now have two database entries for the same file, the new one has a bad ID, so we'll have to
     // change the filename and delete the old entry if it's accepted and only have to delete the new
@@ -959,8 +970,10 @@ async fn handle_client_append_or_edit_eval_request(
     check_file_metadata(&old_file_metadata)?;
     check_file_metadata(&new_file_metadata)?;
 
-    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
-    let new_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
+    let old_file_handle =
+        file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle =
+        file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
 
     tracing::debug!("reading old file from {:?}", &old_file_handle);
     let old_file_data = tokio::fs::read(&old_file_handle).await?;
@@ -1078,8 +1091,10 @@ async fn handle_client_append_or_edit_response(
     check_file_metadata(&old_file_metadata)?;
     check_file_metadata(&new_file_metadata)?;
 
-    let old_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
-    let new_file_handle = file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
+    let old_file_handle =
+        file_formatter::get_unencoded_file_handle_from_metadata(&old_file_metadata);
+    let new_file_handle =
+        file_formatter::get_unencoded_file_handle_from_metadata(&new_file_metadata);
 
     // we now have two database entries for the same file, the new one has a bad ID, so we'll have to
     // change the filename and delete the old entry if it's accepted and only have to delete the new
@@ -1154,12 +1169,12 @@ pub(crate) fn get_soundness_from_matrix_dims(
     min(theoretical_min, encoded_cols)
 }
 
-pub fn get_aspect_ratio_default_from_file_len<Field: PrimeField>(
+pub fn get_aspect_ratio_default_from_file_len<Field: DataField>(
     file_len: usize,
 ) -> (usize, usize, usize) {
     tracing::debug!("file_len: {}", file_len);
-    let write_out_byte_width = (Field::CAPACITY / 8) as usize;
-    let field_len = usize::div_ceil(file_len, write_out_byte_width);
+    // let write_out_byte_width = (Field::CAPACITY / 8) as usize;
+    let field_len = usize::div_ceil(file_len, Field::WRITTEN_BYTES_WIDTH as usize);
     tracing::debug!("field_len: {}", field_len);
 
     ///num_pre_encoded_columns, num_encoded_matrix_columns, soundness
@@ -1175,4 +1190,3 @@ fn check_file_metadata(file_metadata: &FileMetadata) -> Result<()> {
     // todo:
     Ok(())
 }
-

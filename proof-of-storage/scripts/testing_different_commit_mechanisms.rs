@@ -5,6 +5,7 @@ use clap::Parser;
 use human_hash::humanize;
 use lcpc_ligero_pc::LigeroEncoding;
 use proof_of_storage::databases::constants;
+use proof_of_storage::fields::data_field::DataField;
 use proof_of_storage::fields::field_generator_iter::FieldGeneratorIter;
 use proof_of_storage::fields::{Ft253_192, WriteableFt63};
 use proof_of_storage::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
@@ -58,6 +59,7 @@ fn main() -> Result<()> {
     );
 
     // test setup
+    // let test_file_path = PathBuf::from("test_files/4000000000_byte_file.bytes");
     let test_file_path = PathBuf::from("test_files/1000000000_byte_file.bytes");
     // let test_file_path = PathBuf::from("test_files/10000000_byte_file.bytes");
     // let test_file_path = PathBuf::from("test_files/10000_byte_file.bytes");
@@ -82,6 +84,14 @@ fn main() -> Result<()> {
 
     add_result_metadata("preencoded len", format!("{pre_encoded_len}"));
     add_result_metadata("encoded len", format!("{encoded_len}"));
+    add_result_metadata(
+        "rows",
+        format!(
+            "{}",
+            total_file_bytes as usize
+                / (pre_encoded_len * BenchField::WRITTEN_BYTES_WIDTH as usize)
+        ),
+    );
     add_result_metadata("original file length", format!("{total_file_bytes}"));
     add_result_metadata("ulid", format!("{test_ulid}"));
     add_result_metadata("time", current_time);
@@ -103,7 +113,7 @@ fn main() -> Result<()> {
     get_cols_from_full(&mut file_handler);
 
     // get collumns without ever using the disk
-    get_cols_from_stream(&test_file_path, pre_encoded_len, encoded_len);
+    // get_cols_from_stream(&test_file_path, pre_encoded_len, encoded_len);
 
     // save results
     let results_string = serde_json::to_string_pretty(&RESULTS_DICT.lock().unwrap().deref())?;
@@ -128,7 +138,6 @@ fn full_commit(
     //     ulid.to_string(),
     //     constants::UNENCODED_FILE_EXTENSION
     // ));
-    dbg!(&unencoded_test_file);
     std::fs::copy(source_file, &unencoded_test_file).expect("couldn't copy test source file");
     let mut total_duration = Duration::from_secs(0);
 
@@ -176,7 +185,7 @@ fn get_cols_from_stream(target_file: &PathBuf, pre_encoded_len: usize, encoded_l
     let columns_to_fetch =
         get_column_indicies_from_random_seed(rand.next_u64(), num_cols_required, encoded_len);
 
-    let buf_reader = std::io::BufReader::new(std::fs::File::open(&target_file).unwrap())
+    let buf_reader = std::io::BufReader::new(std::fs::File::open(target_file).unwrap())
         .bytes()
         .map(|b| b.unwrap());
     let field_iterator = FieldGeneratorIter::<_, WriteableFt63>::new(buf_reader);

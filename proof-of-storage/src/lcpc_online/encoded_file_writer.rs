@@ -7,8 +7,9 @@ use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::LcEncoding;
 use lcpc_ligero_pc::LigeroEncoding;
+use rayon::iter::IndexedParallelIterator;
 use rayon::iter::ParallelIterator;
-use rayon::prelude::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator};
+use rayon::prelude::{IntoParallelIterator, IntoParallelRefMutIterator};
 use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
 use std::fs::File;
@@ -38,7 +39,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         num_pre_encoded_columns: usize,
         num_encoded_columns: usize,
         total_file_size: usize,
-        mut target_file: File,
+        target_file: File,
     ) -> Self {
         assert!(
             num_encoded_columns.is_power_of_two(),
@@ -63,12 +64,13 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             .div_ceil(num_pre_encoded_columns);
 
         // todo: probably parameterize this at some point in some way
-        let per_column_buffer_size = 10;
+        let per_column_buffer_size = 2usize.pow(10);
         let outgoing_field_buffer =
             vec![Vec::with_capacity(per_column_buffer_size); num_encoded_columns];
 
         // preallocate file as zeros so we don't need to live request more blocks on the fly
-        Self::ensure_file_is_correct_len(&mut target_file, total_file_size as u64);
+        // Self::ensure_file_is_correct_len(&mut target_file, total_file_size as u64);
+        target_file.set_len(total_file_size as _).unwrap();
 
         EncodedFileWriter {
             encoding,
@@ -88,7 +90,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         }
     }
 
-    fn ensure_file_is_correct_len(file: &mut File, desired_len: u64) {
+    fn _ensure_file_is_correct_len(file: &mut File, desired_len: u64) {
         let current_len = file.metadata().unwrap().len();
         match current_len.cmp(&desired_len) {
             Ordering::Less => {
@@ -289,40 +291,55 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         }
 
         // otherwise the buffer is full or would complete the file
-        let mut write_location = (self.rows_written * F::WRITTEN_BYTES_WIDTH as usize) as u64;
+        let write_location = (self.rows_written * F::WRITTEN_BYTES_WIDTH as usize) as u64;
         #[cfg(not(unix))]
         self.file_to_write_to
             .seek(SeekFrom::Start(write_location))?;
 
-        let column_length_in_bytes = self.num_rows as i64 * F::WRITTEN_BYTES_WIDTH as i64;
-        let bytes_of_columns: Vec<Vec<u8>> = self
-            .outgoing_field_buffer
+        let column_length_in_bytes = self.num_rows as u64 * F::WRITTEN_BYTES_WIDTH as u64;
+        self.outgoing_field_buffer
             .par_iter_mut()
-            .map(|f| {
+            .enumerate()
+            .try_for_each(|(row_index, f): (usize, &mut Vec<F>)| {
                 let bytes = F::field_vec_to_raw_bytes(f);
                 f.clear();
-                bytes
-            })
-            .collect();
+                #[cfg(unix)]
+                {
+                    self.file_to_write_to.write_at(
+                        &bytes,
+                        write_location + column_length_in_bytes * row_index as u64,
+                    )?;
+                    // no matter how many bytes we write, the next location to write
+                    // to will always be a column_length away since `write_at` doesn't
+                    // affect the file pointer. This is not the case for write
+                    // operations other than `write_at`
+                }
+                #[cfg(not(unix))]
+                {
+                    todo!() // todo: I can figure this out later
+                }
+                anyhow::Ok(())
+            })?;
 
-        for bytes_from_column_buff_to_write in bytes_of_columns {
-            #[cfg(unix)]
-            {
-                self.file_to_write_to
-                    .write_at(&bytes_from_column_buff_to_write, write_location)?;
-                write_location += column_length_in_bytes as u64;
-                // no matter how many bytes we write, the next location to write
-                // to will always be a column_length away since `write_at` doesn't
-                // affect the file pointer. This is not the case for write
-                // operations other than `write_at`
-            }
-            #[cfg(not(unix))]
-            {
-                todo!() // todo: I can figure this out later
-            }
-            self.bytes_written += bytes_from_column_buff_to_write.len();
-        }
+        // for bytes_from_column_buff_to_write in bytes_of_columns {
+        //     #[cfg(unix)]
+        //     {
+        //         self.file_to_write_to
+        //             .write_at(&bytes_from_column_buff_to_write, write_location)?;
+        //         write_location += column_length_in_bytes as u64;
+        //         // no matter how many bytes we write, the next location to write
+        //         // to will always be a column_length away since `write_at` doesn't
+        //         // affect the file pointer. This is not the case for write
+        //         // operations other than `write_at`
+        //     }
+        //     #[cfg(not(unix))]
+        //     {
+        //         todo!() // todo: I can figure this out later
+        //     }
+        //     self.bytes_written += bytes_from_column_buff_to_write.len();
+        // }
         self.rows_written += current_buf_size;
+        self.bytes_written += current_buf_size * self.outgoing_field_buffer.len();
 
         Ok(())
     }
