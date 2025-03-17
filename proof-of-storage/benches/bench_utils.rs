@@ -15,7 +15,8 @@ pub fn start_bench_subscriber() {
         .with_file(true)
         .with_line_number(true)
         .with_env_filter(env_filter)
-        .with_max_level(tracing::Level::DEBUG)
+        // .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::INFO)
         .finish();
 
     // use that subscriber to process traces emitted after this point
