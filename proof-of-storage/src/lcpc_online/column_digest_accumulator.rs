@@ -69,6 +69,7 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
                 for (digest, input) in self.column_digests.iter_mut().zip(encoded_row) {
                     input.digest_update(digest);
                 }
+                // optimization: if digest is `send` then this can be a parfor and much faster
             }
             ColumnsToCareAbout::Only(ref columns) => {
                 for columns_index in columns.iter() {

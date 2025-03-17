@@ -214,7 +214,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
         &mut self,
         byte_iterator: &mut impl Iterator<Item = u8>,
     ) -> Result<()> {
-        while let Some(byte) = byte_iterator.next() {
+        for byte in byte_iterator.by_ref() {
             self.incoming_byte_buffer.push_back(byte);
             self.bytes_received += 1;
 

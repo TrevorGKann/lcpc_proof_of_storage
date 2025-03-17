@@ -138,9 +138,9 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
             "encoded file size must be a power of two!"
         );
 
-        let unencoded_path = get_unencoded_file_location_from_id(&ulid);
-        let encoded_path = get_encoded_file_location_from_id(&ulid);
-        let digest_path = get_merkle_file_location_from_id(&ulid);
+        let unencoded_path = get_unencoded_file_location_from_id(ulid);
+        let encoded_path = get_encoded_file_location_from_id(ulid);
+        let digest_path = get_merkle_file_location_from_id(ulid);
         if let Some(file_handle) = file_handle_if_not_already_ulid {
             rename(file_handle, &unencoded_path)?;
         }

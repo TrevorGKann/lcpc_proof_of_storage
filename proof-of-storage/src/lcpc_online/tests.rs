@@ -11,7 +11,6 @@ mod encoded_file_io_tests {
     use crate::lcpc_online::*;
     use crate::networking::client::get_column_indicies_from_random_seed;
     use lcpc_2d::log2;
-    use num_traits::real::Real;
     use rand::Rng;
     use rand_chacha::ChaCha8Rng;
     use rand_core::{RngCore, SeedableRng};
