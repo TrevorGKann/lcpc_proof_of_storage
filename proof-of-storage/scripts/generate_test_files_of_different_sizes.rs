@@ -37,6 +37,7 @@ fn main() -> Result<()> {
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create(true)
+                .truncate(true)
                 .open(&file_location)?;
 
             let mut bytes_left = total_size;

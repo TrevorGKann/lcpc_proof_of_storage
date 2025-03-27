@@ -24,7 +24,6 @@ pub enum FieldErr {
 }
 #[tracing::instrument]
 pub fn read_file_to_field_elements_vec<F: DataField>(file: &mut File) -> (usize, Vec<F>) {
-    // todo: need to convert to async with tokio file
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
     tracing::trace!("read {} bytes from file", buffer.len());

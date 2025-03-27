@@ -17,7 +17,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
 
-pub struct EncodedFileWriter<F: DataField, D: Digest + FixedOutputReset, E: LcEncoding> {
+pub struct EncodedFileWriter<F: DataField, D: Digest + FixedOutputReset + Send, E: LcEncoding> {
     encoding: E,
     column_digest_accumulator: ColumnDigestAccumulator<D, F>,
     incoming_byte_buffer: VecDeque<u8>,
@@ -34,7 +34,7 @@ pub struct EncodedFileWriter<F: DataField, D: Digest + FixedOutputReset, E: LcEn
     num_rows: usize,
 }
 
-impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroEncoding<F>> {
+impl<F: DataField, D: Digest + FixedOutputReset + Send> EncodedFileWriter<F, D, LigeroEncoding<F>> {
     pub fn new(
         num_pre_encoded_columns: usize,
         num_encoded_columns: usize,
@@ -64,7 +64,7 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             .div_ceil(num_pre_encoded_columns);
 
         // todo: probably parameterize this at some point in some way
-        let per_column_buffer_size = 2usize.pow(10);
+        let per_column_buffer_size = min(2usize.pow(10), num_rows);
         let outgoing_field_buffer =
             vec![Vec::with_capacity(per_column_buffer_size); num_encoded_columns];
 
@@ -297,30 +297,36 @@ impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileWriter<F, D, LigeroE
             .seek(SeekFrom::Start(write_location))?;
 
         let column_length_in_bytes = self.num_rows as u64 * F::WRITTEN_BYTES_WIDTH as u64;
+        // let pool = rayon::ThreadPoolBuilder::new()
+        //     .num_threads(64)
+        //     .build()
+        //     .expect("couldn't build thread pool");
+        // pool.install(|| {
         self.outgoing_field_buffer
-            .par_iter_mut()
-            .enumerate()
-            .try_for_each(|(row_index, f): (usize, &mut Vec<F>)| {
-                let bytes = F::field_vec_to_raw_bytes(f);
-                f.clear();
-                #[cfg(unix)]
-                {
-                    self.file_to_write_to.write_at(
-                        &bytes,
-                        write_location + column_length_in_bytes * row_index as u64,
-                    )?;
-                    // no matter how many bytes we write, the next location to write
-                    // to will always be a column_length away since `write_at` doesn't
-                    // affect the file pointer. This is not the case for write
-                    // operations other than `write_at`
-                }
-                #[cfg(not(unix))]
-                {
-                    todo!() // todo: I can figure this out later
-                }
-                anyhow::Ok(())
-            })?;
-
+                .par_iter_mut()
+                .enumerate()
+                .try_for_each(|(row_index, f): (usize, &mut Vec<F>)| {
+                    let bytes = F::field_vec_to_raw_bytes(f);
+                    f.clear();
+                    #[cfg(unix)]
+                    {
+                        self.file_to_write_to.write_at(
+                            &bytes,
+                            write_location + column_length_in_bytes * row_index as u64,
+                        )?;
+                        // no matter how many bytes we write, the next location to write
+                        // to will always be a column_length away since `write_at` doesn't
+                        // affect the file pointer. This is not the case for write
+                        // operations other than `write_at`
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        todo!("Windows write at implementation not yet complete")
+                    }
+                    anyhow::Ok(())
+                })
+        // })
+        ?;
         // for bytes_from_column_buff_to_write in bytes_of_columns {
         //     #[cfg(unix)]
         //     {

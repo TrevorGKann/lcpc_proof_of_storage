@@ -56,7 +56,7 @@ fn edit_different_shape_benchmark_main(c: &mut Criterion) {
 
     let mut previous_run = load_previous_run().unwrap();
 
-    let powers_of_two_for_pre_encoded_columns: Vec<u32> = (13..24).collect();
+    let powers_of_two_for_pre_encoded_columns: Vec<u32> = (16..22).collect();
 
     let mut group = c.benchmark_group("edit_file");
     group.throughput(Throughput::Bytes(total_file_bytes));
@@ -79,8 +79,8 @@ fn edit_different_shape_benchmark_main(c: &mut Criterion) {
 
         onetime_column_bytes(pre_encoded_len, file_handler.clone());
 
-        edit_benchmark(&mut group, pre_encoded_len, file_handler.clone());
-
+        // edit_benchmark(&mut group, pre_encoded_len, file_handler.clone());
+        //
         retrieve_column_benchmark(&mut group, pre_encoded_len, file_handler.clone());
 
         verify_column_benchmark(&mut group, pre_encoded_len, file_handler.clone());
@@ -255,10 +255,15 @@ fn edit_benchmark(
 }
 
 fn onetime_column_bytes(pre_encoded_len: usize, file_handler: Arc<Mutex<BenchFileHandler>>) {
+    let mut file_handler_lock = file_handler.lock().unwrap();
     let columns = {
-        let (columns_to_fetch, mut file_handler) =
-            retrieve_column_setup(&file_handler, pre_encoded_len);
-        file_handler
+        let (_, encoded_len, _) = file_handler_lock.get_dimensions().unwrap();
+
+        let mut rand = ChaChaRng::from_entropy();
+        let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
+        let columns_to_fetch =
+            get_column_indicies_from_random_seed(rand.next_u64(), num_cols_required, encoded_len);
+        file_handler_lock
             .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch))
             .expect("couldn't get full columns from file")
     };
@@ -278,7 +283,7 @@ fn onetime_column_bytes(pre_encoded_len: usize, file_handler: Arc<Mutex<BenchFil
     tracing::info!(
         "{columns_sent} columns were sent with a path-length of {merkle_tree_depth} and {column_depth} field elements.\
         The Merkle tree's total size was {merkle_tree_size}.\
-        Each column was {total_bytes} total bytes, {merkle_bytes} of which were from the path and {column_bytes} from the col elements.",
+        Together, the proof is {total_bytes} total bytes, {merkle_bytes} of which were from the path and {column_bytes} from the col elements.",
     );
 }
 
@@ -287,15 +292,26 @@ fn retrieve_column_benchmark(
     pre_encoded_len: usize,
     file_handler: Arc<Mutex<BenchFileHandler>>,
 ) {
-    group.bench_with_input(
+    let mut file_handler_lock = file_handler.lock().unwrap();
+    let (_, encoded_len, _) = file_handler_lock.get_dimensions().unwrap();
+
+    let mut rand = ChaChaRng::from_entropy();
+    let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
+
+    group.bench_function(
         BenchmarkId::new("retrieving columns with X cols", pre_encoded_len),
-        &pre_encoded_len,
-        |b, &pre_encoded_len| {
+        |b| {
             b.iter_batched(
-                || retrieve_column_setup(&file_handler, pre_encoded_len),
+                || {
+                    get_column_indicies_from_random_seed(
+                        rand.next_u64(),
+                        num_cols_required,
+                        encoded_len,
+                    )
+                },
                 |input| {
-                    let (columns_to_fetch, mut file_handler) = input;
-                    let _columns = file_handler
+                    let columns_to_fetch = input;
+                    let _columns = file_handler_lock
                         .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch))
                         .expect("couldn't get full columns from file");
                 },
@@ -303,20 +319,6 @@ fn retrieve_column_benchmark(
             )
         },
     );
-}
-
-fn retrieve_column_setup(
-    file_handler: &Arc<Mutex<BenchFileHandler>>,
-    pre_encoded_len: usize,
-) -> (Vec<usize>, MutexGuard<BenchFileHandler>) {
-    let file_handler_lock = file_handler.lock().unwrap();
-    let (_, encoded_len, _) = file_handler_lock.get_dimensions().unwrap();
-    let mut rand = ChaChaRng::from_entropy();
-    let num_cols_required = _get_POS_soundness_n_cols(pre_encoded_len, encoded_len);
-    let columns_to_fetch =
-        get_column_indicies_from_random_seed(rand.next_u64(), num_cols_required, encoded_len);
-
-    (columns_to_fetch, file_handler_lock)
 }
 
 fn verify_column_benchmark(
@@ -340,11 +342,13 @@ fn verify_column_benchmark(
         (root, columns_to_fetch, columns_fetched)
     };
 
-    group.bench_with_input(
+    group.bench_function(
         BenchmarkId::new("verifying columns with X cols", pre_encoded_len),
-        &columns_fetched,
-        |b, columns_fetched| {
-            b.iter(|| client_online_verify_column_paths(&root, &columns_to_fetch, columns_fetched))
+        |b| {
+            b.iter(|| {
+                client_online_verify_column_paths(&root, &columns_to_fetch, &columns_fetched)
+                    .expect("failed verification step")
+            })
         },
     );
 }

@@ -12,6 +12,7 @@ use anyhow::{bail, ensure, Context, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::{LcColumn, LcEncoding, LcRoot};
 use lcpc_ligero_pc::LigeroEncoding;
+use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::fs::{remove_dir, remove_file, rename, File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
@@ -19,7 +20,7 @@ use std::os::unix::prelude::FileExt;
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
 
-pub enum CurrentState<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> {
+pub enum CurrentState<D: Digest + FixedOutputReset + Send, F: DataField, E: LcEncoding<F = F>> {
     StreamingToFileCreation {
         encoded_file_writer: EncodedFileWriter<F, D, E>,
         unencoded_file_writer: BufWriter<File>,
@@ -33,7 +34,7 @@ pub enum CurrentState<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<
     },
 }
 
-pub struct FileHandler<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> {
+pub struct FileHandler<D: Digest + FixedOutputReset + Send, F: DataField, E: LcEncoding<F = F>> {
     _file_ulid: Ulid,
     pre_encoded_size: usize,
     encoded_size: usize,
@@ -51,7 +52,9 @@ pub struct FileHandler<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding
     _field: PhantomData<F>,
 }
 
-impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncoding<F>> {
+impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
+    FileHandler<D, F, LigeroEncoding<F>>
+{
     pub fn new_attach_to_existing_ulid(
         file_directory: &Path,
         ulid: &Ulid,
@@ -474,7 +477,12 @@ impl<D: Digest + FixedOutputReset, F: DataField> FileHandler<D, F, LigeroEncodin
     }
 }
 
-impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandler<D, F, E> {
+impl<
+        D: Digest + FixedOutputReset + Send + Sync,
+        F: DataField,
+        E: LcEncoding<F = F> + Send + Sync,
+    > FileHandler<D, F, E>
+{
     pub fn read_only_digests(
         &mut self,
         columns_to_care_about: ColumnsToCareAbout,
@@ -620,7 +628,9 @@ impl<D: Digest + FixedOutputReset, F: DataField, E: LcEncoding<F = F>> FileHandl
     }
 }
 
-pub fn read_tree<D: Digest + FixedOutputReset>(tree_file: &mut File) -> Result<MerkleTree<D>> {
+pub fn read_tree<D: Digest + FixedOutputReset + Send>(
+    tree_file: &mut File,
+) -> Result<MerkleTree<D>> {
     let mut tree_bytes = vec![0u8; tree_file.metadata()?.len() as usize];
     tree_file.seek(SeekFrom::Start(0))?;
     let num_bytes_read = tree_file.read(&mut tree_bytes)?;
@@ -631,7 +641,7 @@ pub fn read_tree<D: Digest + FixedOutputReset>(tree_file: &mut File) -> Result<M
     MerkleTree::from_bytes(&tree_bytes)
 }
 
-pub fn write_tree_to_file<D: Digest + FixedOutputReset>(
+pub fn write_tree_to_file<D: Digest + FixedOutputReset + Send>(
     tree_file: &mut File,
     tree: &MerkleTree<D>,
 ) -> Result<()> {

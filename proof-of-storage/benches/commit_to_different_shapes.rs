@@ -30,6 +30,10 @@ type BenchFileHandler = FileHandler<BenchDigest, BenchField, LigeroEncoding<Benc
 
 fn commit_different_shape_benchmark_main(c: &mut Criterion) {
     bench_utils::start_bench_subscriber();
+    tracing::info!(
+        "number of rayon cores by default = {}",
+        rayon::current_num_threads()
+    );
 
     let test_file_path = PathBuf::from("test_files/1000000000_byte_file.bytes");
     // let test_file_path = PathBuf::from("test_files/10000_byte_file.bytes");
@@ -37,7 +41,8 @@ fn commit_different_shape_benchmark_main(c: &mut Criterion) {
         .expect("couldn't get test file's metadata")
         .len();
 
-    let powers_of_two_for_pre_encoded_columns: Vec<u32> = (16..20).collect();
+    // let powers_of_two_for_pre_encoded_columns: Vec<u32> = (16..20).collect();
+    let powers_of_two_for_pre_encoded_columns: Vec<u32> = (16..=16).collect();
 
     let mut group = c.benchmark_group("commit_to_file");
     group.throughput(Throughput::Bytes(total_file_bytes));
@@ -47,8 +52,8 @@ fn commit_different_shape_benchmark_main(c: &mut Criterion) {
         let pre_encoded_len = 2usize.pow(power_of_two);
         let encoded_len = 2usize.pow(power_of_two + 1);
         commit_benchmark(&mut group, pre_encoded_len, encoded_len, &test_file_path);
-        let bench_directory = PathBuf::from("bench_files".to_string());
-        std::fs::remove_dir_all(&bench_directory).expect("couldn't remove bench_files folder");
+        // let bench_directory = PathBuf::from("bench_files".to_string());
+        // std::fs::remove_dir_all(&bench_directory).expect("couldn't remove bench_files folder");
     }
 }
 
@@ -115,6 +120,12 @@ fn commit_benchmark(
                         encoded_len,
                     )
                     .expect("couldn't open the encoded file");
+                    // let encoded_handle = File::open(&encoded_test_file)
+                    //     .expect("couldn't open encoded file after commit");
+                    // encoded_handle
+                    //     .sync_all()
+                    //     .expect("couldn't sync encoded file");
+
                     total_duration = total_duration.add(start.elapsed());
 
                     // cleanup

@@ -25,7 +25,7 @@ pub struct EncodedFileReader<F: DataField, D: Digest + FixedOutputReset, E: LcEn
     _digest_type: PhantomData<D>,
 }
 
-impl<F: DataField, D: Digest + FixedOutputReset> EncodedFileReader<F, D, LigeroEncoding<F>> {
+impl<F: DataField, D: Digest + FixedOutputReset + Send> EncodedFileReader<F, D, LigeroEncoding<F>> {
     pub fn new_ligero(
         file_to_read: File,
         pre_encoded_size: usize,

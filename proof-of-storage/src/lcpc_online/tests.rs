@@ -234,7 +234,7 @@ mod encoded_file_io_tests {
         let mut random = ChaCha8Rng::from_entropy();
 
         println!("current dir {}", env::current_dir().unwrap().display());
-        let test_file_path_origin = PathBuf::from("test_files/100000_byte_file.bytes");
+        let test_file_path_origin = PathBuf::from("test_files/10000_byte_file.bytes");
         let test_file_path = PathBuf::from("test_files/columns_test.txt");
         let test_ulid = Ulid::new();
         let original_file_len = File::open(&test_file_path_origin)
@@ -242,7 +242,7 @@ mod encoded_file_io_tests {
             .metadata()
             .unwrap()
             .len() as usize;
-        let max_columns = original_file_len.div_ceil(TestField::DATA_BYTE_CAPACITY as usize);
+        let max_columns = f64::sqrt(original_file_len as _) as usize;
 
         for pre_encoded_len in (1..log2(max_columns))
             // for pre_encoded_len in (5..13)
@@ -274,19 +274,19 @@ mod encoded_file_io_tests {
                 pre_encoded_len,
                 encoded_len,
             )
-
                 .unwrap();
 
             file_handler.verify_all_files_agree().unwrap();
+            let root = file_handler.get_commit_root().unwrap();
 
-            for _i in 0..1 {
+            for _i in 0..10 {
                 let columns_to_fetch = get_column_indicies_from_random_seed(
                     random.next_u64(),
                     num_cols_required,
                     encoded_len,
                 );
                 let columns = file_handler
-                    .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch))
+                    .read_full_columns(ColumnsToCareAbout::Only(columns_to_fetch.clone()))
                     .expect("couldn't get full columns from file");
                 assert_eq!(columns.len(), num_cols_required);
 
@@ -296,7 +296,9 @@ mod encoded_file_io_tests {
                     println!("merkle length is {}", sample_column.path.len())
                 }
                 assert_eq!(sample_column.path.len(), log2(encoded_len));
-                // todo: verify columns are correct, but right now I only care about their length
+
+                client_online_verify_column_paths(&root, &columns_to_fetch, &columns)
+                    .expect("failed verification step")
             }
 
             file_handler.delete_all_files().unwrap()

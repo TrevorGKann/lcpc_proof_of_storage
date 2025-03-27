@@ -1,5 +1,6 @@
 use ff::PrimeField;
 use num_traits::ops::bytes::NumBytes;
+use rayon::prelude::*;
 
 /// Interface to allow for data storage, retrieval, and usage from PrimeFields without loss.
 /// Loses some of the storage capacity of the native field (due to modulus bits and use of bytes
@@ -35,7 +36,7 @@ pub trait DataField: PrimeField {
     /// Will zero pad the last element if the number of bytes doesn't evenly divide
     /// `DATA_BYTE_CAPACITY`
     fn from_byte_vec(vec: &[u8]) -> Vec<Self> {
-        vec.chunks(Self::DATA_BYTE_CAPACITY as usize)
+        vec.par_chunks(Self::DATA_BYTE_CAPACITY as usize)
             .map(|byte_chunk| {
                 let mut byte_array: Self::DataBytes = Self::DataBytes::default();
                 byte_array.as_mut()[..byte_chunk.len()].clone_from_slice(byte_chunk);
@@ -70,7 +71,7 @@ pub trait DataField: PrimeField {
 
     fn raw_bytes_to_field_vec(raw_bytes: &[u8]) -> Vec<Self> {
         raw_bytes
-            .chunks(Self::WRITTEN_BYTES_WIDTH as usize)
+            .par_chunks(Self::WRITTEN_BYTES_WIDTH as usize)
             .map(|byte_chunk| {
                 let mut byte_array: <Self as PrimeField>::Repr =
                     <Self as PrimeField>::Repr::default();

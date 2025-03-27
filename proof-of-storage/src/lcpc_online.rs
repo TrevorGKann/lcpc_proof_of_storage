@@ -255,12 +255,22 @@ pub fn client_online_verify_column_paths(
         return Err(VerifierError::ColumnEval);
     }
 
-    for (col_num, column) in requested_columns.iter().zip(received_columns.iter()) {
-        let path = verify_column_path(column, *col_num, &commitment_root.root);
-        if !path {
-            return Err(VerifierError::ColumnEval);
-        }
-    }
+    (requested_columns, received_columns)
+        .into_par_iter()
+        .try_for_each(|(col_num, col)| {
+            let path_check = verify_column_path(col, *col_num, &commitment_root.root);
+            if !path_check {
+                Err(VerifierError::ColumnEval)
+            } else {
+                Ok(())
+            }
+        })?;
+    // for (col_num, column) in requested_columns.iter().zip(received_columns.iter()) {
+    //     let path = verify_column_path(column, *col_num, &commitment_root.root);
+    //     if !path {
+    //         return Err(VerifierError::ColumnEval);
+    //     }
+    // }
     Ok(())
 }
 

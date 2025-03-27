@@ -1,6 +1,7 @@
 [profile.default]
 retries = 6
 jitter = true
+status-level = "skip"
 
 [test-groups]
 serial = { max-threads = 1, backoff = "exponential", delay = "5" }

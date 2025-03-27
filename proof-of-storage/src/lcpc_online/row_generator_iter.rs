@@ -28,7 +28,7 @@ where
 {
     pub fn get_column_digests<D>(self) -> Vec<Output<D>>
     where
-        D: Digest + FixedOutputReset,
+        D: Digest + FixedOutputReset + Send,
     {
         let mut digests: ColumnDigestAccumulator<D, F> =
             ColumnDigestAccumulator::new(self.coefs_buffer.len(), ColumnsToCareAbout::All);
@@ -42,7 +42,7 @@ where
 
     pub fn get_specified_column_digests<D>(self, column_indices: &[usize]) -> Vec<Output<D>>
     where
-        D: Digest + FixedOutputReset,
+        D: Digest + FixedOutputReset + Send,
     {
         let mut digests = Vec::with_capacity(column_indices.len());
         for _ in 0..column_indices.len() {
@@ -67,7 +67,7 @@ where
 
     pub fn convert_to_commit_root<D>(self) -> Output<D>
     where
-        D: Digest + FixedOutputReset,
+        D: Digest + FixedOutputReset + Send,
     {
         let leaves: Vec<Output<D>> = self.get_column_digests::<D>();
 
@@ -78,7 +78,7 @@ where
 
     pub fn get_full_columns<D>(self, specified_columns: &[usize]) -> Vec<LcColumn<D, E>>
     where
-        D: Digest + FixedOutputReset,
+        D: Digest + FixedOutputReset + Send,
     {
         let mut digests: ColumnDigestAccumulator<D, F> =
             ColumnDigestAccumulator::new(self.coefs_buffer.len(), ColumnsToCareAbout::All);
@@ -167,6 +167,7 @@ where
 #[cfg(test)]
 mod tests {
     use rand::Rng;
+    use std::env;
     use std::io::Read;
 
     use crate::fields::field_generator_iter::FieldGeneratorIter;
@@ -329,7 +330,11 @@ mod tests {
 
     #[test]
     fn read_file_to_root_with_iterator() {
-        let test_file_path = "test_files/10000_byte_file.bytes";
+        println!(
+            "current directory is {}",
+            env::current_dir().unwrap().display()
+        );
+        let test_file_path = "test_files/100000_byte_file.bytes";
         let file_field: Vec<WriteableFt63> = read_file_path_to_field_elements_vec(test_file_path);
         let CommitOrLeavesOutput::Commit(reference_commit) =
             convert_file_data_to_commit::<Blake3, _>(

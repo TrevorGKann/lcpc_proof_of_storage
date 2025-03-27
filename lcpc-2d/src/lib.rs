@@ -530,8 +530,8 @@ where
 
 impl<D, E> LcEvalProof<D, E>
 where
-    D: Digest + FixedOutputReset,
-    E: LcEncoding,
+    D: Digest + FixedOutputReset + Send + Sync,
+    E: LcEncoding + Send + Sync,
 {
     /// Get the number of elements in an encoded vector
     pub fn get_n_cols(&self) -> usize {
@@ -868,8 +868,8 @@ fn verify<D, E>(
     tr: &mut Transcript,
 ) -> VerifierResult<FldT<E>, ErrT<E>>
 where
-    D: Digest + FixedOutputReset,
-    E: LcEncoding,
+    D: Digest + FixedOutputReset + Send + Sync,
+    E: LcEncoding + Send + Sync,
 {
     // make sure arguments are well formed
     let n_col_opens = enc.get_n_col_opens();
@@ -984,8 +984,8 @@ where
 // Check a column opening
 pub fn verify_column_path<D, E>(column: &LcColumn<D, E>, col_num: usize, root: &Output<D>) -> bool
 where
-    D: Digest + FixedOutputReset,
-    E: LcEncoding,
+    D: Digest + FixedOutputReset + Send + Sync,
+    E: LcEncoding + Send + Sync,
 {
     let mut digest = D::new();
     Digest::update(&mut digest, <Output<D> as Default>::default());
@@ -1198,8 +1198,8 @@ fn verify_column<D, E>(
     poly_eval: &FldT<E>,
 ) -> bool
 where
-    D: Digest + FixedOutputReset,
-    E: LcEncoding,
+    D: Digest + FixedOutputReset + Send + Sync,
+    E: LcEncoding + Send + Sync,
 {
     verify_column_path(column, col_num, root) && verify_column_value(column, tensor, poly_eval)
 }

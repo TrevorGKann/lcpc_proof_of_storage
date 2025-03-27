@@ -3,6 +3,7 @@ use crate::lcpc_online::merkle_tree::MerkleTree;
 use anyhow::{ensure, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
 use lcpc_2d::FieldHash;
+use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::marker::PhantomData;
 
 #[derive(Debug, PartialEq)]
@@ -13,13 +14,13 @@ pub enum ColumnsToCareAbout {
     // todo: make Only() take a reference to a [usize] instead of an owned vec
 }
 
-pub struct ColumnDigestAccumulator<D: Digest + FixedOutputReset, F: DataField> {
+pub struct ColumnDigestAccumulator<D: Digest + FixedOutputReset + Send, F: DataField> {
     column_digests: Vec<D>,
     columns_to_care_about: ColumnsToCareAbout,
     data_field: PhantomData<F>,
 }
 
-impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
+impl<D: Digest + FixedOutputReset + Send, F: DataField> ColumnDigestAccumulator<D, F> {
     pub fn new(
         number_of_encoded_columns: usize,
         columns_to_care_about: ColumnsToCareAbout,
@@ -66,9 +67,12 @@ impl<D: Digest + FixedOutputReset, F: DataField> ColumnDigestAccumulator<D, F> {
 
         match self.columns_to_care_about {
             ColumnsToCareAbout::All => {
-                for (digest, input) in self.column_digests.iter_mut().zip(encoded_row) {
-                    input.digest_update(digest);
-                }
+                (&mut self.column_digests, encoded_row)
+                    .into_par_iter()
+                    .for_each(|(digest, element)| element.digest_update(digest));
+                // for (digest, input) in self.column_digests.iter_mut().zip(encoded_row) {
+                //     input.digest_update(digest);
+                // }
                 // optimization: if digest is `send` then this can be a parfor and much faster
             }
             ColumnsToCareAbout::Only(ref columns) => {
