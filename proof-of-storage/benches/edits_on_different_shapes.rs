@@ -79,7 +79,7 @@ fn edit_different_shape_benchmark_main(c: &mut Criterion) {
 
         onetime_column_bytes(pre_encoded_len, file_handler.clone());
 
-        // edit_benchmark(&mut group, pre_encoded_len, file_handler.clone());
+        edit_benchmark(&mut group, pre_encoded_len, file_handler.clone());
         //
         retrieve_column_benchmark(&mut group, pre_encoded_len, file_handler.clone());
 
@@ -231,9 +231,7 @@ fn edit_benchmark(
             b.iter_batched(
                 || {
                     let file_handler_lock = file_handler.lock().unwrap();
-                    let total_file_bytes = file_handler_lock
-                        .get_total_data_bytes()
-                        .expect("couldn't get total data bytes");
+                    let total_file_bytes = file_handler_lock.get_total_data_bytes();
 
                     let mut rand = ChaChaRng::from_entropy();
                     let mut random_bytes_to_write = [0u8; 1024];
