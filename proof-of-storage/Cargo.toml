@@ -60,11 +60,11 @@ path = "src/bin/pos.rs"
 debug = true
 
 [[bench]]
-name = "edits_on_different_shapes"
+name = "non_commit_benchmarks_on_different_shapes"
 harness = false
 
 [[bench]]
-name = "commit_to_different_shapes"
+name = "commit_to_different_shapes_bench"
 harness = false
 
 [features]

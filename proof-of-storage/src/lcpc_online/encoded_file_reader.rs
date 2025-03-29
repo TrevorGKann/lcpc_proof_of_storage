@@ -9,9 +9,8 @@ use lcpc_ligero_pc::LigeroEncoding;
 use rayon::iter::repeatn;
 use rayon::prelude::*;
 use std::cmp::{max, min};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::iter::repeat_with;
 use std::marker::PhantomData;
 use std::os::unix::prelude::FileExt;
 
@@ -267,14 +266,12 @@ impl<F: DataField, D: Digest + FixedOutputReset + Send + Sync, E: LcEncoding<F =
             "wrong number of bytes to write to file"
         );
 
-        let mut file_pointer = target_row * F::WRITTEN_BYTES_WIDTH as usize;
         let column_length_in_bytes = self.num_rows as i64 * F::WRITTEN_BYTES_WIDTH as i64;
         #[cfg(not(unix))]
         {
-            if !cfg!(unix) {
-                self.file_to_read
-                    .seek(SeekFrom::Start(file_pointer as u64))?;
-            }
+            let mut file_pointer = target_row * F::WRITTEN_BYTES_WIDTH as usize;
+            self.file_to_read
+                .seek(SeekFrom::Start(file_pointer as u64))?;
             let bytes_to_write_iterator = row_bytes.chunks(F::WRITTEN_BYTES_WIDTH as usize);
 
             let mut bytes_written = 0;
@@ -290,6 +287,7 @@ impl<F: DataField, D: Digest + FixedOutputReset + Send + Sync, E: LcEncoding<F =
         }
         #[cfg(unix)]
         {
+            let file_pointer = target_row * F::WRITTEN_BYTES_WIDTH as usize;
             row_bytes
                 .par_chunks(F::WRITTEN_BYTES_WIDTH as usize)
                 .enumerate()

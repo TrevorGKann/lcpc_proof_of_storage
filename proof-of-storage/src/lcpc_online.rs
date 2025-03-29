@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 // use surrealdb::iam::ResourceKind::Field;
 
 use crate::databases::FileMetadata;
-use crate::fields::field_generator_iter::FieldGeneratorIter;
 use crate::fields::WriteableFt63;
 use crate::fields::{is_power_of_two, vector_multiply};
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
@@ -573,8 +572,8 @@ pub fn decode_row<F: PrimeField>(
     Ok(row)
 }
 
-pub fn encode_row<F: PrimeField>(
-    mut row: Vec<F>,
+pub fn _encode_row<F: PrimeField>(
+    row: Vec<F>,
     pre_encoded_size: usize,
     encoded_size: usize,
 ) -> Result<Vec<FldT<LigeroEncoding<F>>>, ErrT<LigeroEncoding<F>>> {
