@@ -69,6 +69,23 @@ pub fn get_merkle_file_location_from_id(id: &Ulid) -> PathBuf {
     path
 }
 
+pub fn get_metadata_location_from_id(id: &Ulid) -> PathBuf {
+    let mut path = env::current_dir().unwrap();
+    path.push(constants::SERVER_FILE_FOLDER);
+
+    //check that directory folder exists
+    if !path.exists() {
+        std::fs::create_dir_all(&path).unwrap();
+    }
+
+    path.push(format!(
+        "{}.{}",
+        id.to_string(),
+        constants::METADATA_FILE_EXTENSION
+    ));
+    path
+}
+
 pub fn push_server_dir_to_pathbuf(pathbuf: &mut PathBuf) {
     pathbuf.push(constants::SERVER_FILE_FOLDER);
 

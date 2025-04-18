@@ -1,36 +1,42 @@
+use std::fs::{File, OpenOptions, remove_dir, remove_file, rename};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::marker::PhantomData;
+use std::os::unix::prelude::FileExt;
+use std::path::{Path, PathBuf};
+
+use anyhow::{bail, Context, ensure, Result};
+use blake3::traits::digest::{Digest, FixedOutputReset, Output};
+use rayon::prelude::*;
+use ulid::Ulid;
+
+use lcpc_2d::{LcColumn, LcEncoding, LcRoot};
+use lcpc_ligero_pc::LigeroEncoding;
+
 use crate::fields::data_field::DataField;
 use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
 use crate::lcpc_online::decode_row;
 use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
 use crate::lcpc_online::encoded_file_writer::EncodedFileWriter;
+use crate::lcpc_online::EncodedFileMetadata;
 use crate::lcpc_online::file_formatter::{
     get_encoded_file_location_from_id, get_merkle_file_location_from_id,
-    get_unencoded_file_location_from_id,
+    get_metadata_location_from_id, get_unencoded_file_location_from_id,
 };
 use crate::lcpc_online::merkle_tree::MerkleTree;
-use anyhow::{bail, ensure, Context, Result};
-use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use lcpc_2d::{LcColumn, LcEncoding, LcRoot};
-use lcpc_ligero_pc::LigeroEncoding;
-use rayon::prelude::*;
-use std::fs::{remove_dir, remove_file, rename, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::marker::PhantomData;
-use std::os::unix::prelude::FileExt;
-use std::path::{Path, PathBuf};
-use ulid::Ulid;
 
-pub struct FileHandler<D: Digest + FixedOutputReset + Send, F: DataField, E: LcEncoding<F = F>> {
-    _file_ulid: Ulid,
+pub struct FileHandler<D: Digest + FixedOutputReset + Send, F: DataField, E: LcEncoding<F=F>> {
+    file_ulid: Ulid,
     pre_encoded_size: usize,
     encoded_size: usize,
-    _num_rows: usize,
+    rows_written: usize,
+    row_capacity: usize,
     total_data_bytes: usize,
     encoding: E,
 
     encoded_file_handle: PathBuf,
     unencoded_file_handle: PathBuf,
     merkle_tree_file_handle: PathBuf,
+    metadata_file_handle: PathBuf,
 
     unencoded_file_read_writer: File,
     encoded_file_read_writer: EncodedFileReader<F, D, E>,
@@ -41,28 +47,24 @@ pub struct FileHandler<D: Digest + FixedOutputReset + Send, F: DataField, E: LcE
 }
 
 impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
-    FileHandler<D, F, LigeroEncoding<F>>
+FileHandler<D, F, LigeroEncoding<F>>
 {
-    pub fn new_attach_to_existing_ulid(
-        file_directory: &Path,
-        ulid: &Ulid,
-        pre_encoded_size: usize,
-        encoded_size: usize,
-    ) -> Result<Self> {
+    pub fn new_attach_to_existing_ulid(file_directory: &Path, ulid: &Ulid) -> Result<Self> {
         let encoded_file_handle = file_directory.join(get_encoded_file_location_from_id(ulid));
         let unencoded_file_handle = file_directory.join(get_unencoded_file_location_from_id(ulid));
         let merkle_tree_file_handle = file_directory.join(get_merkle_file_location_from_id(ulid));
+        let metadata_file_handle = file_directory.join(get_metadata_location_from_id(ulid));
         ensure!(encoded_file_handle.is_file(), "no encoded file found!");
         ensure!(unencoded_file_handle.is_file(), "no unencoded file found!");
         ensure!(merkle_tree_file_handle.is_file(), "no merkle file found!");
+        ensure!(metadata_file_handle.is_file(), "no metadata file found!");
 
         Self::new_attach_to_existing_files(
             ulid,
             unencoded_file_handle,
             encoded_file_handle,
             merkle_tree_file_handle,
-            pre_encoded_size,
-            encoded_size,
+            metadata_file_handle,
         )
     }
 
@@ -70,18 +72,35 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
         ulid: &Ulid,
         unencoded_file_handle: PathBuf,
         encoded_file_handle: PathBuf,
-        digest_file_handle: PathBuf,
-        pre_encoded_size: usize,
-        encoded_size: usize,
+        merkle_tree_file_handle: PathBuf,
+        metadata_file_handle: PathBuf,
     ) -> Result<Self> {
+        let mut metadata_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&metadata_file_handle)
+            .context("could not open metadata file")?;
+        let EncodedFileMetadata {
+            ulid: metadata_ulid,
+            pre_encoded_size,
+            encoded_size,
+            rows_written,
+            row_capacity,
+            bytes_of_data: total_data_bytes,
+        } = EncodedFileMetadata::read_from_file(&mut metadata_file)?;
+        ensure!(
+            &metadata_ulid == ulid,
+            "supplied metadata file ulid does not match!"
+        );
+
         let unencoded_file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(&unencoded_file_handle)
             .context("couldn't open unencoded file!")?;
 
-        let total_data_bytes = unencoded_file.metadata()?.len() as usize;
-        let num_rows = total_data_bytes.div_ceil(pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
+        // let total_data_bytes = unencoded_file.metadata()?.len() as usize;
+        // let num_rows = total_data_bytes.div_ceil(pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
         let encoded_file_reader = EncodedFileReader::new_ligero(
             OpenOptions::new()
                 .read(true)
@@ -89,29 +108,33 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
                 .open(&encoded_file_handle)?,
             pre_encoded_size,
             encoded_size,
+            rows_written,
+            row_capacity,
         );
 
         let mut merkle_file = OpenOptions::new()
             .read(true)
             .write(true)
-            .open(&digest_file_handle)?;
+            .open(&merkle_tree_file_handle)?;
         let mut merkle_bytes = Vec::new();
         merkle_file.read_to_end(&mut merkle_bytes)?;
         let merkle_tree = MerkleTree::from_bytes(&merkle_bytes)?;
 
         Ok(Self {
-            _file_ulid: ulid.clone(),
+            file_ulid: ulid.clone(),
             pre_encoded_size,
             encoded_size,
-            _num_rows: num_rows,
+            rows_written,
+            row_capacity,
             total_data_bytes,
             encoding: LigeroEncoding::new_from_dims(pre_encoded_size, encoded_size),
             unencoded_file_read_writer: unencoded_file,
             encoded_file_read_writer: encoded_file_reader,
+            metadata_file_handle,
             merkle_tree,
             encoded_file_handle,
             unencoded_file_handle,
-            merkle_tree_file_handle: digest_file_handle,
+            merkle_tree_file_handle,
             _digest: PhantomData,
             _field: PhantomData,
         })
@@ -130,7 +153,8 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
 
         let unencoded_path = get_unencoded_file_location_from_id(ulid);
         let encoded_path = get_encoded_file_location_from_id(ulid);
-        let digest_path = get_merkle_file_location_from_id(ulid);
+        let merkle_tree_path = get_merkle_file_location_from_id(ulid);
+        let metadata_path = get_metadata_location_from_id(ulid);
         if let Some(file_handle) = file_handle_if_not_already_ulid {
             rename(file_handle, &unencoded_path)?;
         }
@@ -139,27 +163,36 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
             .read(true)
             .write(true)
             .open(&unencoded_path)?;
-        let mut digest_file = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .create(true)
-            .truncate(true)
-            .open(&digest_path)?;
+        // let mut merkle_tree_file = OpenOptions::new()
+        //     .write(true)
+        //     .read(true)
+        //     .create(true)
+        //     .truncate(true)
+        //     .open(&merkle_tree_path)?;
         EncodedFileWriter::<F, D, LigeroEncoding<F>>::convert_unencoded_file(
             &mut unencoded_file,
             &encoded_path,
-            Some(&mut digest_file),
+            Some(&merkle_tree_path),
+            Some(&metadata_path),
             pre_encoded_size,
             encoded_size,
         )?;
+
+        let mut metadata_file = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .open(&metadata_path)?;
+        let mut encoded_metadata = EncodedFileMetadata::read_from_file(&mut metadata_file)?;
+        encoded_metadata.ulid = *ulid;
+        metadata_file.seek(SeekFrom::Start(0))?;
+        encoded_metadata.write_to_file(&mut metadata_file)?;
 
         Self::new_attach_to_existing_files(
             &ulid,
             unencoded_path,
             encoded_path,
-            digest_path,
-            pre_encoded_size,
-            encoded_size,
+            merkle_tree_path,
+            metadata_path,
         )
     }
 
@@ -190,22 +223,30 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
         &mut self,
         new_pre_encoded_columns: usize,
         new_encdoded_columns: usize,
-    ) -> Result<MerkleTree<D>> {
+    ) -> Result<(EncodedFileMetadata, MerkleTree<D>)> {
         let mut unencoded_file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .open(&self.unencoded_file_handle)?;
-        let mut merkle_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&self.merkle_tree_file_handle)?;
+        // let mut merkle_file = OpenOptions::new()
+        //     .read(true)
+        //     .write(true)
+        //     .create(true)
+        //     .open(&self.merkle_tree_file_handle)?;
+        // let mut metadata_file = OpenOptions::new()
+        //     .read(true)
+        //     .write(true)
+        //     .create(true)
+        //     .open(&self.metadata_file_handle)?;
 
         EncodedFileWriter::<F, D, LigeroEncoding<F>>::convert_unencoded_file(
             &mut unencoded_file,
             &self.encoded_file_handle,
-            Some(&mut merkle_file),
+            // Some(&mut merkle_file),
+            // Some(&mut metadata_file),
+            Some(&self.merkle_tree_file_handle),
+            Some(&self.metadata_file_handle),
             new_pre_encoded_columns,
             new_encdoded_columns,
         )
@@ -327,8 +368,28 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
             new_encoded_file_writer.push_bytes(&buffer[..bytes_read])?;
         }
 
-        let tree = new_encoded_file_writer.finalize_to_merkle_tree()?;
+        let EncodedFileMetadata {
+            pre_encoded_size,
+            encoded_size,
+            rows_written,
+            row_capacity,
+            bytes_of_data: bytes_written,
+            ..
+        } = new_encoded_file_writer.get_encoded_file_metadata();
+        self.pre_encoded_size = pre_encoded_size;
+        self.encoded_size = encoded_size;
+        self.total_data_bytes = bytes_written;
+        self.row_capacity = row_capacity;
+        self.rows_written = rows_written;
+        self.write_metadata()?;
+
+        let (metadata, tree) = new_encoded_file_writer.finalize_to_merkle_tree()?;
         self.write_tree(&tree)?;
+        let mut metadata_file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.metadata_file_handle)?;
+        metadata.write_to_file(&mut metadata_file)?;
 
         let new_encoded_file_reader = EncodedFileReader::new_ligero(
             OpenOptions::new()
@@ -337,11 +398,23 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
                 .open(&self.encoded_file_handle)?,
             self.pre_encoded_size,
             self.encoded_size,
+            self.rows_written,
+            self.row_capacity,
         );
 
         self.encoded_file_read_writer = new_encoded_file_reader;
         self.merkle_tree = tree;
 
+        Ok(())
+    }
+
+    fn write_metadata(&mut self) -> Result<()> {
+        let metadata = self.get_encoded_metadata();
+
+        let mut metadata_file = OpenOptions::new()
+            .write(true)
+            .open(&self.encoded_file_handle)?;
+        metadata.write_to_file(&mut metadata_file)?;
         Ok(())
     }
 
@@ -401,15 +474,17 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
 
         ensure!(recalculated_unencoded_tree == recalculated_encoded_tree);
         ensure!(recalculated_unencoded_tree == self.merkle_tree);
+
+        // todo: need to verify the metadata file also agrees
         Ok(())
     }
 }
 
 impl<
-        D: Digest + FixedOutputReset + Send + Sync,
-        F: DataField,
-        E: LcEncoding<F = F> + Send + Sync,
-    > FileHandler<D, F, E>
+    D: Digest + FixedOutputReset + Send + Sync,
+    F: DataField,
+    E: LcEncoding<F=F> + Send + Sync,
+> FileHandler<D, F, E>
 {
     pub fn read_only_digests(
         &mut self,
@@ -512,7 +587,17 @@ impl<
     }
 
     pub fn get_dimensions(&self) -> Result<(usize, usize, usize)> {
-        Ok((self.pre_encoded_size, self.encoded_size, self._num_rows))
+        Ok((self.pre_encoded_size, self.encoded_size, self.rows_written))
+    }
+    pub fn get_encoded_metadata(&self) -> EncodedFileMetadata {
+        EncodedFileMetadata {
+            ulid: self.file_ulid,
+            pre_encoded_size: self.pre_encoded_size,
+            encoded_size: self.encoded_size,
+            rows_written: self.rows_written,
+            row_capacity: self.row_capacity,
+            bytes_of_data: self.total_data_bytes,
+        }
     }
     pub fn get_total_data_bytes(&self) -> usize {
         self.total_data_bytes

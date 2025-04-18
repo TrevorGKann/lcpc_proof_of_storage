@@ -1,24 +1,27 @@
 #[cfg(test)]
 mod encoded_file_io_tests {
-    use crate::fields::data_field::DataField;
-    use crate::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
-    use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
-    use crate::lcpc_online::encoded_file_reader::{
-        get_decoded_file_size_from_rate, get_encoded_file_size_from_rate,
-    };
-    use crate::lcpc_online::encoded_file_writer::EncodedFileWriter;
-    use crate::lcpc_online::file_handler::FileHandler;
-    use crate::lcpc_online::*;
-    use crate::networking::client::get_column_indicies_from_random_seed;
-    use lcpc_2d::log2;
+    use std::env;
+    use std::fs::{copy, File, metadata, OpenOptions, read, remove_file};
+    use std::path::{Path, PathBuf};
+
     use rand::Rng;
     use rand_chacha::ChaCha8Rng;
     use rand_core::{RngCore, SeedableRng};
     use serial_test::serial;
-    use std::env;
-    use std::fs::{copy, metadata, read, remove_file, File, OpenOptions};
-    use std::path::{Path, PathBuf};
     use ulid::Ulid;
+
+    use lcpc_2d::log2;
+
+    use crate::fields::data_field::DataField;
+    use crate::lcpc_online::*;
+    use crate::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
+    use crate::lcpc_online::encoded_file_reader::{
+        get_decoded_file_size_from_rate, get_encoded_file_size_from_rate,
+    };
+    use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
+    use crate::lcpc_online::encoded_file_writer::EncodedFileWriter;
+    use crate::lcpc_online::file_handler::FileHandler;
+    use crate::networking::client::get_column_indicies_from_random_seed;
 
     type TestField = WriteableFt63;
 
@@ -30,6 +33,7 @@ mod encoded_file_io_tests {
         let test_file_path = PathBuf::from("test_files/test.txt");
         let file_path_encoded = PathBuf::from("test_files/test_encoded.txt");
         let file_path_decoded = PathBuf::from("test_files/test_decoded.txt");
+        let metadata_path = PathBuf::from("test_files/metadata.json");
 
         let original_file_len = File::open(&test_file_path)
             .unwrap()
@@ -48,7 +52,7 @@ mod encoded_file_io_tests {
             );
 
             // encode the file
-            let encoded_tree = EncodedFileWriter::<
+            let (encoded_metadata, encoded_tree) = EncodedFileWriter::<
                 TestField,
                 Blake3,
                 LigeroEncoding<TestField>,
@@ -57,10 +61,19 @@ mod encoded_file_io_tests {
                     .expect("couldn't open test file"),
                 &file_path_encoded,
                 None,
+                Some(&metadata_path),
                 pre_encoded_len,
                 encoded_len,
             )
                 .expect("failed initial encoding");
+
+            let mut metadata_file = OpenOptions::new()
+                .write(true)
+                .read(true)
+                .create(true)
+                .open(&metadata_path)
+                .unwrap();
+            let encoded_metadata = EncodedFileMetadata::read_from_file(&mut metadata_file).unwrap();
 
             // check that the results are the correct size
             assert_eq!(encoded_tree.len(), encoded_len * 2 - 1);
@@ -77,11 +90,24 @@ mod encoded_file_io_tests {
                 "Encoded file len: {}; expected {}",
                 encoded_file_len, expected_size
             );
-            assert_eq!(
-                encoded_file_len as usize, expected_size,
+            assert!(
+                encoded_file_len as usize == expected_size
+                    || encoded_file_len as usize == expected_size * 2,
                 "expected a file of size {} to be encoded into size {}",
-                original_file_len, expected_size
+                original_file_len,
+                expected_size
             );
+            assert_eq!(
+                encoded_file_len as usize,
+                encoded_metadata.row_capacity
+                    * encoded_metadata.encoded_size
+                    * TestField::WRITTEN_BYTES_WIDTH as usize,
+                "File is the wrong allocated size"
+            );
+            assert!(encoded_metadata.row_capacity > encoded_metadata.rows_written);
+            assert_eq!(encoded_metadata.encoded_size, encoded_len);
+            assert_eq!(encoded_metadata.pre_encoded_size, pre_encoded_len);
+            assert_eq!(original_file_len, encoded_metadata.bytes_of_data);
 
             // decode the file
             let encoded_file = OpenOptions::new()
@@ -94,6 +120,8 @@ mod encoded_file_io_tests {
                     encoded_file,
                     pre_encoded_len,
                     encoded_len,
+                    encoded_metadata.rows_written,
+                    encoded_metadata.row_capacity,
                 );
             let mut decode_target = OpenOptions::new()
                 .read(true)
@@ -130,6 +158,7 @@ mod encoded_file_io_tests {
         let file_path_encoded = PathBuf::from("test_files/edit_test_encoded.txt");
         let file_path_decoded = PathBuf::from("test_files/edit_test_decoded.txt");
         let _file_path_merkle = PathBuf::from("test_files/edit_test_merkle.txt");
+        let metadata_file = PathBuf::from("test_files/edit_test_metadata.json");
         let test_ulid = Ulid::new();
 
         // // copy origin to test
@@ -169,7 +198,6 @@ mod encoded_file_io_tests {
                 pre_encoded_len,
                 encoded_len,
             )
-
                 .unwrap();
 
             file_handler.verify_all_files_agree().unwrap();
@@ -198,11 +226,14 @@ mod encoded_file_io_tests {
 
                 // check that the file is correct and correctly decodes to what we expect
                 file_handler.verify_all_files_agree().unwrap();
+                let encoded_metadata = file_handler.get_encoded_metadata();
                 let mut reader =
                     EncodedFileReader::<TestField, Blake3, LigeroEncoding<TestField>>::new_ligero(
                         File::open(file_handler.get_encoded_file_handle()).unwrap(),
                         pre_encoded_len,
                         encoded_len,
+                        encoded_metadata.rows_written,
+                        encoded_metadata.row_capacity,
                     );
 
                 let mut decode_target = OpenOptions::new()

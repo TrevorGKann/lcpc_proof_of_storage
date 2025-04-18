@@ -21,6 +21,8 @@ use crate::fields::{is_power_of_two, vector_multiply};
 use crate::{fields, PoSColumn, PoSCommit, PoSEncoding, PoSField, PoSRoot};
 
 pub mod column_digest_accumulator;
+mod encoded_file_metadata;
+pub use encoded_file_metadata::EncodedFileMetadata;
 pub mod encoded_file_reader;
 pub mod encoded_file_writer;
 pub mod file_formatter;
