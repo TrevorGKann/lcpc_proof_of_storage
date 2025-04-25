@@ -1,22 +1,25 @@
-use crate::fields::data_field::DataField;
-use crate::fields::field_generator_iter::FieldGeneratorIter;
-use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
-use crate::lcpc_online::file_handler::write_tree_to_file;
-use crate::lcpc_online::merkle_tree::MerkleTree;
-use crate::lcpc_online::EncodedFileMetadata;
-use anyhow::{ensure, Result};
-use blake3::traits::digest::{Digest, FixedOutputReset, Output};
-use lcpc_2d::LcEncoding;
-use lcpc_ligero_pc::LigeroEncoding;
-use rayon::iter::IndexedParallelIterator;
-use rayon::iter::ParallelIterator;
-use rayon::prelude::{IntoParallelIterator, IntoParallelRefMutIterator};
 use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::prelude::FileExt;
 use std::path::{Path, PathBuf};
+
+use anyhow::{ensure, Result};
+use blake3::traits::digest::{Digest, FixedOutputReset, Output};
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::ParallelIterator;
+use rayon::prelude::{IntoParallelIterator, IntoParallelRefMutIterator};
+
+use lcpc_2d::LcEncoding;
+use lcpc_ligero_pc::LigeroEncoding;
+
+use crate::fields::data_field::DataField;
+use crate::fields::field_generator_iter::FieldGeneratorIter;
+use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
+use crate::lcpc_online::file_handler::write_tree_to_file;
+use crate::lcpc_online::merkle_tree::MerkleTree;
+use crate::lcpc_online::EncodedFileMetadata;
 
 pub struct EncodedFileWriter<F: DataField, D: Digest + FixedOutputReset + Send, E: LcEncoding> {
     encoding: E,
@@ -149,8 +152,8 @@ impl<F: DataField, D: Digest + FixedOutputReset + Send> EncodedFileWriter<F, D, 
                 "Number of encoded columns must be a power of 2, instead got ratio of {num_pre_encoded_columns}/{num_encoded_columns}"
             );
         ensure!(
-            num_encoded_columns >= 2 * num_pre_encoded_columns,
-            "Number of encoded columns must be greater than 2 * number of columns"
+            num_encoded_columns > num_pre_encoded_columns,
+            "Number of encoded columns must be greater than the number of columns"
         );
 
         let total_size = unencoded_file.metadata()?.len() as usize;
@@ -315,6 +318,7 @@ impl<F: DataField, D: Digest + FixedOutputReset + Send> EncodedFileWriter<F, D, 
         if current_buf_size < self.outgoing_field_buffer_size // buff isn't filled
             && current_buf_size + self.rows_written < self.row_capacity // we aren't going to overflow
             && !finalize
+        // optimization: this might be called up to rowbuf times
         {
             return Ok(());
         }
@@ -332,30 +336,30 @@ impl<F: DataField, D: Digest + FixedOutputReset + Send> EncodedFileWriter<F, D, 
         //     .expect("couldn't build thread pool");
         // pool.install(|| {
         self.outgoing_field_buffer
-                .par_iter_mut()
-                .enumerate()
-                .try_for_each(|(row_index, f): (usize, &mut Vec<F>)| {
-                    let bytes = F::field_vec_to_raw_bytes(f);
-                    f.clear();
-                    #[cfg(unix)]
-                    {
-                        self.file_to_write_to.write_at(
-                            &bytes,
-                            write_location + column_length_in_bytes * row_index as u64,
-                        )?;
-                        // no matter how many bytes we write, the next location to write
-                        // to will always be a column_length away since `write_at` doesn't
-                        // affect the file pointer. This is not the case for write
-                        // operations other than `write_at`
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        todo!("Windows write at implementation not yet complete")
-                    }
-                    anyhow::Ok(())
-                })
-        // })
-        ?;
+            .par_iter_mut()
+            .enumerate()
+            .try_for_each(|(row_index, f): (usize, &mut Vec<F>)| {
+                let bytes = F::field_vec_to_raw_bytes(f);
+                f.clear();
+                #[cfg(unix)]
+                {
+                    self.file_to_write_to.write_at(
+                        &bytes,
+                        write_location + column_length_in_bytes * row_index as u64,
+                    )?;
+                    // no matter how many bytes we write, the next location to write
+                    // to will always be a column_length away since `write_at` doesn't
+                    // affect the file pointer. This is not the case for write
+                    // operations other than `write_at`
+                }
+                #[cfg(not(unix))]
+                {
+                    todo!("Windows write at implementation not yet complete")
+                }
+                anyhow::Ok(())
+            })
+            // })
+            ?;
         // for bytes_from_column_buff_to_write in bytes_of_columns {
         //     #[cfg(unix)]
         //     {
@@ -378,7 +382,7 @@ impl<F: DataField, D: Digest + FixedOutputReset + Send> EncodedFileWriter<F, D, 
 
         assert!(self.rows_written <= self.row_capacity);
         if self.rows_written == self.row_capacity {
-            self._set_new_capacity(self.row_capacity * 2)?;
+            self.set_new_capacity(self.row_capacity * 2)?;
         }
 
         Ok(())
@@ -422,9 +426,9 @@ impl<F: DataField, D: Digest + FixedOutputReset + Send> EncodedFileWriter<F, D, 
         Ok(())
     }
 
-    pub fn _set_new_capacity(&mut self, new_capacity: usize) -> Result<()> {
+    pub fn set_new_capacity(&mut self, new_capacity: usize) -> Result<()> {
         ensure!(
-            new_capacity <= self.rows_written,
+            new_capacity >= self.rows_written,
             "Cannot set capacity to fewer than rows are written. That would be destructive!"
         );
 

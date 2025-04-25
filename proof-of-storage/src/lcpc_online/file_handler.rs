@@ -1,11 +1,12 @@
-use std::fs::{File, OpenOptions, remove_dir, remove_file, rename};
+use std::fs::{remove_dir, remove_file, rename, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::os::unix::prelude::FileExt;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, ensure, Result};
+use anyhow::{bail, ensure, Context, Result};
 use blake3::traits::digest::{Digest, FixedOutputReset, Output};
+use rayon::iter::repeatn;
 use rayon::prelude::*;
 use ulid::Ulid;
 
@@ -17,14 +18,14 @@ use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, Col
 use crate::lcpc_online::decode_row;
 use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
 use crate::lcpc_online::encoded_file_writer::EncodedFileWriter;
-use crate::lcpc_online::EncodedFileMetadata;
 use crate::lcpc_online::file_formatter::{
     get_encoded_file_location_from_id, get_merkle_file_location_from_id,
     get_metadata_location_from_id, get_unencoded_file_location_from_id,
 };
 use crate::lcpc_online::merkle_tree::MerkleTree;
+use crate::lcpc_online::EncodedFileMetadata;
 
-pub struct FileHandler<D: Digest + FixedOutputReset + Send, F: DataField, E: LcEncoding<F=F>> {
+pub struct FileHandler<D: Digest + FixedOutputReset + Send, F: DataField, E: LcEncoding<F = F>> {
     file_ulid: Ulid,
     pre_encoded_size: usize,
     encoded_size: usize,
@@ -47,7 +48,7 @@ pub struct FileHandler<D: Digest + FixedOutputReset + Send, F: DataField, E: LcE
 }
 
 impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
-FileHandler<D, F, LigeroEncoding<F>>
+    FileHandler<D, F, LigeroEncoding<F>>
 {
     pub fn new_attach_to_existing_ulid(file_directory: &Path, ulid: &Ulid) -> Result<Self> {
         let encoded_file_handle = file_directory.join(get_encoded_file_location_from_id(ulid));
@@ -240,16 +241,37 @@ FileHandler<D, F, LigeroEncoding<F>>
         //     .create(true)
         //     .open(&self.metadata_file_handle)?;
 
-        EncodedFileWriter::<F, D, LigeroEncoding<F>>::convert_unencoded_file(
-            &mut unencoded_file,
-            &self.encoded_file_handle,
-            // Some(&mut merkle_file),
-            // Some(&mut metadata_file),
-            Some(&self.merkle_tree_file_handle),
-            Some(&self.metadata_file_handle),
+        let (new_metadata, new_tree) =
+            EncodedFileWriter::<F, D, LigeroEncoding<F>>::convert_unencoded_file(
+                &mut unencoded_file,
+                &self.encoded_file_handle,
+                // Some(&mut merkle_file),
+                // Some(&mut metadata_file),
+                Some(&self.merkle_tree_file_handle),
+                Some(&self.metadata_file_handle),
+                new_pre_encoded_columns,
+                new_encdoded_columns,
+            )?;
+
+        self.pre_encoded_size = new_pre_encoded_columns;
+        self.encoded_size = new_encdoded_columns;
+        self.rows_written = new_metadata.rows_written;
+        self.row_capacity = new_metadata.row_capacity;
+        self.encoding =
+            LigeroEncoding::new_from_dims(new_pre_encoded_columns, new_encdoded_columns);
+        self.encoded_file_read_writer = EncodedFileReader::new_ligero(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&self.encoded_file_handle)?,
             new_pre_encoded_columns,
             new_encdoded_columns,
-        )
+            self.rows_written,
+            self.row_capacity,
+        );
+        self.merkle_tree = new_tree.clone();
+
+        Ok((new_metadata, new_tree))
     }
 
     // returns a the unencoded bytes that were edited, and the new edited root.
@@ -305,21 +327,41 @@ FileHandler<D, F, LigeroEncoding<F>>
                 .replace_row_with_decoded_bytes(row, &unencoded_row_buff)?
         }
 
-        let new_tree = self.update_merkle_file()?;
+        let new_tree = self.recalculate_merkle_tree()?;
         Ok((original_bytes, new_tree))
     }
 
     pub fn append_bytes(&mut self, bytes_to_add: Vec<u8>) -> Result<MerkleTree<D>> {
-        let mut unencoded_file_writer = OpenOptions::new()
-            .append(true)
-            .open(&self.unencoded_file_handle)?;
+        {
+            // unencoded file scope
+            let mut unencoded_file = OpenOptions::new()
+                .append(true)
+                .open(&self.unencoded_file_handle)?;
+            unencoded_file.write_all(&bytes_to_add.clone())?;
+        }
 
-        unencoded_file_writer.write_all(&bytes_to_add)?;
+        let start_row =
+            self.total_data_bytes / (self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
+        let end_row = (self.total_data_bytes + bytes_to_add.len())
+            .div_ceil(self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
 
-        self.reencode_unencoded_file()?;
-        // optimization: This needs to be changed to only affect the last row once the encoded file can grow
+        if end_row >= self.row_capacity {
+            self.encoded_file_read_writer
+                .set_new_capacity(end_row * 2)?;
+            self.row_capacity = end_row * 2;
+        }
 
-        self.get_merkle_tree()
+        self.total_data_bytes += bytes_to_add.len();
+        self.rows_written = end_row;
+
+        // self.reencode_unencoded_file()?;
+        for row in start_row..end_row {
+            self.reencode_row(row)?
+        }
+
+        let new_tree = self.recalculate_merkle_tree()?;
+        self.write_metadata()?;
+        Ok(new_tree)
     }
 
     pub fn get_decoded_row(&mut self, row_index: usize) -> Result<Vec<F>> {
@@ -334,19 +376,43 @@ FileHandler<D, F, LigeroEncoding<F>>
         Ok(F::field_vec_to_byte_vec(&row))
     }
 
+    pub fn reencode_row(&mut self, row_index: usize) -> Result<()> {
+        ensure!(
+            row_index < self.rows_written,
+            "cannot reencode a row that is out of bounds"
+        );
+        let decoded_row = self.get_unencoded_row(row_index)?;
+        let mut row_to_encode: Vec<F> = Vec::with_capacity(self.encoded_size);
+        row_to_encode.extend_from_slice(&F::from_byte_vec(&decoded_row));
+        assert!(
+            row_to_encode.len() == self.pre_encoded_size
+                || (row_to_encode.len() < self.pre_encoded_size
+                    && row_index == self.rows_written - 1)
+        );
+
+        row_to_encode.par_extend(repeatn(F::ZERO, self.encoded_size - row_to_encode.len()));
+        assert_eq!(row_to_encode.len(), self.encoded_size);
+
+        self.encoding.encode(&mut row_to_encode)?;
+        assert_eq!(row_to_encode.len(), self.encoded_size);
+        self.encoded_file_read_writer
+            .replace_encoded_row(row_index, &row_to_encode)?;
+        Ok(())
+    }
+
     /// only requires that a single unencoded file exists at the given handle and it will iterate over that file
     /// to produce an encoded transposed file as well as create the digest file.
     pub fn reencode_unencoded_file(&mut self) -> Result<()> {
         self.total_data_bytes = self.unencoded_file_handle.metadata()?.len() as usize;
         let mut raw_file = OpenOptions::new()
             .read(true)
-            .write(true)
+            .write(false)
             .open(&self.unencoded_file_handle)?;
-        // let mut raw_file_reader = BufReader::with_capacity(F::DATA_BYTE_CAPACITY as usize * self.pre_encoded_size, raw_file);
 
         let new_encoded_file = OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&self.encoded_file_handle)?;
 
         let mut new_encoded_file_writer: EncodedFileWriter<F, D, LigeroEncoding<F>> =
@@ -357,7 +423,7 @@ FileHandler<D, F, LigeroEncoding<F>>
                 new_encoded_file,
             );
 
-        let mut buffer = Vec::with_capacity(F::DATA_BYTE_CAPACITY as usize * self.pre_encoded_size);
+        let mut buffer = vec![0u8; F::DATA_BYTE_CAPACITY as usize * self.pre_encoded_size];
 
         loop {
             let bytes_read = raw_file.read(&mut buffer)?;
@@ -368,28 +434,14 @@ FileHandler<D, F, LigeroEncoding<F>>
             new_encoded_file_writer.push_bytes(&buffer[..bytes_read])?;
         }
 
-        let EncodedFileMetadata {
-            pre_encoded_size,
-            encoded_size,
-            rows_written,
-            row_capacity,
-            bytes_of_data: bytes_written,
-            ..
-        } = new_encoded_file_writer.get_encoded_file_metadata();
-        self.pre_encoded_size = pre_encoded_size;
-        self.encoded_size = encoded_size;
-        self.total_data_bytes = bytes_written;
-        self.row_capacity = row_capacity;
-        self.rows_written = rows_written;
-        self.write_metadata()?;
-
         let (metadata, tree) = new_encoded_file_writer.finalize_to_merkle_tree()?;
         self.write_tree(&tree)?;
-        let mut metadata_file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&self.metadata_file_handle)?;
-        metadata.write_to_file(&mut metadata_file)?;
+        self.pre_encoded_size = metadata.pre_encoded_size;
+        self.encoded_size = metadata.encoded_size;
+        self.total_data_bytes = metadata.bytes_of_data;
+        self.row_capacity = metadata.row_capacity;
+        self.rows_written = metadata.rows_written;
+        self.write_metadata()?;
 
         let new_encoded_file_reader = EncodedFileReader::new_ligero(
             OpenOptions::new()
@@ -413,16 +465,17 @@ FileHandler<D, F, LigeroEncoding<F>>
 
         let mut metadata_file = OpenOptions::new()
             .write(true)
-            .open(&self.encoded_file_handle)?;
+            .open(&self.metadata_file_handle)?;
         metadata.write_to_file(&mut metadata_file)?;
         Ok(())
     }
 
-    pub fn update_merkle_file(&mut self) -> Result<MerkleTree<D>> {
+    pub fn recalculate_merkle_tree(&mut self) -> Result<MerkleTree<D>> {
         let tree = self
             .encoded_file_read_writer
             .process_file_to_merkle_tree()?;
         self.merkle_tree = tree.clone();
+        self.write_tree(&tree)?;
         Ok(tree)
     }
 
@@ -445,10 +498,14 @@ FileHandler<D, F, LigeroEncoding<F>>
         self.encoded_file_read_writer.get_encoded_row(row_index)
     }
 
+    /// This entirely recalculates a bunch of attributes and can be very expensive
+    /// but is exhaustive. It should realistically be used for testing purposes
+    /// only.
     pub fn verify_all_files_agree(&mut self) -> Result<()> {
         let recalculated_encoded_tree = self
             .encoded_file_read_writer
             .process_file_to_merkle_tree()?;
+        ensure!(recalculated_encoded_tree == self.merkle_tree);
 
         let mut unencoded_file = OpenOptions::new()
             .read(true)
@@ -457,8 +514,11 @@ FileHandler<D, F, LigeroEncoding<F>>
         let mut buffer = vec![0u8; F::DATA_BYTE_CAPACITY as usize * self.pre_encoded_size];
         let mut digest_accumulator: ColumnDigestAccumulator<D, F> =
             ColumnDigestAccumulator::new(self.encoded_size, ColumnsToCareAbout::All);
+        let mut total_bytes_read = 0;
         loop {
+            // read in unencoded file one row at a time
             let bytes_read = unencoded_file.read(&mut buffer)?;
+            total_bytes_read += bytes_read;
             if bytes_read == 0 {
                 break;
             }
@@ -470,9 +530,9 @@ FileHandler<D, F, LigeroEncoding<F>>
             self.encoding.encode(&mut row_to_encode)?;
             digest_accumulator.update(&row_to_encode)?;
         }
-        let recalculated_unencoded_tree = digest_accumulator.finalize_to_merkle_tree()?;
+        ensure!(total_bytes_read == self.total_data_bytes);
 
-        ensure!(recalculated_unencoded_tree == recalculated_encoded_tree);
+        let recalculated_unencoded_tree = digest_accumulator.finalize_to_merkle_tree()?;
         ensure!(recalculated_unencoded_tree == self.merkle_tree);
 
         // todo: need to verify the metadata file also agrees
@@ -481,10 +541,10 @@ FileHandler<D, F, LigeroEncoding<F>>
 }
 
 impl<
-    D: Digest + FixedOutputReset + Send + Sync,
-    F: DataField,
-    E: LcEncoding<F=F> + Send + Sync,
-> FileHandler<D, F, E>
+        D: Digest + FixedOutputReset + Send + Sync,
+        F: DataField,
+        E: LcEncoding<F = F> + Send + Sync,
+    > FileHandler<D, F, E>
 {
     pub fn read_only_digests(
         &mut self,
@@ -521,13 +581,32 @@ impl<
         Ok(return_columns)
     }
 
+    pub fn get_unencoded_row(&mut self, row_index: usize) -> Result<Vec<u8>> {
+        ensure!(row_index < self.rows_written, "row_index out of bounds");
+        let start_byte = row_index * self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize;
+        let mut end_byte = (row_index + 1) * self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize;
+        end_byte = if end_byte > self.total_data_bytes {
+            self.total_data_bytes
+        } else {
+            end_byte
+        };
+        let unencoded_bytes = self.get_unencoded_bytes(start_byte, end_byte)?;
+        assert!(
+            unencoded_bytes.len() == self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize
+                || (row_index == self.rows_written - 1
+                    && unencoded_bytes.len()
+                        < self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize)
+        );
+        Ok(unencoded_bytes)
+    }
+
     pub fn get_unencoded_bytes(&mut self, byte_start: usize, byte_end: usize) -> Result<Vec<u8>> {
-        let mut unencoded_file_reader = OpenOptions::new()
+        let unencoded_file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(&self.unencoded_file_handle)?;
         let mut original_byte_buffer = vec![0u8; byte_end - byte_start];
-        unencoded_file_reader.read_exact(&mut original_byte_buffer)?;
+        unencoded_file.read_exact_at(&mut original_byte_buffer, byte_start as u64)?;
         Ok(original_byte_buffer)
     }
 
@@ -573,6 +652,7 @@ impl<
         remove_file(&self.unencoded_file_handle)?;
         remove_file(&self.encoded_file_handle)?;
         remove_file(&self.merkle_tree_file_handle)?;
+        remove_file(&self.metadata_file_handle)?;
         if self
             .unencoded_file_handle
             .parent()

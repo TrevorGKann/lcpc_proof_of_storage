@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod encoded_file_io_tests {
     use std::env;
-    use std::fs::{copy, File, metadata, OpenOptions, read, remove_file};
+    use std::fs::{copy, metadata, read, remove_file, File, OpenOptions};
+    use std::io::Read;
     use std::path::{Path, PathBuf};
 
     use rand::Rng;
@@ -13,14 +14,14 @@ mod encoded_file_io_tests {
     use lcpc_2d::log2;
 
     use crate::fields::data_field::DataField;
-    use crate::lcpc_online::*;
     use crate::lcpc_online::column_digest_accumulator::ColumnsToCareAbout;
+    use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
     use crate::lcpc_online::encoded_file_reader::{
         get_decoded_file_size_from_rate, get_encoded_file_size_from_rate,
     };
-    use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
     use crate::lcpc_online::encoded_file_writer::EncodedFileWriter;
     use crate::lcpc_online::file_handler::FileHandler;
+    use crate::lcpc_online::*;
     use crate::networking::client::get_column_indicies_from_random_seed;
 
     type TestField = WriteableFt63;
@@ -52,20 +53,19 @@ mod encoded_file_io_tests {
             );
 
             // encode the file
-            let (encoded_metadata, encoded_tree) = EncodedFileWriter::<
+            let (_encoded_metadata, encoded_tree) = EncodedFileWriter::<
                 TestField,
                 Blake3,
                 LigeroEncoding<TestField>,
             >::convert_unencoded_file(
-                &mut File::open(&test_file_path)
-                    .expect("couldn't open test file"),
+                &mut File::open(&test_file_path).expect("couldn't open test file"),
                 &file_path_encoded,
                 None,
                 Some(&metadata_path),
                 pre_encoded_len,
                 encoded_len,
             )
-                .expect("failed initial encoding");
+            .expect("failed initial encoding");
 
             let mut metadata_file = OpenOptions::new()
                 .write(true)
@@ -155,10 +155,7 @@ mod encoded_file_io_tests {
 
         let test_file_path_origin = PathBuf::from("test_files/test.txt");
         let test_file_path = PathBuf::from("test_files/edit_test.txt");
-        let file_path_encoded = PathBuf::from("test_files/edit_test_encoded.txt");
-        let file_path_decoded = PathBuf::from("test_files/edit_test_decoded.txt");
-        let _file_path_merkle = PathBuf::from("test_files/edit_test_merkle.txt");
-        let metadata_file = PathBuf::from("test_files/edit_test_metadata.json");
+        let test_file_decode_path = PathBuf::from("test_files/test_decoded.txt");
         let test_ulid = Ulid::new();
 
         // // copy origin to test
@@ -224,6 +221,11 @@ mod encoded_file_io_tests {
                 original_file_contents[start_index..start_index + RANDOM_LENGTH]
                     .copy_from_slice(&random_bytes_to_write);
 
+                // check that the raw buffer is correct
+                let por_raw_file = std::fs::read(file_handler.get_raw_file_handle()).unwrap();
+                assert_eq!(por_raw_file.len(), original_file_contents.len());
+                assert_eq!(por_raw_file, original_file_contents);
+
                 // check that the file is correct and correctly decodes to what we expect
                 file_handler.verify_all_files_agree().unwrap();
                 let encoded_metadata = file_handler.get_encoded_metadata();
@@ -240,23 +242,119 @@ mod encoded_file_io_tests {
                     .read(true)
                     .write(true)
                     .truncate(true)
-                    .open(&file_handler.get_raw_file_handle())
+                    .create(true)
+                    .open(&test_file_decode_path)
                     .unwrap();
                 reader.decode_to_target_file(&mut decode_target).unwrap();
 
-                let decoded_file_contents = read(&file_handler.get_raw_file_handle()).unwrap();
+                let decoded_file_contents = read(&test_file_decode_path).unwrap();
                 assert_eq!(
                     decoded_file_contents[..original_file_contents.len()],
                     original_file_contents
                 );
             }
+
+            file_handler.verify_all_files_agree().unwrap();
+
             file_handler.delete_all_files().unwrap()
         }
+    }
+    #[test]
+    #[serial]
+    fn append_to_file_is_correct() {
+        let mut random = ChaCha8Rng::from_entropy();
+        const RANDOM_LENGTH: usize = 16;
 
-        // cleanup
-        _safe_delete_file(&test_file_path);
-        _safe_delete_file(&file_path_encoded);
-        _safe_delete_file(&file_path_decoded);
+        let test_file_path_origin = PathBuf::from("test_files/test.txt");
+        let test_file_path = PathBuf::from("test_files/append_test.txt");
+        let test_decode_target = PathBuf::from("test_files/append_test_decode.txt");
+        let test_ulid = Ulid::new();
+
+        // // copy origin to test
+        // copy(&test_file_path_origin, &test_file_path)
+        //
+        //     .unwrap();
+
+        for pre_encoded_len in (1..6)
+            .map(|x| 2usize.pow(x))
+            .collect::<Vec<usize>>()
+            .into_iter()
+        {
+            let encoded_len = (pre_encoded_len + 1).next_power_of_two();
+            println!(
+                "testing with a coding of rate {}/{}",
+                pre_encoded_len, encoded_len
+            );
+
+            // copy origin to test
+            copy(&test_file_path_origin, &test_file_path).unwrap();
+
+            // get the original data
+            let mut original_file_contents = read(&test_file_path).unwrap();
+
+            let mut file_handler = FileHandler::<
+                Blake3,
+                TestField,
+                LigeroEncoding<TestField>,
+            >::create_from_unencoded_file(
+                &test_ulid,
+                Some(&test_file_path),
+                pre_encoded_len,
+                encoded_len,
+            )
+                .unwrap();
+
+            file_handler.verify_all_files_agree().unwrap();
+
+            for _i in 0..400 {
+                // generate random data to edit the file with
+                // let mut random_bytes_to_write = [0u8; RANDOM_LENGTH];
+                // random.fill_bytes(&mut random_bytes_to_write);
+                let random_bytes_to_write = *b"appended";
+
+                // append to the file
+                let updated_tree = file_handler
+                    .append_bytes(random_bytes_to_write.to_vec())
+                    .unwrap();
+                assert_eq!(updated_tree.len(), encoded_len * 2 - 1);
+
+                // update our running tally of what the file should be
+                original_file_contents.extend_from_slice(&random_bytes_to_write);
+
+                let por_raw_file = std::fs::read(file_handler.get_raw_file_handle()).unwrap();
+                assert_eq!(por_raw_file.len(), original_file_contents.len());
+                assert_eq!(por_raw_file, original_file_contents);
+
+                // check that the file is correct and correctly decodes to what we expect
+                let encoded_metadata = file_handler.get_encoded_metadata();
+                let mut reader =
+                    EncodedFileReader::<TestField, Blake3, LigeroEncoding<TestField>>::new_ligero(
+                        File::open(file_handler.get_encoded_file_handle()).unwrap(),
+                        pre_encoded_len,
+                        encoded_len,
+                        encoded_metadata.rows_written,
+                        encoded_metadata.row_capacity,
+                    );
+
+                let mut decode_target = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .truncate(true)
+                    .create(true)
+                    .open(&test_decode_target)
+                    .unwrap();
+                reader.decode_to_target_file(&mut decode_target).unwrap();
+
+                let decoded_file_contents = read(&test_decode_target).unwrap();
+                assert_eq!(
+                    decoded_file_contents[..original_file_contents.len()],
+                    original_file_contents,
+                    "contents do not match!"
+                );
+                file_handler.verify_all_files_agree().unwrap();
+            }
+            file_handler.delete_all_files().unwrap()
+        }
     }
 
     #[test]
@@ -338,6 +436,85 @@ mod encoded_file_io_tests {
     }
 
     #[test]
+    #[serial]
+    fn reencode_rows_are_correct() {
+        println!("current dir {}", env::current_dir().unwrap().display());
+        let test_file_path_origin = PathBuf::from("test_files/10000_byte_file.bytes");
+        let test_file_path = PathBuf::from("test_files/reencode_test.txt");
+        let copy_of_encoded_file = PathBuf::from("test_files/reencode_test_copy.txt");
+        let test_ulid = Ulid::new();
+        let original_file_len = File::open(&test_file_path_origin)
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .len() as usize;
+        let max_columns = f64::sqrt(original_file_len as _) as usize;
+
+        for pre_encoded_len in (3..log2(max_columns))
+            // for pre_encoded_len in (5..13)
+            .map(|x| 2usize.pow(x as u32))
+            .collect::<Vec<usize>>()
+            .into_iter()
+        {
+            let encoded_len = (pre_encoded_len + 1).next_power_of_two();
+            println!(
+                "testing with a coding of rate {}/{}",
+                pre_encoded_len, encoded_len,
+            );
+
+            // copy origin to test
+            copy(&test_file_path_origin, &test_file_path).unwrap();
+
+            let mut file_handler = FileHandler::<
+                Blake3,
+                TestField,
+                LigeroEncoding<TestField>,
+            >::create_from_unencoded_file(
+                &test_ulid,
+                Some(&test_file_path),
+                pre_encoded_len,
+                encoded_len,
+            )
+                .unwrap();
+
+            file_handler.verify_all_files_agree().unwrap();
+            std::fs::copy(
+                file_handler.get_encoded_file_handle(),
+                &copy_of_encoded_file,
+            )
+            .unwrap();
+
+            let expected_rows = original_file_len
+                .div_ceil(TestField::DATA_BYTE_CAPACITY as usize)
+                .div_ceil(pre_encoded_len);
+            let sample_column = file_handler
+                .read_full_columns(ColumnsToCareAbout::Only(vec![0]))
+                .unwrap();
+            assert_eq!(expected_rows, sample_column[0].col.len());
+
+            for row in 0..expected_rows {
+                file_handler.reencode_row(row).unwrap()
+            }
+
+            assert!(_are_two_files_same(
+                &copy_of_encoded_file,
+                &file_handler.get_encoded_file_handle()
+            ));
+            file_handler.verify_all_files_agree().unwrap();
+
+            file_handler.reencode_unencoded_file().unwrap();
+            assert!(_are_two_files_same(
+                &copy_of_encoded_file,
+                &file_handler.get_encoded_file_handle()
+            ));
+            file_handler.verify_all_files_agree().unwrap();
+
+            file_handler.delete_all_files().unwrap();
+        }
+        _safe_delete_file(&test_file_path);
+    }
+
+    #[test]
     fn test_that_rate_aligns() {
         use crate::fields::data_field::DataField;
         // let mut random = ChaCha8Rng::from_entropy();
@@ -376,9 +553,111 @@ mod encoded_file_io_tests {
         }
     }
 
+    #[test]
+    #[serial]
+    fn test_metadata_is_correct() {
+        let mut random = ChaCha8Rng::from_entropy();
+        const RANDOM_LENGTH: usize = 64;
+
+        let test_file_path_origin = PathBuf::from("test_files/test.txt");
+        let test_file_path = PathBuf::from("test_files/edit_test.txt");
+        let test_ulid = Ulid::new();
+        let mut pre_encoded_len = 8;
+        let mut encoded_len = 16;
+
+        // copy origin to test
+        copy(&test_file_path_origin, &test_file_path).unwrap();
+
+        // get the original data
+        let mut original_file_len = File::open(&test_file_path)
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .len() as usize;
+
+        let mut file_handler = FileHandler::<
+                Blake3,
+                TestField,
+                LigeroEncoding<TestField>,
+            >::create_from_unencoded_file(
+                &test_ulid,
+                Some(&test_file_path),
+                pre_encoded_len,
+                encoded_len,
+            )
+                .unwrap();
+
+        file_handler.verify_all_files_agree().unwrap();
+
+        for _i in 0..100 {
+            let original_metadata = file_handler.get_encoded_metadata();
+            // randomly get a new encoding length
+            pre_encoded_len = random.gen_range(2..original_file_len);
+            encoded_len = (pre_encoded_len + 1).next_power_of_two();
+
+            file_handler.reshape(pre_encoded_len, encoded_len).unwrap();
+            let new_metadata = file_handler.get_encoded_metadata();
+            assert_eq!(new_metadata.pre_encoded_size, pre_encoded_len);
+            assert_eq!(new_metadata.encoded_size, encoded_len);
+
+            // generate random data to append to the file
+            let mut random_bytes_to_write = [0u8; RANDOM_LENGTH];
+            random.fill_bytes(&mut random_bytes_to_write);
+
+            file_handler
+                .append_bytes(random_bytes_to_write.to_vec())
+                .unwrap();
+            original_file_len += RANDOM_LENGTH;
+            let new_metadata = file_handler.get_encoded_metadata();
+            assert_eq!(new_metadata.bytes_of_data, original_file_len);
+            assert_eq!(new_metadata.ulid, test_ulid);
+            assert!(new_metadata.rows_written < new_metadata.row_capacity);
+            assert!(original_metadata.rows_written <= new_metadata.rows_written);
+            assert!(original_metadata.row_capacity <= new_metadata.row_capacity);
+
+            // check that the file is correct and correctly decodes to what we expect
+            file_handler.verify_all_files_agree().unwrap();
+        }
+        file_handler.delete_all_files().unwrap();
+    }
+
     fn _safe_delete_file(target: &impl AsRef<Path>) {
         if target.as_ref().exists() {
             remove_file(target).unwrap();
         }
+    }
+
+    fn _are_two_files_same(pathA: &impl AsRef<Path>, pathB: &impl AsRef<Path>) -> bool {
+        if pathA.as_ref() == pathB.as_ref() {
+            return true;
+        }
+        if (pathA.as_ref().exists() && !pathB.as_ref().exists())
+            || (!pathA.as_ref().exists() && pathB.as_ref().exists())
+        {
+            return false;
+        }
+
+        const BUFSIZE: usize = 2usize.pow(6);
+        let mut fileA = File::open(pathA).unwrap();
+        let mut fileB = File::open(pathB).unwrap();
+        let mut bufferA = vec![0u8; BUFSIZE];
+        let mut bufferB = vec![0u8; BUFSIZE];
+
+        loop {
+            let bytesA = fileA.read(&mut bufferA).unwrap();
+            let bytesB = fileB.read(&mut bufferB).unwrap();
+
+            if bytesA == 0 && bytesB == 0 {
+                break;
+            }
+
+            if bytesA != bytesB {
+                return false;
+            }
+            if bufferA != bufferB {
+                return false;
+            }
+        }
+        true
     }
 }

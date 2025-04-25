@@ -94,8 +94,8 @@ pub async fn upload_file(
                     "Number of encoded columns must be a power of 2"
                 );
                 ensure!(
-                    num_encoded_columns >= 2 * num_pre_encoded_columns,
-                    "Number of encoded columns must be greater than 2 * number of columns"
+                    num_encoded_columns > num_pre_encoded_columns,
+                    "Number of encoded columns must be greater than the number of columns"
                 );
 
                 (
