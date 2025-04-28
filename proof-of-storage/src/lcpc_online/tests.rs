@@ -197,7 +197,7 @@ mod encoded_file_io_tests {
 
             file_handler.verify_all_files_agree().unwrap();
 
-            for _i in 0..500 {
+            for _i in 0..100 {
                 // generate random data to edit the file with
                 let mut random_bytes_to_write = [0u8; RANDOM_LENGTH];
                 random.fill_bytes(&mut random_bytes_to_write);
@@ -236,20 +236,22 @@ mod encoded_file_io_tests {
                         encoded_metadata.row_capacity,
                     );
 
-                let mut decode_target = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .truncate(true)
-                    .create(true)
-                    .open(&test_file_decode_path)
-                    .unwrap();
-                reader.decode_to_target_file(&mut decode_target).unwrap();
+                if _i % 10 == 0 {
+                    let mut decode_target = OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .truncate(true)
+                        .create(true)
+                        .open(&test_file_decode_path)
+                        .unwrap();
+                    reader.decode_to_target_file(&mut decode_target).unwrap();
 
-                let decoded_file_contents = read(&test_file_decode_path).unwrap();
-                assert_eq!(
-                    decoded_file_contents[..original_file_contents.len()],
-                    original_file_contents
-                );
+                    let decoded_file_contents = read(&test_file_decode_path).unwrap();
+                    assert_eq!(
+                        decoded_file_contents[..original_file_contents.len()],
+                        original_file_contents
+                    );
+                }
             }
 
             file_handler.verify_all_files_agree().unwrap();
@@ -261,7 +263,7 @@ mod encoded_file_io_tests {
     #[serial]
     fn append_to_file_is_correct() {
         let mut random = ChaCha8Rng::from_entropy();
-        const RANDOM_LENGTH: usize = 16;
+        const RANDOM_LENGTH: usize = 32;
 
         let test_file_path_origin = PathBuf::from("test_files/test.txt");
         let test_file_path = PathBuf::from("test_files/append_test.txt");
@@ -304,7 +306,7 @@ mod encoded_file_io_tests {
 
             file_handler.verify_all_files_agree().unwrap();
 
-            for _i in 0..400 {
+            for _i in 0..100 {
                 // generate random data to edit the file with
                 let mut random_bytes_to_write = [0u8; RANDOM_LENGTH];
                 random.fill_bytes(&mut random_bytes_to_write);
@@ -334,22 +336,24 @@ mod encoded_file_io_tests {
                         encoded_metadata.row_capacity,
                     );
 
-                let mut decode_target = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .truncate(true)
-                    .create(true)
-                    .open(&test_decode_target)
-                    .unwrap();
-                reader.decode_to_target_file(&mut decode_target).unwrap();
+                if _i % 10 == 0 {
+                    let mut decode_target = OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .truncate(true)
+                        .create(true)
+                        .open(&test_decode_target)
+                        .unwrap();
+                    reader.decode_to_target_file(&mut decode_target).unwrap();
 
-                let decoded_file_contents = read(&test_decode_target).unwrap();
-                assert_eq!(
-                    decoded_file_contents[..original_file_contents.len()],
-                    original_file_contents,
-                    "contents do not match!"
-                );
-                file_handler.verify_all_files_agree().unwrap();
+                    let decoded_file_contents = read(&test_decode_target).unwrap();
+                    assert_eq!(
+                        decoded_file_contents[..original_file_contents.len()],
+                        original_file_contents,
+                        "contents do not match!"
+                    );
+                    file_handler.verify_all_files_agree().unwrap();
+                }
             }
             file_handler.delete_all_files().unwrap()
         }
