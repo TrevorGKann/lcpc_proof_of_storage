@@ -345,41 +345,38 @@ impl<F: DataField, D: Digest + FixedOutputReset + Send + Sync, E: LcEncoding<F =
         MerkleTree::new(&column_digests)
     }
 
-    pub fn set_new_capacity(&mut self, new_capacity: usize) -> Result<()> {
+    pub fn set_new_capacity(&mut self, new_row_capacity: usize) -> Result<()> {
         ensure!(
-            new_capacity >= self.rows_written,
+            new_row_capacity >= self.rows_written,
             "Cannot set capacity to fewer than rows are written. That would be destructive!"
         );
 
         self.file_to_read.set_len(
-            new_capacity as u64 * self.encoded_size as u64 * F::WRITTEN_BYTES_WIDTH as u64,
+            new_row_capacity as u64 * self.encoded_size as u64 * F::WRITTEN_BYTES_WIDTH as u64,
         )?;
 
         // optimization: right now I'm gonna do it single threaded and in place but in the future it could be not
         //  in-place and multi-threaded. However, we don't need to optimize that for the paper :D
 
         let old_column_length = self.row_capacity * F::WRITTEN_BYTES_WIDTH as usize;
-        let new_column_length = new_capacity * F::WRITTEN_BYTES_WIDTH as usize;
-        let mut read_in_buffer = vec![0u8; old_column_length];
-        let write_out_pad = vec![0u8; new_column_length - old_column_length];
+        let new_column_length = new_row_capacity * F::WRITTEN_BYTES_WIDTH as usize;
+        let mut column_buffer = vec![0u8; new_column_length];
 
-        for row in (0..self.rows_written).rev() {
+        for row in (0..self.encoded_size).rev() {
             // pick up old rows starting from the last one
             let old_row_start = row * old_column_length;
+            // let bytes_read = self
             self.file_to_read
-                .read_at(&mut read_in_buffer, old_row_start as _)?;
+                .read_exact_at(&mut column_buffer[0..old_column_length], old_row_start as _)?;
+            // column_buffer[bytes_read..old_column_length].fill(0);
 
             // place them in their final destination and flush out an entire row
             let new_row_start = row * new_column_length;
-            // self.file_to_read
-            //     .write_vectored_at(&[&read_in_buffer, &write_out_pad], new_row_start as _)?;
             self.file_to_read
-                .write_at(&read_in_buffer, new_row_start as _)?;
-            self.file_to_read
-                .write_at(&write_out_pad, (new_row_start + old_column_length) as _)?;
+                .write_at(&column_buffer, new_row_start as _)?;
         }
 
-        self.row_capacity = new_capacity;
+        self.row_capacity = new_row_capacity;
         Ok(())
     }
 }

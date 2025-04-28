@@ -345,7 +345,7 @@ impl<D: Digest + FixedOutputReset + Send + Sync, F: DataField>
         let end_row = (self.total_data_bytes + bytes_to_add.len())
             .div_ceil(self.pre_encoded_size * F::DATA_BYTE_CAPACITY as usize);
 
-        if end_row >= self.row_capacity {
+        if end_row > self.row_capacity {
             self.encoded_file_read_writer
                 .set_new_capacity(end_row * 2)?;
             self.row_capacity = end_row * 2;
