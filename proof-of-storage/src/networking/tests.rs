@@ -15,6 +15,7 @@ pub mod network_tests {
     // use pretty_assertions::assert_eq;
     use metrics::histogram;
     use num_traits::pow;
+    use rand::Rng;
     use rand_chacha::ChaCha8Rng;
     use rand_core::{RngCore, SeedableRng};
     use rayon::iter::IntoParallelRefIterator;
@@ -102,7 +103,8 @@ pub mod network_tests {
         tracing::info!("Starting test {}", test_name);
 
         // select a random port
-        let port = rand::random::<u16>();
+        // let seed = rand::thread_rng().gen::<[u8; 32]>();
+        let port = rand::thread_rng().gen_range(8080..u16::MAX);
         tokio::spawn(test_start_server(port));
         port
     }

@@ -1,15 +1,17 @@
 [profile.default]
-retries = 6
+retries = 0
 jitter = true
 status-level = "skip"
+max-threads = 6
 
 [test-groups]
-serial = { max-threads = 1, backoff = "exponential", delay = "5" }
+serial = {max-threads = 1, backoff = "exponential", delay = "5", retries = 6 }
+slow = {max-threads = 6, backoff = "exponential", delay = "5" }
 
 [[profile.default.overrides]]
 test-group = "serial"
 filter = "test(networking::tests)"
 
 [[profile.default.overrides]]
-test-group = "serial"
+test-group = "slow"
 filter = "test(file_io)"

@@ -576,7 +576,7 @@ pub fn decode_row<F: PrimeField>(
 
 pub fn _encode_row<F: PrimeField>(
     row: Vec<F>,
-    pre_encoded_size: usize,
+    _pre_encoded_size: usize,
     encoded_size: usize,
 ) -> Result<Vec<FldT<LigeroEncoding<F>>>, ErrT<LigeroEncoding<F>>> {
     let mut row_to_encode: Vec<F> = Vec::with_capacity(encoded_size);

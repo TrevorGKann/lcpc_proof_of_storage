@@ -151,17 +151,15 @@ mod encoded_file_io_tests {
     #[serial]
     fn edit_file_is_correct() {
         let mut random = ChaCha8Rng::from_entropy();
-        const RANDOM_LENGTH: usize = 64;
+        const RANDOM_LENGTH: usize = 1028;
 
-        let test_file_path_origin = PathBuf::from("test_files/test.txt");
+        let test_file_path_origin = PathBuf::from("test_files/10000_byte_file.bytes");
         let test_file_path = PathBuf::from("test_files/edit_test.txt");
         let test_file_decode_path = PathBuf::from("test_files/test_decoded.txt");
         let test_ulid = Ulid::new();
 
-        // // copy origin to test
-        // copy(&test_file_path_origin, &test_file_path)
-        //
-        //     .unwrap();
+        // copy origin to test
+        copy(&test_file_path_origin, &test_file_path).unwrap();
 
         for pre_encoded_len in (1..6)
             .map(|x| 2usize.pow(x))
@@ -199,7 +197,7 @@ mod encoded_file_io_tests {
 
             file_handler.verify_all_files_agree().unwrap();
 
-            for _i in 0..100 {
+            for _i in 0..500 {
                 // generate random data to edit the file with
                 let mut random_bytes_to_write = [0u8; RANDOM_LENGTH];
                 random.fill_bytes(&mut random_bytes_to_write);
@@ -308,9 +306,9 @@ mod encoded_file_io_tests {
 
             for _i in 0..400 {
                 // generate random data to edit the file with
-                // let mut random_bytes_to_write = [0u8; RANDOM_LENGTH];
-                // random.fill_bytes(&mut random_bytes_to_write);
-                let random_bytes_to_write = *b"appended";
+                let mut random_bytes_to_write = [0u8; RANDOM_LENGTH];
+                random.fill_bytes(&mut random_bytes_to_write);
+                // let random_bytes_to_write = *b"appended";
 
                 // append to the file
                 let updated_tree = file_handler
@@ -589,16 +587,28 @@ mod encoded_file_io_tests {
 
         file_handler.verify_all_files_agree().unwrap();
 
-        for _i in 0..100 {
-            let original_metadata = file_handler.get_encoded_metadata();
-            // randomly get a new encoding length
-            pre_encoded_len = random.gen_range(2..original_file_len);
-            encoded_len = (pre_encoded_len + 1).next_power_of_two();
+        for i in 0..500 {
+            let mut original_metadata = file_handler.get_encoded_metadata();
 
-            file_handler.reshape(pre_encoded_len, encoded_len).unwrap();
-            let new_metadata = file_handler.get_encoded_metadata();
-            assert_eq!(new_metadata.pre_encoded_size, pre_encoded_len);
-            assert_eq!(new_metadata.encoded_size, encoded_len);
+            if i % 10 == 0 {
+                // randomly get a new encoding length
+                pre_encoded_len = random.gen_range(2..original_file_len);
+                encoded_len = (pre_encoded_len + 1).next_power_of_two();
+
+                file_handler.reshape(pre_encoded_len, encoded_len).unwrap();
+                let new_metadata = file_handler.get_encoded_metadata();
+                assert_eq!(new_metadata.pre_encoded_size, pre_encoded_len);
+                assert_eq!(new_metadata.encoded_size, encoded_len);
+                assert_eq!(new_metadata.bytes_of_data, original_file_len);
+                assert_eq!(new_metadata.bytes_of_data, original_metadata.bytes_of_data);
+                assert_eq!(new_metadata.rows_written * 2, new_metadata.row_capacity);
+                assert_eq!(
+                    new_metadata.rows_written,
+                    original_file_len
+                        .div_ceil(pre_encoded_len * TestField::DATA_BYTE_CAPACITY as usize)
+                );
+                original_metadata = new_metadata;
+            }
 
             // generate random data to append to the file
             let mut random_bytes_to_write = [0u8; RANDOM_LENGTH];
@@ -611,9 +621,24 @@ mod encoded_file_io_tests {
             let new_metadata = file_handler.get_encoded_metadata();
             assert_eq!(new_metadata.bytes_of_data, original_file_len);
             assert_eq!(new_metadata.ulid, test_ulid);
-            assert!(new_metadata.rows_written < new_metadata.row_capacity);
-            assert!(original_metadata.rows_written <= new_metadata.rows_written);
-            assert!(original_metadata.row_capacity <= new_metadata.row_capacity);
+            assert!(
+                new_metadata.rows_written <= new_metadata.row_capacity,
+                "rows ({}) bigger than capacity ({})",
+                new_metadata.rows_written,
+                new_metadata.row_capacity
+            );
+            assert!(
+                original_metadata.rows_written <= new_metadata.rows_written,
+                "original rows ({}) are bigger than new rows ({}) after append",
+                original_metadata.rows_written,
+                new_metadata.rows_written
+            );
+            assert!(
+                original_metadata.row_capacity <= new_metadata.row_capacity,
+                "original row capacity ({}) is bigger than new row capacity ({}) after append",
+                original_metadata.row_capacity,
+                new_metadata.row_capacity
+            );
 
             // check that the file is correct and correctly decodes to what we expect
             file_handler.verify_all_files_agree().unwrap();
@@ -627,34 +652,34 @@ mod encoded_file_io_tests {
         }
     }
 
-    fn _are_two_files_same(pathA: &impl AsRef<Path>, pathB: &impl AsRef<Path>) -> bool {
-        if pathA.as_ref() == pathB.as_ref() {
+    fn _are_two_files_same(path_a: &impl AsRef<Path>, path_b: &impl AsRef<Path>) -> bool {
+        if path_a.as_ref() == path_b.as_ref() {
             return true;
         }
-        if (pathA.as_ref().exists() && !pathB.as_ref().exists())
-            || (!pathA.as_ref().exists() && pathB.as_ref().exists())
+        if (path_a.as_ref().exists() && !path_b.as_ref().exists())
+            || (!path_a.as_ref().exists() && path_b.as_ref().exists())
         {
             return false;
         }
 
         const BUFSIZE: usize = 2usize.pow(6);
-        let mut fileA = File::open(pathA).unwrap();
-        let mut fileB = File::open(pathB).unwrap();
-        let mut bufferA = vec![0u8; BUFSIZE];
-        let mut bufferB = vec![0u8; BUFSIZE];
+        let mut file_a = File::open(path_a).unwrap();
+        let mut file_b = File::open(path_b).unwrap();
+        let mut buffer_a = vec![0u8; BUFSIZE];
+        let mut buffer_b = vec![0u8; BUFSIZE];
 
         loop {
-            let bytesA = fileA.read(&mut bufferA).unwrap();
-            let bytesB = fileB.read(&mut bufferB).unwrap();
+            let bytes_a = file_a.read(&mut buffer_a).unwrap();
+            let bytes_b = file_b.read(&mut buffer_b).unwrap();
 
-            if bytesA == 0 && bytesB == 0 {
+            if bytes_a == 0 && bytes_b == 0 {
                 break;
             }
 
-            if bytesA != bytesB {
+            if bytes_a != bytes_b {
                 return false;
             }
-            if bufferA != bufferB {
+            if buffer_a != buffer_b {
                 return false;
             }
         }
