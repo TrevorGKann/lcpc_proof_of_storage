@@ -35,6 +35,7 @@ mod flamegraph_profiler;
 type BenchField = WriteableFt63;
 type BenchDigest = Blake3;
 type BenchFileHandler = FileHandler<BenchDigest, BenchField, LigeroEncoding<BenchField>>;
+const EDIT_BYTES: usize = 1024;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct PremadeFiles {
@@ -115,8 +116,6 @@ fn open_file_handler_optimistic_from_prior(
                 .unwrap()
                 .join(constants::SERVER_FILE_FOLDER),
             &premade_file.ulid,
-            pre_encoded_len,
-            encoded_len,
         );
         if file_handler.is_ok() {
             tracing::debug!("save state found, extracing old save data");
@@ -234,7 +233,7 @@ fn edit_benchmark(
                     let total_file_bytes = file_handler_lock.get_total_data_bytes();
 
                     let mut rand = ChaChaRng::from_entropy();
-                    let mut random_bytes_to_write = [0u8; 1024];
+                    let mut random_bytes_to_write = [0u8; EDIT_BYTES];
                     rand.fill_bytes(&mut random_bytes_to_write);
                     let start_index =
                         rand.gen_range(0..total_file_bytes as usize - random_bytes_to_write.len());

@@ -88,6 +88,11 @@ fn commit_benchmark(
                     test_ulid.to_string(),
                     constants::MERKLE_FILE_EXTENSION,
                 ));
+                let metadata_test_file = test_dir.join(format!(
+                    "{}.{}",
+                    test_ulid.to_string(),
+                    constants::METADATA_FILE_EXTENSION,
+                ));
                 let mut source_file_handle = OpenOptions::new()
                     .read(true)
                     .write(true)
@@ -98,7 +103,7 @@ fn commit_benchmark(
                     .write(true)
                     .truncate(true)
                     .create(true)
-                    .open(digest_test_file)
+                    .open(&digest_test_file)
                     .expect("couldn't open digest file");
 
                 // iterations
@@ -115,7 +120,8 @@ fn commit_benchmark(
                     >::convert_unencoded_file(
                         &mut source_file_handle,
                         &encoded_test_file,
-                        Some(&mut digest_file_handle),
+                        Some(&digest_test_file),
+                        Some(&metadata_test_file),
                         pre_encoded_len,
                         encoded_len,
                     )

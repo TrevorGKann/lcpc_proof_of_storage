@@ -53,12 +53,12 @@ where
 
     // random point to eval at
     let x = Ft::random(&mut rand::thread_rng());
-    let inner_tensor: Vec<Ft> = iterate(<Ft as Field>::one(), |&v| v * x)
+    let inner_tensor: Vec<Ft> = iterate(<Ft as Field>::ONE, |&v| v * x)
         .take(comm.get_n_per_row())
         .collect();
     let outer_tensor: Vec<Ft> = {
         let xr = x * inner_tensor.last().unwrap();
-        iterate(<Ft as Field>::one(), |&v| v * xr)
+        iterate(<Ft as Field>::ONE, |&v| v * xr)
             .take(comm.get_n_rows())
             .collect()
     };
@@ -87,12 +87,12 @@ where
 
     // random point to eval at
     let x = Ft::random(&mut rand::thread_rng());
-    let inner_tensor: Vec<Ft> = iterate(<Ft as Field>::one(), |&v| v * x)
+    let inner_tensor: Vec<Ft> = iterate(<Ft as Field>::ONE, |&v| v * x)
         .take(comm.get_n_per_row())
         .collect();
     let outer_tensor: Vec<Ft> = {
         let xr = x * inner_tensor.last().unwrap();
-        iterate(<Ft as Field>::one(), |&v| v * xr)
+        iterate(<Ft as Field>::ONE, |&v| v * xr)
             .take(comm.get_n_rows())
             .collect()
     };
