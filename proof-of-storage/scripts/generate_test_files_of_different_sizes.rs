@@ -7,8 +7,8 @@ use std::fs;
 use std::io::Write;
 
 fn main() -> Result<()> {
-    let prefixes = vec![1usize, 4];
-    let orders_of_magnitude: Vec<usize> = (3..=9).collect();
+    let prefixes = [1usize];
+    let orders_of_magnitude: Vec<usize> = (3..=10).collect();
     let sizes: Vec<usize> = vec![];
 
     let mut test_files_path = env::current_dir()?;

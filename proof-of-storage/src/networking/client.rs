@@ -1322,7 +1322,7 @@ pub async fn edit_file(
             &new_columns,
         );
 
-    // error: I need to verify that the rows sent back from the server are in fact the requested
+    // todo: I need to verify that the rows sent back from the server are in fact the requested
     //  rows. To do this the client needs to slice the rows, encode them, then verify they match
     //  the columns sent back from the server.
 

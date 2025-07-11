@@ -14,6 +14,7 @@ use lcpc_2d::{LcColumn, LcEncoding, LcRoot};
 use lcpc_ligero_pc::LigeroEncoding;
 
 use crate::fields::data_field::DataField;
+use crate::fields::vector_multiply;
 use crate::lcpc_online::column_digest_accumulator::{ColumnDigestAccumulator, ColumnsToCareAbout};
 use crate::lcpc_online::decode_row;
 use crate::lcpc_online::encoded_file_reader::EncodedFileReader;
@@ -608,6 +609,32 @@ impl<
         let mut original_byte_buffer = vec![0u8; byte_end - byte_start];
         unencoded_file.read_exact_at(&mut original_byte_buffer, byte_start as u64)?;
         Ok(original_byte_buffer)
+    }
+
+    pub fn left_multiply_unencoded_matrix_by_vector(
+        &mut self,
+        left_vector: &[F],
+    ) -> Result<Vec<F>> {
+        ensure!(
+            left_vector.len() == self.rows_written,
+            "left_vector incorrect size, expected {} and received {}",
+            self.rows_written,
+            left_vector.len()
+        );
+
+        let mut result_vector: Vec<F> = Vec::with_capacity(self.pre_encoded_size);
+        for unencoded_row_index in 0..self.rows_written {
+            let left_vector_row_coefficient = left_vector[unencoded_row_index];
+            let unencoded_row = F::from_byte_vec(&self.get_unencoded_row(unencoded_row_index)?);
+            result_vector
+                .par_iter_mut()
+                .zip(unencoded_row.par_iter())
+                .for_each(|(result_elem, row_elem)| {
+                    result_elem.add_assign(*row_elem * left_vector_row_coefficient)
+                });
+        }
+
+        Ok(result_vector)
     }
 
     pub fn get_total_unencoded_bytes(&self) -> usize {

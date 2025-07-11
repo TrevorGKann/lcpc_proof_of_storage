@@ -519,25 +519,24 @@ where
 pub fn verifiable_full_polynomial_evaluation<D>(
     left_evaluation_column: &[WriteableFt63],
     right_evaluation_column: &[WriteableFt63],
-    received_result_vector: &[WriteableFt63],
+    received_decoded_result_vector: &[WriteableFt63],
     requested_column_indices: &[usize],
     received_columns: &[PoSColumn],
+    pre_encoded_len: usize,
+    encoded_len: usize,
 ) -> VerifierResult<WriteableFt63, ErrT<PoSEncoding>>
 where
     D: Digest,
 {
-    verify_proper_partial_polynomial_evaluation::<D>(
+    let result = fields::vector_multiply(&received_decoded_result_vector, right_evaluation_column);
+
+    let encoded_result_vector = verify_proper_partial_polynomial_evaluation::<D>(
         left_evaluation_column,
         received_result_vector,
         requested_column_indices,
         received_columns,
     )?;
 
-    let decoded_result_vector = decode_row(received_result_vector.to_vec())?;
-    let result = fields::vector_multiply(
-        &(decoded_result_vector as Vec<WriteableFt63>),
-        right_evaluation_column,
-    );
     Ok(result)
 }
 
@@ -601,14 +600,14 @@ fn encode_then_decode_row() {
     )
 }
 
-pub fn form_side_vectors_for_polynomial_evaluation_from_point(
-    evaluation_point: &WriteableFt63,
+pub fn form_side_vectors_for_polynomial_evaluation_from_point<F: PrimeField>(
+    evaluation_point: &F,
     n_rows: usize,
     n_cols: usize,
-) -> (Vec<WriteableFt63>, Vec<WriteableFt63>) {
-    let mut left_eval_column: Vec<WriteableFt63> = Vec::with_capacity(n_rows);
-    let mut right_eval_column: Vec<WriteableFt63> = Vec::with_capacity(n_cols);
-    let mut right_accumulator = WriteableFt63::one();
+) -> (Vec<F>, Vec<F>) {
+    let mut left_eval_column: Vec<F> = Vec::with_capacity(n_rows);
+    let mut right_eval_column: Vec<F> = Vec::with_capacity(n_cols);
+    let mut right_accumulator = F::ONE;
 
     // right column should be [1, x, x^2, ..., x^n-1]
     for _ in 0..n_cols {
@@ -618,7 +617,7 @@ pub fn form_side_vectors_for_polynomial_evaluation_from_point(
     // right_accumulator will end up at x^n
 
     // left column, then, should be [1, x^n, x^2n, ...]
-    let mut left_accumulator = WriteableFt63::one();
+    let mut left_accumulator = F::ONE;
     for _ in 0..n_rows {
         left_eval_column.push(left_accumulator);
         left_accumulator *= right_accumulator;

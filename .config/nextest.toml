@@ -5,8 +5,8 @@ status-level = "skip"
 max-threads = 6
 
 [test-groups]
-serial = {max-threads = 1, backoff = "exponential", delay = "5", retries = 6 }
-slow = {max-threads = 6, backoff = "exponential", delay = "5" }
+serial = {max-threads = 1, backoff = "exponential", delay = "10", retries = 6 }
+slow = {max-threads = 6, backoff = "exponential", delay = "10" }
 
 [[profile.default.overrides]]
 test-group = "serial"
